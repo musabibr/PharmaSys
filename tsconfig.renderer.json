@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "baseUrl": "./src/renderer-react",
+    "paths": {
+      "@/*": ["./*"]
+    }
+  },
+  "include": [
+    "src/renderer-react/**/*.ts",
+    "src/renderer-react/**/*.tsx"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

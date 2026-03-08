@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PharmaSys License Generator</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: #0f172a;
+    color: #e2e8f0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+  }
+
+  .container {
+    background: #1e293b;
+    border-radius: 16px;
+    padding: 2.5rem;
+    width: 100%;
+    max-width: 520px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  }
+
+  h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 0.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .subtitle {
+    color: #94a3b8;
+    font-size: 0.875rem;
+    margin-bottom: 2rem;
+  }
+
+  .field {
+    margin-bottom: 1.25rem;
+  }
+
+  label {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #94a3b8;
+    margin-bottom: 0.4rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  input, select, textarea {
+    width: 100%;
+    padding: 0.6rem 0.85rem;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    color: #e2e8f0;
+    font-size: 0.95rem;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  input:focus, select:focus, textarea:focus {
+    border-color: #3b82f6;
+  }
+
+  input::placeholder { color: #475569; }
+
+  .row {
+    display: flex;
+    gap: 1rem;
+  }
+
+  .row > .field { flex: 1; }
+
+  .radio-group {
+    display: flex;
+    gap: 1rem;
+    margin-top: 0.25rem;
+  }
+
+  .radio-group label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.9rem;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+    color: #e2e8f0;
+    cursor: pointer;
+  }
+
+  input[type="radio"] {
+    width: auto;
+    accent-color: #3b82f6;
+  }
+
+  .key-area {
+    margin-bottom: 1.5rem;
+    padding: 1rem;
+    background: #0f172a;
+    border: 1px dashed #334155;
+    border-radius: 8px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+  }
+
+  .key-area:hover {
+    border-color: #3b82f6;
+    background: #1a2332;
+  }
+
+  .key-area.loaded {
+    border-color: #22c55e;
+    border-style: solid;
+  }
+
+  .key-area p {
+    font-size: 0.85rem;
+    color: #94a3b8;
+  }
+
+  .key-area .icon { font-size: 1.5rem; margin-bottom: 0.25rem; }
+
+  .key-area.loaded .icon { color: #22c55e; }
+
+  .btn {
+    width: 100%;
+    padding: 0.75rem;
+    background: #3b82f6;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .btn:hover { background: #2563eb; }
+  .btn:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
+
+  .result {
+    margin-top: 1.5rem;
+    padding: 1rem;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    display: none;
+  }
+
+  .result.success {
+    display: block;
+    background: #052e16;
+    border: 1px solid #22c55e;
+    color: #86efac;
+  }
+
+  .result.error {
+    display: block;
+    background: #2a0a0a;
+    border: 1px solid #ef4444;
+    color: #fca5a5;
+  }
+
+  .result strong { display: block; margin-bottom: 0.25rem; }
+
+  .history {
+    margin-top: 2rem;
+    border-top: 1px solid #334155;
+    padding-top: 1rem;
+  }
+
+  .history h3 {
+    font-size: 0.8rem;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.75rem;
+  }
+
+  .history-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #1e293b;
+    font-size: 0.85rem;
+  }
+
+  .history-item .name { color: #e2e8f0; font-weight: 500; }
+  .history-item .meta { color: #64748b; font-size: 0.75rem; }
+
+  #keyFileInput { display: none; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>PharmaSys License Generator</h1>
+  <p class="subtitle">Sign and download .pharmalicense files</p>
+
+  <!-- Private Key Import -->
+  <div class="key-area" id="keyArea" onclick="document.getElementById('keyFileInput').click()">
+    <div class="icon" id="keyIcon">&#128274;</div>
+    <p id="keyStatus">Click to load PRIVATE_KEY.pem</p>
+  </div>
+  <input type="file" id="keyFileInput" accept=".pem">
+
+  <!-- Form -->
+  <div class="field">
+    <label>Client Name</label>
+    <input type="text" id="clientName" placeholder="Pharmacy ABC">
+  </div>
+
+  <div class="field">
+    <label>Machine ID</label>
+    <input type="text" id="machineId" placeholder="A3F2B7C1-D4E5F6A7-B8C9D0E1-F2A3B4C5"
+           style="font-family: 'Consolas', 'Courier New', monospace; letter-spacing: 0.05em;">
+  </div>
+
+  <div class="field">
+    <label>License Type</label>
+    <div class="radio-group">
+      <label><input type="radio" name="licenseType" value="perpetual" checked onchange="toggleExpiry()"> Perpetual</label>
+      <label><input type="radio" name="licenseType" value="expiry" onchange="toggleExpiry()"> With Expiry</label>
+    </div>
+  </div>
+
+  <div class="field" id="expiryField" style="display: none;">
+    <label>Expiry Date</label>
+    <input type="date" id="expiresAt">
+  </div>
+
+  <div class="row">
+    <div class="field">
+      <label>Max Devices</label>
+      <input type="number" id="maxDevices" value="1" min="1" max="99">
+    </div>
+    <div class="field">
+      <label>Device Index</label>
+      <input type="number" id="deviceIndex" value="1" min="1" max="99">
+    </div>
+  </div>
+
+  <button class="btn" id="generateBtn" onclick="generateLicense()" disabled>
+    Generate &amp; Download License
+  </button>
+
+  <div class="result" id="result"></div>
+
+  <div class="history" id="historySection" style="display: none;">
+    <h3>Recent Licenses</h3>
+    <div id="historyList"></div>
+  </div>
+</div>
+
+<script>
+// ── State ───────────────────────────────────────────────────────────────────
+
+let privateKey = null; // CryptoKey
+let history = JSON.parse(localStorage.getItem('pharmasys_license_history') || '[]');
+
+renderHistory();
+
+// ── Private Key Loading ─────────────────────────────────────────────────────
+
+document.getElementById('keyFileInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  try {
+    const pem = await file.text();
+    privateKey = await importPemKey(pem);
+
+    document.getElementById('keyArea').classList.add('loaded');
+    document.getElementById('keyIcon').innerHTML = '&#9989;';
+    document.getElementById('keyStatus').textContent = 'PRIVATE_KEY.pem loaded';
+    document.getElementById('generateBtn').disabled = false;
+  } catch (err) {
+    showResult('error', 'Failed to load key', err.message);
+    privateKey = null;
+  }
+});
+
+/**
+ * Import a PKCS8 PEM private key for ECDSA P-256 signing.
+ */
+async function importPemKey(pem) {
+  // Strip PEM headers and whitespace → raw base64
+  const b64 = pem
+    .replace(/-----BEGIN PRIVATE KEY-----/, '')
+    .replace(/-----END PRIVATE KEY-----/, '')
+    .replace(/\s+/g, '');
+
+  const binary = atob(b64);
+  const buf = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) buf[i] = binary.charCodeAt(i);
+
+  return await crypto.subtle.importKey(
+    'pkcs8',
+    buf.buffer,
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false,
+    ['sign']
+  );
+}
+
+// ── License Generation ──────────────────────────────────────────────────────
+
+async function generateLicense() {
+  const resultEl = document.getElementById('result');
+  resultEl.style.display = 'none';
+
+  const clientName  = document.getElementById('clientName').value.trim();
+  const machineId   = document.getElementById('machineId').value.trim().toUpperCase();
+  const licenseType = document.querySelector('input[name="licenseType"]:checked').value;
+  const expiresAt   = licenseType === 'expiry' ? document.getElementById('expiresAt').value : null;
+  const maxDevices  = parseInt(document.getElementById('maxDevices').value, 10);
+  const deviceIndex = parseInt(document.getElementById('deviceIndex').value, 10);
+
+  // Validate
+  if (!clientName) return showResult('error', 'Validation Error', 'Client name is required.');
+  if (!machineId)  return showResult('error', 'Validation Error', 'Machine ID is required.');
+
+  const fullIdRe  = /^[0-9A-F]{8}-[0-9A-F]{8}-[0-9A-F]{8}-[0-9A-F]{8}$/;
+  const shortIdRe = /^[0-9A-F]{8}-[0-9A-F]{8}$/;
+  if (!fullIdRe.test(machineId) && !shortIdRe.test(machineId)) {
+    return showResult('error', 'Invalid Machine ID',
+      'Expected format: XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX (full, 4 groups)\nor: XXXXXXXX-XXXXXXXX (short, 2 groups from activation screen)');
+  }
+  if (shortIdRe.test(machineId) && !fullIdRe.test(machineId)) {
+    return showResult('error', 'Short Machine ID',
+      'You entered the short (display) Machine ID (2 groups). The license requires the full ID (4 groups).\n\nThe full ID is now shown on the activation screen. Please ask the client to send you the complete ID:\nXXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX');
+  }
+
+  if (licenseType === 'expiry' && !expiresAt) {
+    return showResult('error', 'Validation Error', 'Expiry date is required when license type is "With Expiry".');
+  }
+
+  if (isNaN(maxDevices) || maxDevices < 1) return showResult('error', 'Validation Error', 'Max Devices must be >= 1.');
+  if (isNaN(deviceIndex) || deviceIndex < 1 || deviceIndex > maxDevices) {
+    return showResult('error', 'Validation Error', `Device Index must be between 1 and ${maxDevices}.`);
+  }
+
+  if (!privateKey) return showResult('error', 'No Key', 'Load PRIVATE_KEY.pem first.');
+
+  try {
+    const payload = {
+      clientName,
+      machineId,
+      issuedAt:    new Date().toISOString().slice(0, 10),
+      expiresAt:   expiresAt,
+      maxDevices,
+      deviceIndex,
+    };
+
+    // Sign: ECDSA with SHA-256, then convert DER signature to match Node.js output
+    const payloadBytes = new TextEncoder().encode(JSON.stringify(payload));
+    const sigBuf       = await crypto.subtle.sign(
+      { name: 'ECDSA', hash: 'SHA-256' },
+      privateKey,
+      payloadBytes
+    );
+
+    // Web Crypto outputs IEEE P1363 (r||s), but Node's crypto outputs DER.
+    // We need to convert P1363 → DER to match license-validator.ts which uses Node's verify.
+    const derSig    = p1363ToDer(new Uint8Array(sigBuf));
+    const signature = btoa(String.fromCharCode(...derSig));
+
+    const licenseJson = JSON.stringify({ payload, signature }, null, 2);
+
+    // Download the file
+    const safeName = clientName.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const filename = `PharmaSys_${safeName}-Device${deviceIndex}.pharmalicense`;
+
+    const blob = new Blob([licenseJson], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    showResult('success', 'License Generated!',
+      `Client: ${clientName}\nMachine: ${machineId}\nExpires: ${expiresAt || 'Perpetual'}\nDevice: ${deviceIndex}/${maxDevices}\nFile: ${filename}`);
+
+    // Save to history
+    history.unshift({
+      clientName,
+      machineId: machineId.slice(0, 17),
+      expiresAt: expiresAt || 'Perpetual',
+      date: new Date().toISOString().slice(0, 10),
+    });
+    if (history.length > 20) history.length = 20;
+    localStorage.setItem('pharmasys_license_history', JSON.stringify(history));
+    renderHistory();
+
+  } catch (err) {
+    showResult('error', 'Signing Error', err.message);
+  }
+}
+
+/**
+ * Convert an IEEE P1363 ECDSA signature (r || s) to DER format.
+ * P-256 produces 64-byte P1363 (32 bytes r + 32 bytes s).
+ * Node's crypto.createVerify expects DER-encoded signatures.
+ */
+function p1363ToDer(p1363) {
+  const r = p1363.slice(0, 32);
+  const s = p1363.slice(32, 64);
+
+  function encodeInt(bytes) {
+    // Remove leading zeros but keep one if high bit is set
+    let i = 0;
+    while (i < bytes.length - 1 && bytes[i] === 0) i++;
+    const trimmed = bytes.slice(i);
+    // Prepend 0x00 if high bit is set (so it's treated as positive)
+    if (trimmed[0] & 0x80) {
+      return new Uint8Array([0x02, trimmed.length + 1, 0x00, ...trimmed]);
+    }
+    return new Uint8Array([0x02, trimmed.length, ...trimmed]);
+  }
+
+  const rDer = encodeInt(r);
+  const sDer = encodeInt(s);
+  const body = new Uint8Array([...rDer, ...sDer]);
+
+  return new Uint8Array([0x30, body.length, ...body]);
+}
+
+// ── UI Helpers ──────────────────────────────────────────────────────────────
+
+function toggleExpiry() {
+  const isExpiry = document.querySelector('input[name="licenseType"]:checked').value === 'expiry';
+  document.getElementById('expiryField').style.display = isExpiry ? 'block' : 'none';
+}
+
+function showResult(type, title, message) {
+  const el = document.getElementById('result');
+  el.className = 'result ' + type;
+  el.innerHTML = `<strong>${title}</strong>${message.replace(/\n/g, '<br>')}`;
+  el.style.display = 'block';
+}
+
+function renderHistory() {
+  const section = document.getElementById('historySection');
+  const list    = document.getElementById('historyList');
+
+  if (history.length === 0) {
+    section.style.display = 'none';
+    return;
+  }
+
+  section.style.display = 'block';
+  list.innerHTML = history.map(h =>
+    `<div class="history-item">
+      <div>
+        <div class="name">${h.clientName}</div>
+        <div class="meta">${h.machineId}... &middot; ${h.expiresAt}</div>
+      </div>
+      <div class="meta">${h.date}</div>
+    </div>`
+  ).join('');
+}
+</script>
+
+</body>
+</html>

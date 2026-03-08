@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en" class="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- CSP is relaxed during dev (Vite HMR needs inline scripts). Production CSP applied in Electron. -->
+  <title>PharmaSys</title>
+  <script>
+    // Set theme, dir and lang before first paint to avoid layout/theme flash
+    try {
+      var theme = localStorage.getItem('pharmasys-theme') || 'light';
+      document.documentElement.classList.remove('dark', 'light');
+      document.documentElement.classList.add(theme);
+      var lang = localStorage.getItem('pharmasys-lang') || 'en';
+      document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
+      document.documentElement.lang = lang;
+    } catch(e) {}
+  </script>
+</head>
+<body class="bg-background text-foreground antialiased">
+  <div id="root">
+    <div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#888;font-family:system-ui">
+      Loading PharmaSys...
+    </div>
+  </div>
+  <script type="module" src="./main.tsx"></script>
+</body>
+</html>
