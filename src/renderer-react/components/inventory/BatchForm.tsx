@@ -123,14 +123,14 @@ export function BatchForm({
   // ---- Auto-calculate cost per child (only if not manually touched) ----
   useEffect(() => {
     if (!costChildTouched && hasChildUnit && costPerParent > 0) {
-      setCostPerChild(Math.ceil(costPerParent / conversionFactor));
+      setCostPerChild(Math.floor(costPerParent / conversionFactor));
     }
   }, [costPerParent, hasChildUnit, conversionFactor, costChildTouched]);
 
   // ---- Auto-calculate sell price per child (only if not manually touched) ----
   useEffect(() => {
     if (!sellChildTouched && hasChildUnit && sellPricePerParent > 0) {
-      setSellPricePerChild(Math.ceil(sellPricePerParent / conversionFactor));
+      setSellPricePerChild(Math.floor(sellPricePerParent / conversionFactor));
     }
   }, [sellPricePerParent, hasChildUnit, conversionFactor, sellChildTouched]);
 
@@ -157,7 +157,7 @@ export function BatchForm({
       if (!expiryDate) return t('Expiry date is required');
       if (quantity < 1) return t('Quantity must be at least 1');
     }
-    if (costPerParent <= 0) return t('Cost per parent is required');
+    if (costPerParent <= 0) return t('Cost per base unit is required');
     return null;
   }
 
@@ -205,8 +205,8 @@ export function BatchForm({
         };
 
         if (hasChildUnit) {
-          createData.cost_per_child_override = costPerChild || Math.ceil(costPerParent / conversionFactor);
-          createData.selling_price_child_override = sellPricePerChild || Math.ceil((sellPricePerParent || Math.round(costPerParent * 1.2)) / conversionFactor);
+          createData.cost_per_child_override = costPerChild || Math.floor(costPerParent / conversionFactor);
+          createData.selling_price_child_override = sellPricePerChild || Math.floor((sellPricePerParent || Math.round(costPerParent * 1.2)) / conversionFactor);
         }
 
         await api.batches.create(createData as Partial<Batch>);
@@ -303,7 +303,7 @@ export function BatchForm({
               {/* ---- Cost per parent ---- */}
               <div className="space-y-2">
                 <Label htmlFor="cost-parent">
-                  {t('Cost per')} {parentUnit} (SDG) *
+                  {t('Cost (Base Unit)')} (SDG) *
                 </Label>
                 <Input
                   id="cost-parent"
@@ -322,7 +322,7 @@ export function BatchForm({
               {/* ---- Selling price per parent ---- */}
               <div className="space-y-2">
                 <Label htmlFor="sell-parent">
-                  {t('Selling Price (Parent)')} (SDG)
+                  {t('Selling Price (Base Unit)')} (SDG)
                 </Label>
                 <Input
                   id="sell-parent"
@@ -345,13 +345,13 @@ export function BatchForm({
                   <Separator />
 
                   <p className="text-xs text-muted-foreground">
-                    {t('Child unit prices')} (1 {parentUnit} = {conversionFactor} {childUnit})
+                    {t('Small unit prices')} (1 {parentUnit} = {conversionFactor} {childUnit})
                   </p>
 
                   {/* ---- Cost per child ---- */}
                   <div className="space-y-2">
                     <Label htmlFor="cost-child">
-                      {t('Cost per')} {childUnit} (SDG)
+                      {t('Cost (Small Unit)')} (SDG)
                     </Label>
                     <Input
                       id="cost-child"
@@ -363,7 +363,7 @@ export function BatchForm({
                         setCostChildTouched(true);
                         setCostPerChild(Math.max(0, parseInt(e.target.value, 10) || 0));
                       }}
-                      placeholder={costPerParent > 0 ? String(Math.ceil(costPerParent / conversionFactor)) : '0'}
+                      placeholder={costPerParent > 0 ? String(Math.floor(costPerParent / conversionFactor)) : '0'}
                       disabled={loading}
                     />
                   </div>
@@ -371,7 +371,7 @@ export function BatchForm({
                   {/* ---- Selling price per child ---- */}
                   <div className="space-y-2">
                     <Label htmlFor="sell-child">
-                      {t('Selling Price (Child)')} (SDG)
+                      {t('Selling Price (Small Unit)')} (SDG)
                     </Label>
                     <Input
                       id="sell-child"
@@ -383,7 +383,7 @@ export function BatchForm({
                         setSellChildTouched(true);
                         setSellPricePerChild(Math.max(0, parseInt(e.target.value, 10) || 0));
                       }}
-                      placeholder={sellPricePerParent > 0 ? String(Math.ceil(sellPricePerParent / conversionFactor)) : '0'}
+                      placeholder={sellPricePerParent > 0 ? String(Math.floor(sellPricePerParent / conversionFactor)) : '0'}
                       disabled={loading}
                     />
                   </div>

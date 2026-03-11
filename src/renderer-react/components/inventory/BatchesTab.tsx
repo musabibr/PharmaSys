@@ -217,9 +217,9 @@ export function BatchesTab() {
 
     for (const b of batches) {
       totalStock += b.quantity_base;
-      const childCost = getCostPerChild(b) || (cf > 1 ? Math.ceil(b.cost_per_parent / cf) : b.cost_per_parent);
+      const childCost = getCostPerChild(b) || (cf > 1 ? Math.floor(b.cost_per_parent / cf) : b.cost_per_parent);
       costValue += b.quantity_base * childCost;
-      const childSell = getSellingPriceChild(b) || (cf > 1 ? Math.ceil(getSellingPriceParent(b) / cf) : getSellingPriceParent(b));
+      const childSell = getSellingPriceChild(b) || (cf > 1 ? Math.floor(getSellingPriceParent(b) / cf) : getSellingPriceParent(b));
       retailValue += b.quantity_base * childSell;
     }
 
@@ -312,8 +312,8 @@ export function BatchesTab() {
     const cf = selectedProduct.conversion_factor || 1;
     const rows = filteredBatches.map((b) => {
       const sellParent = getSellingPriceParent(b);
-      const costChild = getCostPerChild(b) || (cf > 1 ? Math.ceil(b.cost_per_parent / cf) : b.cost_per_parent);
-      const sellChild = getSellingPriceChild(b) || (cf > 1 ? Math.ceil(sellParent / cf) : sellParent);
+      const costChild = getCostPerChild(b) || (cf > 1 ? Math.floor(b.cost_per_parent / cf) : b.cost_per_parent);
+      const sellChild = getSellingPriceChild(b) || (cf > 1 ? Math.floor(sellParent / cf) : sellParent);
       const margin = computeMargin(b.cost_per_parent, sellParent);
       const isChildOverridden = b.cost_per_child_override > 0;
 
@@ -334,10 +334,10 @@ export function BatchesTab() {
     }).join('');
 
     const costHeaders = canViewCosts ? `
-      <th>${t('Cost')}/${selectedProduct.parent_unit}</th>
-      <th>${t('Cost')}/${selectedProduct.child_unit}</th>
-      <th>${t('Sell')}/${selectedProduct.parent_unit}</th>
-      <th>${t('Sell')}/${selectedProduct.child_unit}</th>
+      <th>${t('Cost/Base')}</th>
+      <th>${t('Cost/Small')}</th>
+      <th>${t('Sell/Base')}</th>
+      <th>${t('Sell/Small')}</th>
       <th>${t('Margin')}</th>
     ` : '';
 
@@ -719,10 +719,10 @@ export function BatchesTab() {
                     <TableHead>{t('Stock')}</TableHead>
                     {canViewCosts && (
                       <>
-                        <TableHead className="text-end">{t('Cost')}/{selectedProduct.parent_unit}</TableHead>
-                        <TableHead className="text-end">{t('Cost')}/{selectedProduct.child_unit}</TableHead>
-                        <TableHead className="text-end">{t('Sell')}/{selectedProduct.parent_unit}</TableHead>
-                        <TableHead className="text-end">{t('Sell')}/{selectedProduct.child_unit}</TableHead>
+                        <TableHead className="text-end">{t('Cost/Base')}</TableHead>
+                        <TableHead className="text-end">{t('Cost/Small')}</TableHead>
+                        <TableHead className="text-end">{t('Sell/Base')}</TableHead>
+                        <TableHead className="text-end">{t('Sell/Small')}</TableHead>
                         <TableHead className="text-end">{t('Margin')}</TableHead>
                       </>
                     )}
@@ -744,7 +744,7 @@ export function BatchesTab() {
 
                     // Child cost display: show "(auto)" if not overridden
                     const isChildCostOverridden = batch.cost_per_child_override > 0;
-                    const displayCostChild = costChild || (cf > 1 ? Math.ceil(batch.cost_per_parent / cf) : batch.cost_per_parent);
+                    const displayCostChild = costChild || (cf > 1 ? Math.floor(batch.cost_per_parent / cf) : batch.cost_per_parent);
 
                     return (
                       <TableRow
@@ -785,7 +785,7 @@ export function BatchesTab() {
                               {formatCurrency(sellParent)}
                             </TableCell>
                             <TableCell className="text-end tabular-nums">
-                              {formatCurrency(sellChild || (cf > 1 ? Math.ceil(sellParent / cf) : sellParent))}
+                              {formatCurrency(sellChild || (cf > 1 ? Math.floor(sellParent / cf) : sellParent))}
                               {batch.selling_price_child_override > 0 && (
                                 <span className="ms-1 text-xs" title={t('Override')}>✏️</span>
                               )}

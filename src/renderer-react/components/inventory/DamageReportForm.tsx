@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { Loader2 } from 'lucide-react';
 import { api } from '@/api';
 import type { Batch, AdjustmentType } from '@/api/types';
 import { formatQuantity } from '@/lib/utils';
@@ -64,6 +65,7 @@ export function DamageReportForm({
   const [quantity, setQuantity] = useState(1);
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // ── Derived values ───────────────────────────────────────────────────────
@@ -78,6 +80,12 @@ export function DamageReportForm({
 
   // ── Reset form when dialog opens/closes ──────────────────────────────────
 
+  // Dynamic button label based on type
+  const submitLabel: Record<string, string> = {
+    damage: t('Report Damage'),
+    expiry: t('Write Off Expiry'),
+  };
+
   function handleOpenChange(nextOpen: boolean) {
     if (nextOpen) {
       // Reset form when opening
@@ -87,21 +95,19 @@ export function DamageReportForm({
       setReason('');
       setError(null);
       setSubmitting(false);
+      setConfirming(false);
     }
     onOpenChange(nextOpen);
   }
 
   // ── Submit handler ───────────────────────────────────────────────────────
 
-  async function handleSubmit() {
-    if (!batch) return;
-
+  function validate(): boolean {
     setError(null);
 
-    // Validate quantity
     if (quantity < 1 || !Number.isInteger(quantity)) {
       setError(t('Quantity must be at least 1'));
-      return;
+      return false;
     }
 
     if (quantity > availableInUnit) {
@@ -110,15 +116,27 @@ export function DamageReportForm({
           available: availableInUnit,
         })
       );
-      return;
+      return false;
     }
 
-    // Validate reason
-    const trimmedReason = reason.trim();
-    if (!trimmedReason) {
+    if (!reason.trim()) {
       setError(t('Reason is required'));
-      return;
+      return false;
     }
+
+    return true;
+  }
+
+  function handleConfirmStep() {
+    if (!validate()) return;
+    setConfirming(true);
+  }
+
+  async function handleSubmit() {
+    if (!batch) return;
+    if (!validate()) return;
+
+    const trimmedReason = reason.trim();
 
     // Convert to base units
     const quantityBase = unitType === 'parent'
@@ -132,24 +150,22 @@ export function DamageReportForm({
           available: formatQuantity(availableBase, parentUnit, childUnit, conversionFactor),
         })
       );
+      setConfirming(false);
       return;
     }
 
     setSubmitting(true);
     try {
-      const result = await api.inventory.reportDamage(batch.id, quantityBase, trimmedReason, adjustmentType);
-      toast.success(t('Damage report submitted successfully'));
+      await api.inventory.reportDamage(batch.id, quantityBase, trimmedReason, adjustmentType);
+      toast.success(t('Adjustment submitted successfully'));
 
       // Print damage report
       const adjLabels: Record<string, string> = {
         damage: t('Damage'),
         expiry: t('Expiry Write-off'),
-        correction: t('Stock Correction'),
       };
       const fmtQty = (base: number) => formatQuantity(base, parentUnit, childUnit, conversionFactor);
-      const newQty = typeof result === 'object' && result !== null && 'new_quantity' in result
-        ? (result as { new_quantity: number }).new_quantity
-        : Math.max(0, availableBase - quantityBase);
+      const newQty = Math.max(0, availableBase - quantityBase);
 
       printHtml(`
         <h2>${t('Damage / Write-Off Report')}</h2>
@@ -157,7 +173,7 @@ export function DamageReportForm({
         <div class="summary">
           <p><strong>${t('Product')}:</strong> ${productName}</p>
           <p><strong>${t('Batch')}:</strong> ${batch.batch_number ?? '—'}</p>
-          <p><strong>${t('Adjustment Type')}:</strong> <span class="badge badge-${adjustmentType === 'damage' ? 'red' : adjustmentType === 'expiry' ? 'yellow' : 'green'}">${adjLabels[adjustmentType] || adjustmentType}</span></p>
+          <p><strong>${t('Adjustment Type')}:</strong> <span class="badge badge-${adjustmentType === 'damage' ? 'red' : 'yellow'}">${adjLabels[adjustmentType] || adjustmentType}</span></p>
         </div>
         <table style="margin-top:15px;">
           <thead><tr><th>${t('Before')}</th><th>${t('Written Off')}</th><th>${t('After')}</th></tr></thead>
@@ -181,6 +197,7 @@ export function DamageReportForm({
     } catch (err) {
       const msg = err instanceof Error ? err.message : t('Failed to submit damage report');
       setError(msg);
+      setConfirming(false);
       toast.error(msg);
     } finally {
       setSubmitting(false);
@@ -195,7 +212,7 @@ export function DamageReportForm({
         <DialogHeader>
           <DialogTitle>{t('Report Damage / Write-Off')}</DialogTitle>
           <DialogDescription>
-            {t('Record inventory damage, expiry, or correction for this batch.')}
+            {t('Record inventory damage or expiry write-off for this batch.')}
           </DialogDescription>
         </DialogHeader>
 
@@ -232,7 +249,7 @@ export function DamageReportForm({
               <Label>{t('Adjustment Type')}</Label>
               <Select
                 value={adjustmentType}
-                onValueChange={(val) => setAdjustmentType(val as AdjustmentType)}
+                onValueChange={(val) => { setAdjustmentType(val as AdjustmentType); setConfirming(false); }}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -240,7 +257,6 @@ export function DamageReportForm({
                 <SelectContent>
                   <SelectItem value="damage">{t('Damage')}</SelectItem>
                   <SelectItem value="expiry">{t('Expiry')}</SelectItem>
-                  <SelectItem value="correction">{t('Correction')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -265,6 +281,7 @@ export function DamageReportForm({
                     onChange={() => {
                       setUnitType('parent');
                       setQuantity(1);
+                      setConfirming(false);
                     }}
                     className="accent-primary"
                   />
@@ -293,6 +310,7 @@ export function DamageReportForm({
                       onChange={() => {
                         setUnitType('child');
                         setQuantity(1);
+                        setConfirming(false);
                       }}
                       className="accent-primary"
                     />
@@ -320,24 +338,40 @@ export function DamageReportForm({
                 onChange={(e) => {
                   const val = parseInt(e.target.value, 10);
                   setQuantity(Number.isNaN(val) ? 1 : Math.max(1, val));
+                  setConfirming(false);
                 }}
+                className={quantity > availableInUnit ? 'ring-1 ring-destructive' : ''}
               />
-              <p className="text-xs text-muted-foreground">
-                {t('Max')}: {availableInUnit} {unitType === 'parent' ? parentUnit : childUnit}
+              <p className={`text-xs ${quantity > availableInUnit ? 'text-destructive font-medium' : 'text-muted-foreground'}`}>
+                {quantity > availableInUnit
+                  ? t('Exceeds available stock!')
+                  : `${t('Max')}: ${availableInUnit} ${unitType === 'parent' ? parentUnit : childUnit}`
+                }
               </p>
             </div>
 
             {/* ── Reason ───────────────────────────────────────────────── */}
             <div className="space-y-2">
-              <Label htmlFor="damage-reason">{t('Reason')}</Label>
+              <Label htmlFor="damage-reason">{t('Reason')} *</Label>
               <Textarea
                 id="damage-reason"
                 rows={3}
                 placeholder={t('Describe why this adjustment is needed...')}
                 value={reason}
-                onChange={(e) => setReason(e.target.value)}
+                onChange={(e) => { setReason(e.target.value); setConfirming(false); }}
               />
             </div>
+
+            {/* ── Confirmation preview ──────────────────────────────────── */}
+            {confirming && (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 space-y-1">
+                <p className="text-sm font-semibold text-destructive">{t('Please confirm this adjustment')}</p>
+                <p className="text-xs text-muted-foreground">
+                  {quantity} {unitType === 'parent' ? parentUnit : childUnit} {t('will be deducted from stock.')}
+                  {' '}{t('This action cannot be undone.')}
+                </p>
+              </div>
+            )}
 
             {/* ── Error message ─────────────────────────────────────────── */}
             {error && (
@@ -350,13 +384,30 @@ export function DamageReportForm({
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
             {t('Cancel')}
           </Button>
-          <Button
-            variant="destructive"
-            onClick={handleSubmit}
-            disabled={submitting || !batch}
-          >
-            {submitting ? t('Submitting...') : t('Report Damage')}
-          </Button>
+          {!confirming ? (
+            <Button
+              variant="destructive"
+              onClick={handleConfirmStep}
+              disabled={submitting || !batch}
+            >
+              {submitLabel[adjustmentType]}
+            </Button>
+          ) : (
+            <Button
+              variant="destructive"
+              onClick={handleSubmit}
+              disabled={submitting || !batch}
+            >
+              {submitting ? (
+                <>
+                  <Loader2 className="me-1.5 h-4 w-4 animate-spin" />
+                  {t('Submitting...')}
+                </>
+              ) : (
+                t('Confirm & Submit')
+              )}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

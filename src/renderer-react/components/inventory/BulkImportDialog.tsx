@@ -60,15 +60,15 @@ const TEMPLATE_HEADERS = [
   'Generic Name',
   'Category',
   'Barcode',
-  'Parent Unit',
-  'Child Unit',
+  'Base Unit',
+  'Small Unit',
   'Conv Factor',
   'Min Stock Level',
   'Batch Number',
   'Expiry Date (YYYY-MM-DD)',
-  'Qty (Parent Units)',
-  'Cost per Parent (SDG)',
-  'Sell Price per Parent (SDG)',
+  'Qty (Base Units)',
+  'Cost per Base Unit (SDG)',
+  'Sell Price per Base Unit (SDG)',
 ];
 
 const EXAMPLE_ROW = [
@@ -181,8 +181,8 @@ function mapRow(
   const genericName = toStr(get(['generic']));
   const category = toStr(get(['category']));
   const barcode = toStr(get(['barcode']));
-  const parentUnit = toStr(get(['parent unit', 'parent_unit'])) || 'Unit';
-  const childUnit = toStr(get(['child unit', 'child_unit']));
+  const parentUnit = toStr(get(['base unit', 'base_unit', 'parent unit', 'parent_unit'])) || 'Unit';
+  const childUnit = toStr(get(['small unit', 'small_unit', 'child unit', 'child_unit']));
   const convFactor = toInt(get(['conv', 'conversion']), 1);
   const minStock = toInt(get(['min stock', 'min_stock']), 0);
   const batchNumber = toStr(get(['batch']));
@@ -200,7 +200,7 @@ function mapRow(
   }
 
   if (convFactor > 1 && !childUnit) {
-    errors.push(t('Child unit is required when conversion factor > 1'));
+    errors.push(t('Small unit is required when conversion factor > 1'));
   }
 
   const hasBatchFields = batchNumber || expiryDate || quantity > 0 || costPerParent > 0;
@@ -550,7 +550,7 @@ export function BulkImportDialog({ open, onOpenChange, onImported }: BulkImportD
                     <TableHead className="w-12">{t('Status')}</TableHead>
                     <TableHead>{t('Product Name')}</TableHead>
                     <TableHead className="hidden xl:table-cell">{t('Category')}</TableHead>
-                    <TableHead>{t('Parent Unit')}</TableHead>
+                    <TableHead>{t('Base Unit')}</TableHead>
                     <TableHead className="hidden xl:table-cell">{t('Batch #')}</TableHead>
                     <TableHead>{t('Expiry Date')}</TableHead>
                     <TableHead className="text-end">{t('Qty')}</TableHead>

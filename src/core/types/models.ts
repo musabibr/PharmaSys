@@ -753,6 +753,14 @@ export interface UpdateSupplierInput {
   is_active?: boolean;
 }
 
+export interface UpdatePurchaseInput {
+  supplier_id?: number | null;
+  invoice_reference?: string | null;
+  purchase_date?: string;
+  notes?: string | null;
+  alert_days_before?: number;
+}
+
 export interface CreatePurchaseItemInput {
   product_id?: number;
   new_product?: {

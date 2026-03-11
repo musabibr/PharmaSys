@@ -1,6 +1,8 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { List, PlusCircle, AlertTriangle, Building2 } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
+import { List, PlusCircle, AlertTriangle, Building2, Archive } from 'lucide-react';
+import { api } from '@/api';
 import type { Purchase } from '@/api/types';
 import { usePermission, useAnyPermission } from '@/hooks/usePermission';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -12,13 +14,22 @@ import { PurchaseDetailDialog } from './PurchaseDetailDialog';
 
 export default function PurchasesPage() {
   const { t } = useTranslation();
+  const location = useLocation();
   const canView = useAnyPermission(['purchases.view', 'purchases.manage']);
   const canManage = usePermission('purchases.manage');
 
-  const [tab, setTab] = useState(canManage ? 'list' : 'list');
+  // Read initial tab from route state (e.g., navigate('/purchases', { state: { tab: 'aging' } }))
+  const stateTab = (location.state as { tab?: string } | null)?.tab;
+  const [tab, setTab] = useState(stateTab || 'list');
   const [selectedPurchase, setSelectedPurchase] = useState<Purchase | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [listKey, setListKey] = useState(0);
+  const [agingKey, setAgingKey] = useState(0);
+
+  // When navigating back with a different state.tab, update the active tab
+  useEffect(() => {
+    if (stateTab) setTab(stateTab);
+  }, [stateTab]);
 
   const handleSelect = useCallback((purchase: Purchase) => {
     setSelectedPurchase(purchase);
@@ -26,13 +37,32 @@ export default function PurchasesPage() {
   }, []);
 
   const handlePaymentMade = useCallback(() => {
-    // Refresh the list but keep the detail dialog open
+    // Refresh both lists
     setListKey(k => k + 1);
+    setAgingKey(k => k + 1);
   }, []);
 
   const handlePurchaseComplete = useCallback(() => {
     setListKey(k => k + 1);
     setTab('list');
+  }, []);
+
+  const handleDeleted = useCallback(() => {
+    setDetailOpen(false);
+    setSelectedPurchase(null);
+    setListKey(k => k + 1);
+    setAgingKey(k => k + 1);
+  }, []);
+
+  // Called from AgingTab when user clicks Pay on a row
+  const handleAgingPay = useCallback(async (purchaseId: number) => {
+    try {
+      const purchase = await api.purchases.getById(purchaseId);
+      setSelectedPurchase(purchase);
+      setDetailOpen(true);
+    } catch {
+      // If fetch fails, still try to open with minimal info
+    }
   }, []);
 
   if (!canView) {
@@ -65,6 +95,10 @@ export default function PurchasesPage() {
             <AlertTriangle className="h-4 w-4" />
             {t('Aging')}
           </TabsTrigger>
+          <TabsTrigger value="archive" className="gap-1.5">
+            <Archive className="h-4 w-4" />
+            {t('Archive')}
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="list" className="flex-1 overflow-hidden" data-tour="purchases-list">
@@ -82,7 +116,16 @@ export default function PurchasesPage() {
         </TabsContent>
 
         <TabsContent value="aging" className="flex-1 overflow-hidden">
-          <AgingTab />
+          <AgingTab key={agingKey} onPayAction={handleAgingPay} />
+        </TabsContent>
+
+        <TabsContent value="archive" className="flex-1 overflow-hidden">
+          <PurchaseListTab
+            key={`archive-${listKey}`}
+            onSelect={handleSelect}
+            initialStatus="paid"
+            hideStatusFilter
+          />
         </TabsContent>
       </Tabs>
 
@@ -91,6 +134,7 @@ export default function PurchasesPage() {
         open={detailOpen}
         onOpenChange={setDetailOpen}
         onPaymentMade={handlePaymentMade}
+        onDeleted={handleDeleted}
       />
     </>
   );

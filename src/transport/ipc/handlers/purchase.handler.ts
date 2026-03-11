@@ -2,7 +2,7 @@ import type { IpcRouter }        from '../ipc-router';
 import type { ServiceContainer } from '../../../core/services/index';
 import type {
   CreateSupplierInput, UpdateSupplierInput,
-  CreatePurchaseInput, PurchaseFilters,
+  CreatePurchaseInput, UpdatePurchaseInput, PurchaseFilters,
   ExpensePaymentMethod,
 } from '../../../core/types/models';
 
@@ -46,6 +46,15 @@ export function registerPurchaseHandlers(router: IpcRouter, services: ServiceCon
   router.handle('purchases:create', async (user, data: CreatePurchaseInput) => {
     return await services.purchase.createPurchase(data, user!.id);
   }, { permission: 'purchases.manage' });
+
+  router.handle('purchases:update', async (user, id: number, data: UpdatePurchaseInput) => {
+    return await services.purchase.updatePurchase(id, data, user!.id);
+  }, { permission: 'purchases.edit' });
+
+  router.handle('purchases:delete', async (user, id: number) => {
+    await services.purchase.deletePurchase(id, user!.id);
+    return { ok: true };
+  }, { permission: 'purchases.delete' });
 
   router.handle('purchases:markPaymentPaid', async (user, paymentId: number, paymentMethod: ExpensePaymentMethod, referenceNumber?: string) => {
     return await services.purchase.markPaymentPaid(paymentId, paymentMethod, user!.id, referenceNumber);

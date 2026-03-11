@@ -103,8 +103,8 @@ function getUnitLabel(
   childUnit: string | undefined,
   t: (key: string) => string
 ): string {
-  if (unitType === 'parent') return parentUnit || t('Parent');
-  return childUnit || t('Child');
+  if (unitType === 'parent') return parentUnit || t('Base Unit');
+  return childUnit || t('Small Unit');
 }
 
 // ---------------------------------------------------------------------------

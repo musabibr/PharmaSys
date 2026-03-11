@@ -5,6 +5,7 @@ import { api } from '@/api';
 interface ShiftState {
   currentShift: Shift | null;
   isLoading: boolean;
+  loadError: string | null;
   loadCurrentShift: () => Promise<void>;
   openShift: (openingAmount: number) => Promise<Shift>;
   closeShift: (shiftId: number, actualCash: number, notes?: string) => Promise<Shift>;
@@ -14,14 +15,17 @@ interface ShiftState {
 export const useShiftStore = create<ShiftState>((set) => ({
   currentShift: null,
   isLoading: false,
+  loadError: null,
 
   loadCurrentShift: async () => {
-    set({ isLoading: true });
+    set({ isLoading: true, loadError: null });
     try {
       const shift = await api.shifts.getCurrent();
       set({ currentShift: shift, isLoading: false });
-    } catch {
-      set({ currentShift: null, isLoading: false });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to load shift';
+      console.error('Failed to load current shift:', message);
+      set({ currentShift: null, isLoading: false, loadError: message });
     }
   },
 

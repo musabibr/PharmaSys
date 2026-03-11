@@ -64,6 +64,7 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
   const [bankAmount, setBankAmount] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  const [cashTendered, setCashTendered] = useState('');
   const [extraDiscount, setExtraDiscount] = useState('');
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
@@ -88,6 +89,8 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
 
   const parsedBankAmount = parseInt(bankAmount, 10) || 0;
   const cashAmount = isMixed ? totalAmount - parsedBankAmount : 0;
+  const parsedCashTendered = parseInt(cashTendered, 10) || 0;
+  const changeAmount = paymentMethod === 'cash' ? Math.max(0, parsedCashTendered - totalAmount) : 0;
 
   // ---- Validation ----
   function validate(): string | null {
@@ -117,6 +120,7 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
     setBankName('');
     setReferenceNumber('');
     setBankAmount('');
+    setCashTendered('');
     setCustomerName('');
     setCustomerPhone('');
     setExtraDiscount('');
@@ -145,7 +149,7 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
         discount_amount: lineDiscountTotal + parsedExtraDiscount,
         total_amount: totalAmount,
         payment_method: paymentMethod,
-        cash_tendered: paymentMethod === 'cash' ? totalAmount : cashAmount,
+        cash_tendered: paymentMethod === 'cash' ? (parsedCashTendered > 0 ? parsedCashTendered : totalAmount) : cashAmount,
         customer_name: customerName.trim() || null,
         customer_phone: customerPhone.trim() || null,
         notes: notes.trim() || null,
@@ -268,6 +272,38 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
               })}
             </div>
           </div>
+
+          {/* ---- Cash tendered (for cash payments) ---- */}
+          {paymentMethod === 'cash' && (
+            <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
+              <div className="space-y-2">
+                <Label htmlFor="cash-tendered">{t('Amount Received')} (SDG)</Label>
+                <Input
+                  id="cash-tendered"
+                  type="number"
+                  step="1"
+                  min={0}
+                  value={cashTendered}
+                  onChange={(e) => setCashTendered(e.target.value)}
+                  placeholder={String(totalAmount)}
+                  disabled={loading}
+                />
+              </div>
+              {parsedCashTendered > 0 && parsedCashTendered >= totalAmount && (
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">{t('Change')}</span>
+                  <span className="text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                    {formatCurrency(changeAmount)}
+                  </span>
+                </div>
+              )}
+              {parsedCashTendered > 0 && parsedCashTendered < totalAmount && (
+                <p className="text-xs text-destructive">
+                  {t('Amount received is less than total')}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* ---- Bank info (for bank_transfer / mixed) ---- */}
           {needsBankInfo && (

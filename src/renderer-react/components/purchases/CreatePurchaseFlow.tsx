@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import {
   Loader2, Plus, Trash2, Save, Upload, ChevronLeft, ChevronRight,
-  CheckCircle2, XCircle, Search, FileText, SkipForward,
+  CheckCircle2, XCircle, Search, FileText, SkipForward, Clock,
 } from 'lucide-react';
 import { api, throwIfError } from '@/api';
 import type { ExpensePaymentMethod, Product, Category } from '@/api/types';
@@ -198,6 +198,9 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
   const [installments, setInstallments] = useState<Installment[]>([
     { _key: 'inst-1', dueDate: '', amount: 0 },
   ]);
+  const [initialPayment, setInitialPayment] = useState<number>(0);
+  const [initialPayMethod, setInitialPayMethod] = useState<ExpensePaymentMethod>('cash');
+  const [initialPayRef, setInitialPayRef] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   // Whether we have items from PDF (vs manual total-only mode)
@@ -448,7 +451,7 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
     : totalAmount;
 
   const installmentTotal = installments.reduce((sum, i) => sum + (i.amount || 0), 0);
-  const installmentDiff = invoiceTotal - installmentTotal;
+  const installmentDiff = invoiceTotal - installmentTotal - (initialPayment || 0);
 
   // ─── Submit ─────────────────────────────────────────────────────────────
 
@@ -463,7 +466,7 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
     }
 
     if (paymentType === 'installments') {
-      if (installments.length === 0) {
+      if (installments.length === 0 && !initialPayment) {
         toast.error(t('At least one installment is required'));
         return;
       }
@@ -476,6 +479,10 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
           toast.error(t('Installment {{n}} amount must be greater than 0', { n: i + 1 }));
           return;
         }
+      }
+      if (initialPayment > 0 && initialPayMethod === 'bank_transfer' && !initialPayRef.trim()) {
+        toast.error(t('Reference number is required for bank transfers'));
+        return;
       }
       if (Math.abs(installmentDiff) > 0) {
         toast.error(t('Installment amounts must equal the invoice total'));
@@ -523,7 +530,15 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
         }
       }) : undefined;
 
-      throwIfError(await api.purchases.create({
+      // Build installment plan — prepend initial payment if specified
+      const allInstallments = paymentType === 'installments'
+        ? [
+            ...(initialPayment > 0 ? [{ due_date: purchaseDate, amount: initialPayment }] : []),
+            ...installments.map(i => ({ due_date: i.dueDate, amount: i.amount })),
+          ]
+        : undefined;
+
+      const result = throwIfError(await api.purchases.create({
         supplier_id: supplierId ?? undefined,
         invoice_reference: invoiceRef || undefined,
         purchase_date: purchaseDate,
@@ -533,14 +548,27 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
         items: purchaseItems,
         payment_plan: paymentType === 'full'
           ? { type: 'full' as const, payment_method: paymentMethod, reference_number: paymentMethod === 'bank_transfer' ? bankReference.trim() : undefined }
-          : {
-              type: 'installments',
-              installments: installments.map(i => ({
-                due_date: i.dueDate,
-                amount: i.amount,
-              })),
-            },
+          : { type: 'installments', installments: allInstallments! },
       }));
+
+      // Auto-mark initial payment as paid if specified
+      if (paymentType === 'installments' && initialPayment > 0 && result?.payments?.length) {
+        const firstPayment = result.payments.find(
+          (p: { amount: number; is_paid: number }) => p.amount === initialPayment && !p.is_paid
+        );
+        if (firstPayment) {
+          try {
+            await api.purchases.markPaymentPaid(
+              firstPayment.id,
+              initialPayMethod,
+              initialPayMethod === 'bank_transfer' ? initialPayRef.trim() : undefined
+            );
+          } catch {
+            // Purchase was created but initial payment marking failed — user can pay later
+            toast.warning(t('Purchase created but initial payment could not be recorded'));
+          }
+        }
+      }
 
       toast.success(t('Purchase created successfully'));
       onComplete();
@@ -552,6 +580,7 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
   }, [
     supplierId, invoiceRef, purchaseDate, invoiceTotal, alertDays, notes,
     paymentType, paymentMethod, bankReference, installments, installmentDiff,
+    initialPayment, initialPayMethod, initialPayRef,
     hasItems, matchedItems, onComplete, t, totalAmount,
   ]);
 
@@ -668,13 +697,13 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                     <TableHead className="hidden xl:table-cell whitespace-nowrap">{t('Category')}</TableHead>
                     <TableHead className="hidden xl:table-cell whitespace-nowrap">{t('Usage Instructions')}</TableHead>
                     <TableHead className="whitespace-nowrap">{t('Expiry Date')}</TableHead>
-                    <TableHead className="whitespace-nowrap">{t('Parent Unit')}</TableHead>
-                    <TableHead className="whitespace-nowrap">{t('Child Unit')}</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Base Unit')}</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Small Unit')}</TableHead>
                     <TableHead className="whitespace-nowrap">{t('Conv')}</TableHead>
                     <TableHead className="whitespace-nowrap">{t('Qty')}*</TableHead>
                     <TableHead className="whitespace-nowrap">{t('Cost')}*</TableHead>
-                    <TableHead className="whitespace-nowrap">{t('Sell/P')}*</TableHead>
-                    <TableHead className="hidden xl:table-cell whitespace-nowrap">{t('Sell/C')}</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Sell/Base')}*</TableHead>
+                    <TableHead className="hidden xl:table-cell whitespace-nowrap">{t('Sell/Small')}</TableHead>
                     <TableHead className="w-8"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -810,7 +839,7 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                             className="h-8 text-xs w-14"
                             placeholder="1"
                             disabled={!item.childUnit}
-                            title={!item.childUnit ? t('Set child unit first') : ''}
+                            title={!item.childUnit ? t('Set small unit first') : ''}
                           />
                         </TableCell>
                         <TableCell className="whitespace-nowrap">
@@ -1370,9 +1399,57 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                 </div>
               )}
 
-              {/* Installments table */}
+              {/* Initial Payment + Installments */}
               {paymentType === 'installments' && (
-                <div className="space-y-3">
+                <div className="space-y-4">
+                  {/* Amount Already Paid */}
+                  <div className="rounded-md border bg-muted/30 p-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="h-4 w-4 text-primary" />
+                      <Label className="font-semibold text-sm">{t('Amount Already Paid')}</Label>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">{t('Amount')} (SDG)</Label>
+                        <Input
+                          type="number"
+                          step="1"
+                          min="0"
+                          max={invoiceTotal || undefined}
+                          value={initialPayment || ''}
+                          onChange={e => setInitialPayment(Math.round(Number(e.target.value) || 0))}
+                          placeholder="0"
+                          className="h-8"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">{t('Payment Method')}</Label>
+                        <Select value={initialPayMethod} onValueChange={v => { setInitialPayMethod(v as ExpensePaymentMethod); if (v !== 'bank_transfer') setInitialPayRef(''); }}>
+                          <SelectTrigger className="h-8">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="cash">{t('Cash')}</SelectItem>
+                            <SelectItem value="bank_transfer">{t('Bank Transfer')}</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    {initialPayMethod === 'bank_transfer' && initialPayment > 0 && (
+                      <Input
+                        value={initialPayRef}
+                        onChange={e => setInitialPayRef(e.target.value)}
+                        placeholder={t('Enter reference number')}
+                        className="h-8"
+                      />
+                    )}
+                  </div>
+
+                  {/* Remaining installments */}
+                  <div className="flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-muted-foreground" />
+                    <Label className="font-semibold text-sm">{t('Remaining Installments')}</Label>
+                  </div>
                   <div className="rounded-md border">
                     <Table>
                       <TableHeader>
@@ -1430,13 +1507,21 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                       <Plus className="h-3.5 w-3.5" />
                       {t('Add Installment')}
                     </Button>
-                    <div className="text-sm text-end">
-                      <span className="text-muted-foreground">{t('Total')}: </span>
-                      <span className="font-medium">{formatCurrency(installmentTotal)}</span>
+                    <div className="text-sm text-end space-y-0.5">
+                      {initialPayment > 0 && (
+                        <div>
+                          <span className="text-muted-foreground">{t('Already Paid')}: </span>
+                          <span className="font-medium text-emerald-600 dark:text-emerald-400">{formatCurrency(initialPayment)}</span>
+                        </div>
+                      )}
+                      <div>
+                        <span className="text-muted-foreground">{t('Installments')}: </span>
+                        <span className="font-medium">{formatCurrency(installmentTotal)}</span>
+                      </div>
                       {invoiceTotal > 0 && installmentDiff !== 0 && (
-                        <span className="ms-2 text-destructive font-medium">
+                        <div className="text-destructive font-medium">
                           ({installmentDiff > 0 ? '-' : '+'}{formatCurrency(Math.abs(installmentDiff))} {t('remaining')})
-                        </span>
+                        </div>
                       )}
                     </div>
                   </div>

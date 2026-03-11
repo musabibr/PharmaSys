@@ -279,6 +279,9 @@ export function DashboardPage() {
               <div onClick={canViewTransactions ? () => navigate('/transactions') : undefined} className={`text-start ${canViewTransactions ? 'cursor-pointer group' : ''}`}>
                 <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-primary-foreground/55">
                   {t("Today's Sales")}
+                  <span className="ms-1.5 normal-case tracking-normal font-medium text-primary-foreground/35">
+                    {new Date().toLocaleDateString(i18n.language === 'ar' ? 'ar-SD' : 'en-US', { month: 'short', day: 'numeric' })}
+                  </span>
                 </p>
                 <p className="mt-1 text-[36px] font-black leading-none tracking-tight text-primary-foreground sm:text-[48px]">
                   <AnimatedNumber value={stats.today_net_sales} />
@@ -299,6 +302,16 @@ export function DashboardPage() {
               <div onClick={canViewTransactions ? () => navigate('/transactions') : undefined} className={`text-start ${canViewTransactions ? 'cursor-pointer group' : ''}`}>
                 <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-primary-foreground/55">
                   {t('Monthly Sales')}
+                  <span className="ms-1.5 normal-case tracking-normal font-medium text-primary-foreground/35">
+                    {(() => {
+                      const locale = i18n.language === 'ar' ? 'ar-SD' : 'en-US';
+                      const fmt = { month: 'short' as const, day: 'numeric' as const };
+                      const end = new Date();
+                      const start = new Date(end);
+                      start.setDate(start.getDate() - 30);
+                      return `${start.toLocaleDateString(locale, fmt)} — ${end.toLocaleDateString(locale, fmt)}`;
+                    })()}
+                  </span>
                 </p>
                 <p className="mt-1 text-[28px] font-black leading-none tracking-tight text-primary-foreground sm:text-[36px]">
                   <AnimatedNumber value={stats.month_net_sales} />
@@ -356,7 +369,7 @@ export function DashboardPage() {
         {canSeePurchases && (
           <Card
             className="db-bento-card group cursor-pointer border-s-[3px] border-s-accent transition-all duration-150 hover:translate-y-[-2px] hover:shadow-lg"
-            onClick={() => navigate('/purchases')}
+            onClick={() => navigate('/purchases', { state: { tab: 'aging' } })}
           >
             <CardContent className="p-6">
               <div className="flex items-start justify-between">
@@ -610,7 +623,7 @@ export function DashboardPage() {
                 </div>
                 <CardTitle className="db-card-title">{t('Upcoming Payments')}</CardTitle>
                 <Badge variant="warning" className="ms-auto">{upcomingSummary.count}</Badge>
-                <button onClick={() => navigate('/purchases')} className="ms-2 db-view-all-btn">
+                <button onClick={() => navigate('/purchases', { state: { tab: 'aging' } })} className="ms-2 db-view-all-btn">
                   {t('View All')} <ArrowUpRight className="h-3 w-3" strokeWidth={2.5} />
                 </button>
               </div>
@@ -644,7 +657,7 @@ export function DashboardPage() {
                 </div>
                 <CardTitle className="db-card-title">{t('Overdue Payments')}</CardTitle>
                 <Badge variant="destructive" className="ms-auto">{overdueSummary.count}</Badge>
-                <button onClick={() => navigate('/purchases')} className="ms-2 db-view-all-btn">
+                <button onClick={() => navigate('/purchases', { state: { tab: 'aging' } })} className="ms-2 db-view-all-btn">
                   {t('View All')} <ArrowUpRight className="h-3 w-3" strokeWidth={2.5} />
                 </button>
               </div>

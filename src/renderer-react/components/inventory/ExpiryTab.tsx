@@ -267,7 +267,7 @@ export function ExpiryTab() {
 
         const cf = batch.conversion_factor ?? 1;
         const costPerBase = cf > 1
-          ? (batch.cost_per_child_override || batch.cost_per_child || Math.ceil(batch.cost_per_parent / cf))
+          ? (batch.cost_per_child_override || batch.cost_per_child || Math.floor(batch.cost_per_parent / cf))
           : batch.cost_per_parent;
         const costValue = batch.quantity_base * costPerBase;
 
@@ -515,7 +515,7 @@ export function ExpiryTab() {
                 // Cost value = quantity_base * cost per base unit
                 const cf = batch.conversion_factor ?? 1;
                 const costPerBase = cf > 1
-                  ? (batch.cost_per_child_override || batch.cost_per_child || Math.ceil(batch.cost_per_parent / cf))
+                  ? (batch.cost_per_child_override || batch.cost_per_child || Math.floor(batch.cost_per_parent / cf))
                   : batch.cost_per_parent;
                 const costValue = batch.quantity_base * costPerBase;
 

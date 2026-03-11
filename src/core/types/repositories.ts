@@ -27,6 +27,7 @@ import type {
   Supplier, CreateSupplierInput, UpdateSupplierInput,
   Purchase, PurchaseItem, PurchasePayment, PurchaseFilters,
   PurchasePaymentStatus, AgingPayment, UpcomingPayment,
+  UpdatePurchaseInput,
 } from './models';
 
 // ─── Run result (mirrors sql.js semantics) ───
@@ -362,6 +363,9 @@ export interface IPurchaseRepository {
   getPaymentById(paymentId: number): Promise<PurchasePayment | undefined>;
   getPaidTotal(purchaseId: number): Promise<number>;
   getNextNumber(datePrefix: string): Promise<string>;
+  update(id: number, data: UpdatePurchaseInput): Promise<void>;
+  delete(id: number): Promise<void>;
+  hasPaidPayments(id: number): Promise<boolean>;
   getAgingPayments(): Promise<AgingPayment[]>;
   getOverdueSummary(): Promise<{ count: number; total: number }>;
   getUpcomingPayments(): Promise<UpcomingPayment[]>;

@@ -580,6 +580,14 @@ export interface PharmaSysApi {
     getItems(purchaseId: number): Promise<PurchaseItem[]>;
     getPayments(purchaseId: number): Promise<PurchasePayment[]>;
     create(data: unknown): Promise<Purchase>;
+    update(id: number, data: {
+      supplier_id?: number | null;
+      invoice_reference?: string | null;
+      purchase_date?: string;
+      notes?: string | null;
+      alert_days_before?: number;
+    }): Promise<Purchase>;
+    delete(id: number): Promise<{ ok: boolean }>;
     markPaymentPaid(paymentId: number, paymentMethod: ExpensePaymentMethod, referenceNumber?: string): Promise<PurchasePayment>;
     getAgingPayments(): Promise<AgingPayment[]>;
     getOverdueSummary(): Promise<{ count: number; total: number }>;

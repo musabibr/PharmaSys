@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Search, FileText, ChevronLeft, ChevronRight, Printer } from 'lucide-react';
+import { Search, FileText, ChevronLeft, ChevronRight, Printer, CreditCard } from 'lucide-react';
 import { api } from '@/api';
 import type { Purchase, PurchasePaymentStatus, Supplier } from '@/api/types';
 import { formatCurrency, cn } from '@/lib/utils';
 import { printHtml } from '@/lib/print';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useApiCall } from '@/api/hooks';
+import { usePermission } from '@/hooks/usePermission';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -40,24 +41,29 @@ interface PurchaseListTabProps {
   onSelect: (purchase: Purchase) => void;
   /** Pre-select a supplier filter (used by supplier view) */
   initialSupplierId?: number | null;
+  /** Pre-select a payment status filter (used by archive) */
+  initialStatus?: string;
+  /** Hide the status filter dropdown (archive mode) */
+  hideStatusFilter?: boolean;
 }
 
-function createDefaultFilters(supplierId?: number | null) {
+function createDefaultFilters(supplierId?: number | null, status?: string) {
   const end = new Date();
   const start = new Date();
-  start.setDate(start.getDate() - 90);
+  start.setDate(start.getDate() - 365);
   return {
     startDate: start.toISOString().slice(0, 10),
     endDate: end.toISOString().slice(0, 10),
-    status: 'all' as string,
+    status: status ?? ('all' as string),
     search: '',
     supplierId: supplierId ?? ('all' as string | number),
   };
 }
 
-export function PurchaseListTab({ onSelect, initialSupplierId }: PurchaseListTabProps) {
+export function PurchaseListTab({ onSelect, initialSupplierId, initialStatus, hideStatusFilter }: PurchaseListTabProps) {
   const { t } = useTranslation();
-  const [filters, setFilters] = useState(() => createDefaultFilters(initialSupplierId));
+  const canPay = usePermission('purchases.pay');
+  const [filters, setFilters] = useState(() => createDefaultFilters(initialSupplierId, initialStatus));
   const { data: suppliers } = useApiCall(() => api.suppliers.getAll(), []);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [page, setPage] = useState(1);
@@ -196,20 +202,22 @@ export function PurchaseListTab({ onSelect, initialSupplierId }: PurchaseListTab
               </SelectContent>
             </Select>
           </div>
-          <div className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">{t('Status')}</span>
-            <Select value={filters.status} onValueChange={v => updateFilter('status', v)}>
-              <SelectTrigger className="h-9 w-36">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{t('All')}</SelectItem>
-                <SelectItem value="paid">{t('paid')}</SelectItem>
-                <SelectItem value="partial">{t('partial')}</SelectItem>
-                <SelectItem value="unpaid">{t('unpaid')}</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          {!hideStatusFilter && (
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-muted-foreground">{t('Status')}</span>
+              <Select value={filters.status} onValueChange={v => updateFilter('status', v)}>
+                <SelectTrigger className="h-9 w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t('All')}</SelectItem>
+                  <SelectItem value="paid">{t('paid')}</SelectItem>
+                  <SelectItem value="partial">{t('partial')}</SelectItem>
+                  <SelectItem value="unpaid">{t('unpaid')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="relative flex-1 min-w-[140px]">
             <Search className="absolute start-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
@@ -219,7 +227,7 @@ export function PurchaseListTab({ onSelect, initialSupplierId }: PurchaseListTab
               className="h-9 ps-9"
             />
           </div>
-          <Button variant="ghost" size="sm" onClick={() => { setFilters(createDefaultFilters()); setPage(1); }}>
+          <Button variant="ghost" size="sm" onClick={() => { setFilters(createDefaultFilters(initialSupplierId, initialStatus)); setPage(1); }}>
             {t('Reset')}
           </Button>
           <Button variant="outline" size="sm" onClick={handlePrint} disabled={loading || purchases.length === 0} className="gap-1.5">
@@ -254,6 +262,7 @@ export function PurchaseListTab({ onSelect, initialSupplierId }: PurchaseListTab
                 <TableHead className="text-end">{t('Paid')}</TableHead>
                 <TableHead className="hidden lg:table-cell text-end">{t('Remaining')}</TableHead>
                 <TableHead>{t('Status')}</TableHead>
+                {canPay && <TableHead className="w-16"></TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -277,6 +286,21 @@ export function PurchaseListTab({ onSelect, initialSupplierId }: PurchaseListTab
                       {t(p.payment_status)}
                     </Badge>
                   </TableCell>
+                  {canPay && (
+                    <TableCell>
+                      {p.payment_status !== 'paid' && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1 h-7 text-xs"
+                          onClick={(e) => { e.stopPropagation(); onSelect(p); }}
+                        >
+                          <CreditCard className="h-3 w-3" />
+                          {t('Pay')}
+                        </Button>
+                      )}
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>

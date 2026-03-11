@@ -253,7 +253,7 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
             {/* ── Unit configuration ───────────────────────────────────── */}
             <div className="grid grid-cols-3 gap-3">
               <div className="space-y-1.5">
-                <Label htmlFor="pf-parent-unit">{t('Parent Unit')}</Label>
+                <Label htmlFor="pf-parent-unit">{t('Base Unit')}</Label>
                 <Input
                   id="pf-parent-unit"
                   value={parentUnit}
@@ -262,7 +262,7 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="pf-child-unit">{t('Child Unit')}</Label>
+                <Label htmlFor="pf-child-unit">{t('Small Unit')}</Label>
                 <Input
                   id="pf-child-unit"
                   value={childUnit}
@@ -286,7 +286,7 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
             {/* ── UOM preview ──────────────────────────────────────────── */}
             {conversionFactor > 1 && (
               <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
-                1 {parentUnit || t('Parent')} = {conversionFactor} {childUnit || t('Child')}
+                1 {parentUnit || t('Base Unit')} = {conversionFactor} {childUnit || t('Small Unit')}
               </p>
             )}
 
@@ -302,7 +302,7 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
                 onChange={(e) => setMinStockLevel(Number(e.target.value))}
               />
               <p className="text-xs text-muted-foreground">
-                {t('Low stock warning triggers when stock falls below this level (in parent units).')}
+                {t('Low stock warning triggers when stock falls below this level (in base units).')}
               </p>
             </div>
 

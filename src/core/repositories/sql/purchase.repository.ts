@@ -3,6 +3,7 @@ import type { IPurchaseRepository } from '../../types/repositories';
 import type {
   Purchase, PurchaseItem, PurchasePayment, PurchaseFilters,
   PaginatedResult, PurchasePaymentStatus, AgingPayment, UpcomingPayment,
+  UpdatePurchaseInput,
 } from '../../types/models';
 import { PAGINATION } from '../../common/constants';
 
@@ -216,6 +217,42 @@ export class PurchaseRepository implements IPurchaseRepository {
       [purchaseId]
     );
     return row?.total ?? 0;
+  }
+
+  async update(id: number, data: UpdatePurchaseInput): Promise<void> {
+    const sets: string[] = [];
+    const params: unknown[] = [];
+
+    if (data.supplier_id !== undefined) { sets.push('supplier_id = ?');       params.push(data.supplier_id); }
+    if (data.invoice_reference !== undefined) { sets.push('invoice_reference = ?'); params.push(data.invoice_reference); }
+    if (data.purchase_date !== undefined) { sets.push('purchase_date = ?');     params.push(data.purchase_date); }
+    if (data.notes !== undefined) { sets.push('notes = ?');               params.push(data.notes); }
+    if (data.alert_days_before !== undefined) { sets.push('alert_days_before = ?'); params.push(data.alert_days_before); }
+
+    if (sets.length === 0) return;
+
+    sets.push("updated_at = datetime('now')");
+    params.push(id);
+
+    await this.base.runImmediate(
+      `UPDATE purchases SET ${sets.join(', ')} WHERE id = ?`,
+      params
+    );
+  }
+
+  async delete(id: number): Promise<void> {
+    await this.base.runImmediate(
+      `DELETE FROM purchases WHERE id = ?`,
+      [id]
+    );
+  }
+
+  async hasPaidPayments(id: number): Promise<boolean> {
+    const row = await this.base.getOne<{ cnt: number }>(
+      `SELECT COUNT(*) as cnt FROM purchase_payments WHERE purchase_id = ? AND is_paid = 1`,
+      [id]
+    );
+    return (row?.cnt ?? 0) > 0;
   }
 
   async getNextNumber(datePrefix: string): Promise<string> {

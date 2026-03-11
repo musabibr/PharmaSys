@@ -11,7 +11,7 @@ import type {
   Purchase, PurchaseItem, PurchasePayment, PurchaseFilters,
   PaginatedResult, AgingPayment, UpcomingPayment,
   CreatePurchaseInput, CreatePurchaseItemInput,
-  ExpensePaymentMethod,
+  UpdatePurchaseInput, ExpensePaymentMethod,
 } from '../types/models';
 import { Validate } from '../common/validation';
 import { Money } from '../common/money';
@@ -110,6 +110,71 @@ export class PurchaseService {
 
   async getUpcomingSummary(): Promise<{ count: number; total: number }> {
     return await this.purchaseRepo.getUpcomingSummary();
+  }
+
+  // ─── Update Purchase ─────────────────────────────────────────────────────────
+
+  async updatePurchase(id: number, data: UpdatePurchaseInput, userId: number): Promise<Purchase> {
+    Validate.id(id);
+    const existing = await this.purchaseRepo.getById(id);
+    if (!existing) throw new NotFoundError('Purchase', id);
+
+    if (data.supplier_id !== undefined && data.supplier_id !== null) {
+      const supplier = await this.supplierRepo.getById(data.supplier_id);
+      if (!supplier) throw new NotFoundError('Supplier', data.supplier_id);
+    }
+
+    if (data.purchase_date !== undefined) {
+      Validate.dateString(data.purchase_date, 'Purchase date');
+    }
+
+    if (data.alert_days_before !== undefined) {
+      data.alert_days_before = Math.max(0, Math.round(data.alert_days_before));
+    }
+
+    await this.purchaseRepo.update(id, data);
+
+    this.bus.emit('entity:mutated', {
+      action: 'UPDATE_PURCHASE', table: 'purchases',
+      recordId: id, userId,
+      oldValues: {
+        supplier_id: existing.supplier_id,
+        invoice_reference: existing.invoice_reference,
+        purchase_date: existing.purchase_date,
+        notes: existing.notes,
+      },
+      newValues: data as Record<string, unknown>,
+    });
+
+    return await this.getById(id);
+  }
+
+  // ─── Delete Purchase ────────────────────────────────────────────────────────
+
+  async deletePurchase(id: number, userId: number): Promise<void> {
+    Validate.id(id);
+    const existing = await this.purchaseRepo.getById(id);
+    if (!existing) throw new NotFoundError('Purchase', id);
+
+    // Block deletion if any payment has already been made
+    const hasPaid = await this.purchaseRepo.hasPaidPayments(id);
+    if (hasPaid) {
+      throw new BusinessRuleError(
+        'Cannot delete a purchase that has payments already made. Archive it instead.'
+      );
+    }
+
+    await this.purchaseRepo.delete(id);
+
+    this.bus.emit('entity:mutated', {
+      action: 'DELETE_PURCHASE', table: 'purchases',
+      recordId: id, userId,
+      oldValues: {
+        purchase_number: existing.purchase_number,
+        total_amount: existing.total_amount,
+        supplier_name: existing.supplier_name,
+      },
+    });
   }
 
   // ─── Create Purchase ─────────────────────────────────────────────────────────

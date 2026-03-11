@@ -354,7 +354,7 @@ export function AddToCartModal({ productId, open, onOpenChange }: AddToCartModal
                   step={1}
                   value={discountPercent}
                   onChange={(e) => {
-                    const val = parseFloat(e.target.value);
+                    const val = parseInt(e.target.value, 10);
                     setDiscountPercent(Number.isNaN(val) ? 0 : Math.min(100, Math.max(0, val)));
                   }}
                 />

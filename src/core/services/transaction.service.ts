@@ -380,6 +380,9 @@ export class TransactionService {
       const batches: IFIFOBatch[] = item.batch_id
         ? await (async () => {
             const b = await this.batchRepo.getById(item.batch_id!) as unknown as IFIFOBatch | undefined;
+            if (b && b.status !== 'active') {
+              throw new ValidationError(`Batch ${item.batch_id} is not available for sale (status: ${b.status})`, 'batch_id');
+            }
             return b ? [b] : [];
           })()
         : await this.batchRepo.getAvailableByProduct(item.product_id);

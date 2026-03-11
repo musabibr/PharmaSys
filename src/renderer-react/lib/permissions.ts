@@ -52,6 +52,7 @@ export type PermissionKey =
   // Purchases
   | 'purchases.view'
   | 'purchases.manage'
+  | 'purchases.edit'
   | 'purchases.pay'
   | 'purchases.delete'
   | 'purchases.suppliers.manage'
@@ -137,6 +138,7 @@ export const PERMISSION_REGISTRY: PermissionGroup[] = [
     permissions: [
       { key: 'purchases.view',             label: 'View Purchases',     description: 'View purchase list, details, and aging' },
       { key: 'purchases.manage',           label: 'Manage Purchases',   description: 'Create and confirm purchase invoices' },
+      { key: 'purchases.edit',             label: 'Edit Purchases',     description: 'Edit purchase header (supplier, invoice, notes, dates)' },
       { key: 'purchases.pay',              label: 'Make Payments',      description: 'Mark installments as paid' },
       { key: 'purchases.delete',           label: 'Delete Purchases',   description: 'Delete purchase records' },
       { key: 'purchases.suppliers.manage', label: 'Manage Suppliers',   description: 'Create and update suppliers' },

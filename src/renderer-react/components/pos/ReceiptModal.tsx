@@ -61,8 +61,8 @@ function displayQty(item: TransactionItem): number {
 /** The unit label for the item's unit_type. */
 function displayUnit(item: TransactionItem, t: (key: string) => string): string {
   return item.unit_type === 'child'
-    ? (item.child_unit || t('Child'))
-    : (item.parent_unit || t('Parent'));
+    ? (item.child_unit || t('Small Unit'))
+    : (item.parent_unit || t('Base Unit'));
 }
 
 // ---------------------------------------------------------------------------

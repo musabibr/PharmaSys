@@ -64,6 +64,15 @@ export function purchaseRoutes(services: ServiceContainer): Router {
     res.status(201).json({ data: await services.purchase.createPurchase(req.body, req.user!.id) });
   }));
 
+  router.put('/:id', requireMicroPerm('purchases.edit'), handle(async (req, res) => {
+    res.json({ data: await services.purchase.updatePurchase(Number(req.params.id), req.body, req.user!.id) });
+  }));
+
+  router.delete('/:id', requireMicroPerm('purchases.delete'), handle(async (req, res) => {
+    await services.purchase.deletePurchase(Number(req.params.id), req.user!.id);
+    res.json({ data: { ok: true } });
+  }));
+
   router.post('/payments/:paymentId/pay', requireMicroPerm('purchases.pay'), handle(async (req, res) => {
     const paymentMethod = req.body.payment_method as ExpensePaymentMethod;
     res.json({

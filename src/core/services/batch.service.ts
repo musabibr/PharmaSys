@@ -48,7 +48,7 @@ export class BatchService {
     Validate.dateString(data.expiry_date, 'Expiry date');
     Validate.positiveInteger(data.quantity_base, 'Quantity');
 
-    const costParent = Money.round(Validate.positiveNumber(data.cost_per_parent, 'Cost per parent'));
+    const costParent = Money.round(Validate.positiveNumber(data.cost_per_parent, 'Cost per base unit'));
     const sellParent = data.selling_price_parent
       ? Money.round(Validate.positiveNumber(data.selling_price_parent, 'Selling price'))
       : 0;
