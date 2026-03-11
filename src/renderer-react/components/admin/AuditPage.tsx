@@ -46,7 +46,7 @@ import {
 // Constants
 // ---------------------------------------------------------------------------
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 10;
 
 const ACTION_OPTIONS = [
   'LOGIN',
@@ -401,7 +401,7 @@ export function AuditPage() {
             </p>
           </div>
         ) : (
-          <Table>
+          <Table className="sticky-col">
             <TableHeader>
               <TableRow>
                 <TableHead>{t('Time')}</TableHead>

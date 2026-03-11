@@ -626,7 +626,7 @@ export function UsersPage() {
               <p className="text-sm font-medium">{t('No users found')}</p>
             </div>
           ) : (
-            <Table>
+            <Table className="sticky-col">
               <TableHeader>
                 <TableRow>
                   <TableHead>{t('Username')}</TableHead>

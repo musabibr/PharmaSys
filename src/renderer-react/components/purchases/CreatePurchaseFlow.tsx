@@ -29,7 +29,7 @@ import { SupplierSelect } from './SupplierSelect';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
-const PAGE_SIZE = 15;
+const PAGE_SIZE = 10;
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -558,9 +558,14 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
   // ─── Render ─────────────────────────────────────────────────────────────
 
   return (
-    <div className="mx-auto w-full space-y-4 overflow-y-auto p-4">
-      {/* Stepper */}
-      <Stepper currentStep={step} hasItems={hasItems} />
+    <div className="flex h-full flex-col">
+      {/* Stepper — pinned top */}
+      <div className="shrink-0 px-4 pt-3">
+        <Stepper currentStep={step} hasItems={hasItems} />
+      </div>
+
+      {/* Scrollable content area */}
+      <div className="flex-1 overflow-y-auto min-h-0 space-y-4 px-4 py-3">
 
       {/* ════════════════════════════════════════════════════════════════════ */}
       {/* Step 1: Import */}
@@ -634,6 +639,7 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
       {/* Step 2: Review & Edit */}
       {/* ════════════════════════════════════════════════════════════════════ */}
       {step === 'review' && (
+        <>
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -652,24 +658,24 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
             </p>
 
             {/* Editable table */}
-            <div className="rounded-md border overflow-y-auto max-h-[55vh]">
-              <Table className="w-full table-fixed">
+            <div className="rounded-md border overflow-x-auto">
+              <Table className="w-max min-w-full sticky-col">
                 <TableHeader>
                   <TableRow className="bg-muted/50">
-                    <TableHead className="w-[3%]">#</TableHead>
-                    <TableHead className="w-[16%]">{t('Name')}*</TableHead>
-                    <TableHead className="w-[10%]">{t('Generic Name')}</TableHead>
-                    <TableHead className="w-[10%]">{t('Category')}</TableHead>
-                    <TableHead className="w-[10%]">{t('Usage Instructions')}</TableHead>
-                    <TableHead className="w-[8%]">{t('Expiry Date')}</TableHead>
-                    <TableHead className="w-[7%]">{t('Parent Unit')}</TableHead>
-                    <TableHead className="w-[7%]">{t('Child Unit')}</TableHead>
-                    <TableHead className="w-[5%]">{t('Conv')}</TableHead>
-                    <TableHead className="w-[5%]">{t('Qty')}*</TableHead>
-                    <TableHead className="w-[6%]">{t('Cost')}*</TableHead>
-                    <TableHead className="w-[6%]">{t('Sell/P')}*</TableHead>
-                    <TableHead className="w-[6%]">{t('Sell/C')}</TableHead>
-                    <TableHead className="w-[3%]"></TableHead>
+                    <TableHead className="w-8 whitespace-nowrap">#</TableHead>
+                    <TableHead className="max-w-[15rem] whitespace-nowrap">{t('Name')}*</TableHead>
+                    <TableHead className="hidden xl:table-cell max-w-[15rem] whitespace-nowrap">{t('Generic Name')}</TableHead>
+                    <TableHead className="hidden xl:table-cell whitespace-nowrap">{t('Category')}</TableHead>
+                    <TableHead className="hidden xl:table-cell whitespace-nowrap">{t('Usage Instructions')}</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Expiry Date')}</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Parent Unit')}</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Child Unit')}</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Conv')}</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Qty')}*</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Cost')}*</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Sell/P')}*</TableHead>
+                    <TableHead className="hidden xl:table-cell whitespace-nowrap">{t('Sell/C')}</TableHead>
+                    <TableHead className="w-8"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -685,23 +691,25 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                         <TableCell className="text-muted-foreground text-xs">
                           {globalIdx + 1}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="max-w-[15rem]">
                           <Input
                             value={item.name}
                             onChange={e => updateItem(item._key, 'name', e.target.value)}
-                            className={`h-8 text-xs ${!item.name.trim() ? 'ring-1 ring-destructive' : ''}`}
+                            className={`h-8 text-xs min-w-[8rem] ${!item.name.trim() ? 'ring-1 ring-destructive' : ''}`}
                             placeholder={t('Product Name')}
+                            maxLength={60}
                           />
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="hidden xl:table-cell max-w-[15rem]">
                           <Input
                             value={item.genericName}
                             onChange={e => updateItem(item._key, 'genericName', e.target.value)}
-                            className="h-8 text-xs"
+                            className="h-8 text-xs min-w-[6rem]"
                             placeholder={t('Generic')}
+                            maxLength={60}
                           />
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="hidden xl:table-cell">
                           {creatingCategoryForKey === item._key ? (
                             <Input
                               className="h-8 text-xs"
@@ -759,7 +767,7 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                             </div>
                           )}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="hidden xl:table-cell">
                           <Input
                             value={item.usageInstructions}
                             onChange={e => updateItem(item._key, 'usageInstructions', e.target.value)}
@@ -767,56 +775,56 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                             placeholder={t('e.g. 3 times daily')}
                           />
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="whitespace-nowrap">
                           <Input
                             type="text"
                             value={item.expiryDate}
                             onChange={e => updateItem(item._key, 'expiryDate', e.target.value)}
-                            className={`h-8 text-xs ${item.expiryDate && !isValidDate(item.expiryDate) ? 'ring-1 ring-destructive' : ''}`}
+                            className={`h-8 text-xs w-28 ${item.expiryDate && !isValidDate(item.expiryDate) ? 'ring-1 ring-destructive' : ''}`}
                             placeholder="YYYY-MM-DD"
                           />
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="whitespace-nowrap">
                           <Input
                             value={item.parentUnit}
                             onChange={e => updateItem(item._key, 'parentUnit', e.target.value)}
-                            className="h-8 text-xs"
+                            className="h-8 text-xs w-20"
                             placeholder={t('Box')}
                           />
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="whitespace-nowrap">
                           <Input
                             value={item.childUnit}
                             onChange={e => updateItem(item._key, 'childUnit', e.target.value)}
-                            className="h-8 text-xs"
+                            className="h-8 text-xs w-20"
                             placeholder={t('Optional')}
                           />
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="whitespace-nowrap">
                           <Input
                             type="number"
                             step="1"
                             min="1"
                             value={item.childUnit ? (item.convFactor || '') : ''}
                             onChange={e => updateItem(item._key, 'convFactor', Math.max(1, Math.round(Number(e.target.value) || 1)))}
-                            className="h-8 text-xs"
+                            className="h-8 text-xs w-14"
                             placeholder="1"
                             disabled={!item.childUnit}
                             title={!item.childUnit ? t('Set child unit first') : ''}
                           />
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="whitespace-nowrap">
                           <Input
                             type="number"
                             step="1"
                             min="0"
                             value={item.quantity || ''}
                             onChange={e => updateItem(item._key, 'quantity', Math.round(Number(e.target.value) || 0))}
-                            className={`h-8 text-xs ${item.quantity <= 0 ? 'ring-1 ring-destructive' : ''}`}
+                            className={`h-8 text-xs w-16 ${item.quantity <= 0 ? 'ring-1 ring-destructive' : ''}`}
                             placeholder="0"
                           />
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="whitespace-nowrap">
                           <Input
                             type="number"
                             step="1"
@@ -831,11 +839,11 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                                 updateItem(item._key, 'sellPrice', sell);
                               }
                             }}
-                            className={`h-8 text-xs ${item.costPerParent <= 0 ? 'ring-1 ring-destructive' : ''}`}
+                            className={`h-8 text-xs w-20 ${item.costPerParent <= 0 ? 'ring-1 ring-destructive' : ''}`}
                             placeholder="0"
                           />
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="whitespace-nowrap">
                           <Input
                             type="number"
                             step="1"
@@ -845,11 +853,11 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                               const sell = Math.round(Number(e.target.value) || 0);
                               updateItem(item._key, 'sellPrice', sell);
                             }}
-                            className="h-8 text-xs"
+                            className="h-8 text-xs w-20"
                             placeholder={item.costPerParent > 0 ? String(Math.round(item.costPerParent * (1 + defaultMarkup / 100))) : '0'}
                           />
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="hidden xl:table-cell whitespace-nowrap">
                           <Input
                             type="number"
                             step="1"
@@ -857,7 +865,7 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                             value={item.childUnit ? (item.sellPriceChild || '') : ''}
                             disabled={!item.childUnit}
                             onChange={e => updateItem(item._key, 'sellPriceChild', Math.round(Number(e.target.value) || 0))}
-                            className="h-8 text-xs"
+                            className="h-8 text-xs w-20"
                             placeholder={!item.childUnit ? '—' : (item.sellPrice > 0 ? String(Math.floor(item.sellPrice / item.convFactor)) : '0')}
                           />
                         </TableCell>
@@ -908,47 +916,16 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
               )}
             </div>
 
-            {/* Summary bar */}
-            <div className="flex items-center justify-between rounded-lg border bg-muted/50 px-4 py-2">
-              <div className="flex items-center gap-3">
-                <Badge variant="success">
-                  <CheckCircle2 className="me-1 h-3 w-3" />
-                  {reviewValid} {t('valid')}
-                </Badge>
-                {reviewErrors > 0 && (
-                  <Badge variant="destructive">
-                    <XCircle className="me-1 h-3 w-3" />
-                    {reviewErrors} {t('errors')}
-                  </Badge>
-                )}
-                <span className="text-sm text-muted-foreground">
-                  {t('Total')}: <span className="font-medium text-foreground">{formatCurrency(reviewTotal)}</span>
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" onClick={() => setStep('import')}>
-                  <ChevronLeft className="me-1 h-4 w-4" />
-                  {t('Back')}
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={() => enterMatchStep()}
-                  disabled={!canProceedFromReview()}
-                  title={!canProceedFromReview() ? t('Fix {{n}} errors to continue', { n: reviewErrors }) : ''}
-                >
-                  {t('Next')}
-                  <ChevronRight className="ms-1 h-4 w-4" />
-                </Button>
-              </div>
-            </div>
           </CardContent>
         </Card>
+        </>
       )}
 
       {/* ════════════════════════════════════════════════════════════════════ */}
       {/* Step 3: Product Matching */}
       {/* ════════════════════════════════════════════════════════════════════ */}
       {step === 'match' && (
+        <>
         <Card>
           <CardHeader>
             <CardTitle>{t('Product Matching')}</CardTitle>
@@ -1021,16 +998,16 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                 )}
 
                 {/* Match table */}
-                <div className="rounded-md border overflow-x-auto overflow-y-auto max-h-[55vh]">
-                  <Table>
+                <div className="rounded-md border overflow-x-auto">
+                  <Table className="sticky-col">
                     <TableHeader>
                       <TableRow className="bg-muted/50">
                         <TableHead className="w-10">#</TableHead>
-                        <TableHead className="min-w-[200px]">{t('Invoice Name')}</TableHead>
-                        <TableHead className="min-w-[120px]">{t('Status')}</TableHead>
-                        <TableHead className="min-w-[200px]">{t('Matched Product')}</TableHead>
-                        <TableHead className="min-w-[180px]">{t('Category')}</TableHead>
-                        <TableHead className="w-[80px]">{t('Actions')}</TableHead>
+                        <TableHead>{t('Invoice Name')}</TableHead>
+                        <TableHead>{t('Status')}</TableHead>
+                        <TableHead>{t('Matched Product')}</TableHead>
+                        <TableHead className="hidden xl:table-cell">{t('Category')}</TableHead>
+                        <TableHead className="w-16">{t('Actions')}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1108,7 +1085,7 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                                 <span className="text-xs text-muted-foreground">—</span>
                               )}
                             </TableCell>
-                            <TableCell>
+                            <TableCell className="hidden xl:table-cell">
                               {item.matchType === 'existing' ? (
                                 <span className="text-sm text-muted-foreground">{item.categoryName || '—'}</span>
                               ) : (
@@ -1221,21 +1198,11 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                   )}
                 </div>
 
-                {/* Navigation */}
-                <div className="flex justify-between pt-2">
-                  <Button variant="outline" size="sm" onClick={() => setStep('review')}>
-                    <ChevronLeft className="me-1 h-4 w-4" />
-                    {t('Back')}
-                  </Button>
-                  <Button size="sm" onClick={() => setStep('details')}>
-                    {t('Next')}
-                    <ChevronRight className="ms-1 h-4 w-4" />
-                  </Button>
-                </div>
               </>
             )}
           </CardContent>
         </Card>
+        </>
       )}
 
       {/* ════════════════════════════════════════════════════════════════════ */}
@@ -1477,37 +1444,89 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
               )}
             </CardContent>
           </Card>
-
-          {/* Submit */}
-          <div className="flex items-center justify-between pb-4">
-            {hasItems && (
-              <Button
-                variant="outline"
-                onClick={() => setStep('match')}
-              >
-                <ChevronLeft className="me-1 h-4 w-4" />
-                {t('Back')}
-              </Button>
-            )}
-            <div className={hasItems ? '' : 'ms-auto'}>
-              <Button
-                onClick={handleSubmit}
-                disabled={submitting || !invoiceTotal}
-                className="gap-1.5"
-                size="lg"
-              >
-                {submitting ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Save className="h-4 w-4" />
-                )}
-                {hasItems
-                  ? t('Confirm Purchase')
-                  : t('Create Purchase')}
-              </Button>
-            </div>
-          </div>
         </>
+      )}
+      </div>{/* ← end scrollable content area */}
+
+      {/* ═══════════════════════════════════════════════════════════════════════ */}
+      {/* Footer — pinned to bottom, always visible regardless of scroll        */}
+      {/* ═══════════════════════════════════════════════════════════════════════ */}
+
+      {/* Step 2: Review footer */}
+      {step === 'review' && (
+        <div className="shrink-0 flex items-center justify-between border-t bg-background/95 backdrop-blur px-4 py-2.5 shadow-[0_-2px_8px_rgba(0,0,0,0.06)]">
+          <div className="flex items-center gap-3">
+            <Badge variant="success">
+              <CheckCircle2 className="me-1 h-3 w-3" />
+              {reviewValid} {t('valid')}
+            </Badge>
+            {reviewErrors > 0 && (
+              <Badge variant="destructive">
+                <XCircle className="me-1 h-3 w-3" />
+                {reviewErrors} {t('errors')}
+              </Badge>
+            )}
+            <span className="text-sm text-muted-foreground">
+              {t('Total')}: <span className="font-medium text-foreground">{formatCurrency(reviewTotal)}</span>
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setStep('import')}>
+              <ChevronLeft className="me-1 h-4 w-4" />
+              {t('Back')}
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => enterMatchStep()}
+              disabled={!canProceedFromReview()}
+              title={!canProceedFromReview() ? t('Fix {{n}} errors to continue', { n: reviewErrors }) : ''}
+            >
+              {t('Next')}
+              <ChevronRight className="ms-1 h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 3: Match footer */}
+      {step === 'match' && !matchLoading && (
+        <div className="shrink-0 flex justify-between border-t bg-background/95 backdrop-blur px-4 py-2.5 shadow-[0_-2px_8px_rgba(0,0,0,0.06)]">
+          <Button variant="outline" size="sm" onClick={() => setStep('review')}>
+            <ChevronLeft className="me-1 h-4 w-4" />
+            {t('Back')}
+          </Button>
+          <Button size="sm" onClick={() => setStep('details')}>
+            {t('Next')}
+            <ChevronRight className="ms-1 h-4 w-4" />
+          </Button>
+        </div>
+      )}
+
+      {/* Step 4: Details submit footer */}
+      {step === 'details' && (
+        <div className="shrink-0 flex items-center justify-between border-t bg-background/95 backdrop-blur px-4 py-2.5 shadow-[0_-2px_8px_rgba(0,0,0,0.06)]">
+          {hasItems ? (
+            <Button variant="outline" onClick={() => setStep('match')}>
+              <ChevronLeft className="me-1 h-4 w-4" />
+              {t('Back')}
+            </Button>
+          ) : <div />}
+          <Button
+            onClick={handleSubmit}
+            disabled={submitting || !invoiceTotal}
+            className="gap-1.5"
+            size="lg"
+          >
+            {submitting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Save className="h-4 w-4" />
+            )}
+            {hasItems
+              ? t('Confirm Purchase')
+              : t('Create Purchase')}
+          </Button>
+        </div>
       )}
     </div>
   );

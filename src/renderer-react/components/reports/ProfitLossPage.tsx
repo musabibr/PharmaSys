@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import {
   AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
   DollarSign,
   Loader2,
   Printer,
@@ -170,8 +172,11 @@ function marginBgClass(margin: number): string {
 // ProfitLossPage
 // ---------------------------------------------------------------------------
 
+const ROWS_PER_PAGE = 5;
+
 export function ProfitLossPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.dir() === 'rtl';
 
   // ── Date range state ────────────────────────────────────────────────────
   const [startDate, setStartDate] = useState(firstOfMonth);
@@ -182,6 +187,10 @@ export function ProfitLossPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasLoaded, setHasLoaded] = useState(false);
+
+  // ── Pagination state ──────────────────────────────────────────────────
+  const [productsPage, setProductsPage] = useState(0);
+  const [expensesPage, setExpensesPage] = useState(0);
 
   // ── Fetch report ────────────────────────────────────────────────────────
   const fetchReport = useCallback(async (from: string, to: string) => {
@@ -200,6 +209,8 @@ export function ProfitLossPage() {
       const data = await api.reports.profitLoss(from, to);
       setReport(data);
       setHasLoaded(true);
+      setProductsPage(0);
+      setExpensesPage(0);
     } catch (err) {
       const msg = err instanceof Error ? err.message : t('Failed to load report');
       setError(msg);
@@ -564,11 +575,18 @@ export function ProfitLossPage() {
             {/* ── Top Products Table ─────────────────────────────────────── */}
             <Card>
               <CardHeader className="pb-3">
-                <div className="flex items-center gap-2">
-                  <ShoppingCart className="h-5 w-5 text-muted-foreground" />
-                  <CardTitle className="text-base">
-                    {t('Top Selling Products')}
-                  </CardTitle>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <ShoppingCart className="h-5 w-5 text-muted-foreground" />
+                    <CardTitle className="text-base">
+                      {t('Top Selling Products')}
+                    </CardTitle>
+                  </div>
+                  {topProducts.length > ROWS_PER_PAGE && (
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      {productsPage * ROWS_PER_PAGE + 1}–{Math.min((productsPage + 1) * ROWS_PER_PAGE, topProducts.length)} / {topProducts.length}
+                    </span>
+                  )}
                 </div>
               </CardHeader>
               <CardContent>
@@ -578,57 +596,93 @@ export function ProfitLossPage() {
                     <p className="text-sm font-medium">{t('No product data')}</p>
                   </div>
                 ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="w-12">#</TableHead>
-                        <TableHead>{t('Product')}</TableHead>
-                        <TableHead className="text-end">{t('Units Sold')}</TableHead>
-                        <TableHead className="text-end">{t('Revenue')}</TableHead>
-                        <TableHead className="text-end">{t('Profit')}</TableHead>
-                        <TableHead className="text-end">{t('Margin %')}</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {topProducts.map((product, index) => {
-                        const margin = product.revenue > 0
-                          ? Math.round((product.profit / product.revenue) * 100)
-                          : 0;
-                        return (
-                          <TableRow key={index}>
-                            <TableCell className="text-muted-foreground">
-                              {index + 1}
-                            </TableCell>
-                            <TableCell className="font-medium">
-                              {product.name}
-                            </TableCell>
-                            <TableCell className="text-end tabular-nums">
-                              {product.total_sold}
-                            </TableCell>
-                            <TableCell className="text-end tabular-nums">
-                              {formatCurrency(product.revenue)}
-                            </TableCell>
-                            <TableCell className={cn(
-                              'text-end tabular-nums font-medium',
-                              product.profit >= 0
-                                ? 'text-emerald-600 dark:text-emerald-400'
-                                : 'text-red-600 dark:text-red-400'
-                            )}>
-                              {formatCurrency(product.profit)}
-                            </TableCell>
-                            <TableCell className="text-end">
-                              <span className={cn(
-                                'inline-block rounded-full px-2 py-0.5 text-xs font-semibold',
-                                marginBgClass(margin)
+                  <>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-12">#</TableHead>
+                          <TableHead>{t('Product')}</TableHead>
+                          <TableHead className="text-end">{t('Units Sold')}</TableHead>
+                          <TableHead className="text-end">{t('Revenue')}</TableHead>
+                          <TableHead className="text-end">{t('Profit')}</TableHead>
+                          <TableHead className="text-end">{t('Margin %')}</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {topProducts.slice(productsPage * ROWS_PER_PAGE, (productsPage + 1) * ROWS_PER_PAGE).map((product, idx) => {
+                          const index = productsPage * ROWS_PER_PAGE + idx;
+                          const margin = product.revenue > 0
+                            ? Math.round((product.profit / product.revenue) * 100)
+                            : 0;
+                          return (
+                            <TableRow key={index}>
+                              <TableCell className="text-muted-foreground">
+                                {index + 1}
+                              </TableCell>
+                              <TableCell className="font-medium">
+                                {product.name}
+                              </TableCell>
+                              <TableCell className="text-end tabular-nums">
+                                {product.total_sold}
+                              </TableCell>
+                              <TableCell className="text-end tabular-nums">
+                                {formatCurrency(product.revenue)}
+                              </TableCell>
+                              <TableCell className={cn(
+                                'text-end tabular-nums font-medium',
+                                product.profit >= 0
+                                  ? 'text-emerald-600 dark:text-emerald-400'
+                                  : 'text-red-600 dark:text-red-400'
                               )}>
-                                {margin}%
-                              </span>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
+                                {formatCurrency(product.profit)}
+                              </TableCell>
+                              <TableCell className="text-end">
+                                <span className={cn(
+                                  'inline-block rounded-full px-2 py-0.5 text-xs font-semibold',
+                                  marginBgClass(margin)
+                                )}>
+                                  {margin}%
+                                </span>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                    {topProducts.length > ROWS_PER_PAGE && (
+                      <div className="flex items-center justify-end gap-1 pt-3">
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-7 w-7"
+                          disabled={productsPage === 0}
+                          onClick={() => setProductsPage(p => p - 1)}
+                        >
+                          {isRtl ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+                        </Button>
+                        {Array.from({ length: Math.ceil(topProducts.length / ROWS_PER_PAGE) }).map((_, i) => (
+                          <Button
+                            key={i}
+                            variant={i === productsPage ? 'default' : 'outline'}
+                            size="icon"
+                            className="h-7 w-7 text-xs"
+                            onClick={() => setProductsPage(i)}
+                          >
+                            {i + 1}
+                          </Button>
+                        ))}
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-7 w-7"
+                          disabled={productsPage >= Math.ceil(topProducts.length / ROWS_PER_PAGE) - 1}
+                          onClick={() => setProductsPage(p => p + 1)}
+                        >
+                          {isRtl ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                        </Button>
+                      </div>
+                    )}
+                  </>
                 )}
               </CardContent>
             </Card>
@@ -636,11 +690,18 @@ export function ProfitLossPage() {
             {/* ── Expenses by Category Table ──────────────────────────────── */}
             <Card>
               <CardHeader className="pb-3">
-                <div className="flex items-center gap-2">
-                  <TrendingDown className="h-5 w-5 text-muted-foreground" />
-                  <CardTitle className="text-base">
-                    {t('Expenses by Category')}
-                  </CardTitle>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <TrendingDown className="h-5 w-5 text-muted-foreground" />
+                    <CardTitle className="text-base">
+                      {t('Expenses by Category')}
+                    </CardTitle>
+                  </div>
+                  {expensesByCategory.length > ROWS_PER_PAGE && (
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      {expensesPage * ROWS_PER_PAGE + 1}–{Math.min((expensesPage + 1) * ROWS_PER_PAGE, expensesByCategory.length)} / {expensesByCategory.length}
+                    </span>
+                  )}
                 </div>
               </CardHeader>
               <CardContent>
@@ -650,60 +711,94 @@ export function ProfitLossPage() {
                     <p className="text-sm font-medium">{t('No expenses recorded')}</p>
                   </div>
                 ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>{t('Category')}</TableHead>
-                        <TableHead className="text-end">{t('Amount')}</TableHead>
-                        <TableHead className="text-end w-32">{t('% of Total')}</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {expensesByCategory.map((expense, index) => {
-                        const pct = expenseTotal > 0
-                          ? Math.round((expense.total / expenseTotal) * 100)
-                          : 0;
-                        // Precise percentage for the bar width (don't round to avoid 0-width bars)
-                        const pctExact = expenseTotal > 0
-                          ? (expense.total / expenseTotal) * 100
-                          : 0;
-                        return (
-                          <TableRow key={index}>
-                            <TableCell className="font-medium">
-                              {expense.category}
-                            </TableCell>
-                            <TableCell className="text-end tabular-nums">
-                              {formatCurrency(expense.total)}
-                            </TableCell>
-                            <TableCell className="text-end">
-                              <div className="flex items-center justify-end gap-2">
-                                <div className="h-2 w-16 overflow-hidden rounded-full bg-muted">
-                                  <div
-                                    className="h-full rounded-full bg-primary/70 transition-all"
-                                    style={{ width: `${Math.max(pctExact, 2)}%` }}
-                                  />
+                  <>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>{t('Category')}</TableHead>
+                          <TableHead className="text-end">{t('Amount')}</TableHead>
+                          <TableHead className="text-end w-32">{t('% of Total')}</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {expensesByCategory.slice(expensesPage * ROWS_PER_PAGE, (expensesPage + 1) * ROWS_PER_PAGE).map((expense, index) => {
+                          const pct = expenseTotal > 0
+                            ? Math.round((expense.total / expenseTotal) * 100)
+                            : 0;
+                          const pctExact = expenseTotal > 0
+                            ? (expense.total / expenseTotal) * 100
+                            : 0;
+                          return (
+                            <TableRow key={index}>
+                              <TableCell className="font-medium">
+                                {expense.category}
+                              </TableCell>
+                              <TableCell className="text-end tabular-nums">
+                                {formatCurrency(expense.total)}
+                              </TableCell>
+                              <TableCell className="text-end">
+                                <div className="flex items-center justify-end gap-2">
+                                  <div className="h-2 w-16 overflow-hidden rounded-full bg-muted">
+                                    <div
+                                      className="h-full rounded-full bg-primary/70 transition-all"
+                                      style={{ width: `${Math.max(pctExact, 2)}%` }}
+                                    />
+                                  </div>
+                                  <span className="min-w-[2.5rem] tabular-nums text-sm text-muted-foreground">
+                                    {pct}%
+                                  </span>
                                 </div>
-                                <span className="min-w-[2.5rem] tabular-nums text-sm text-muted-foreground">
-                                  {pct}%
-                                </span>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                    <TableFooter>
-                      <TableRow>
-                        <TableCell className="font-bold">{t('Total')}</TableCell>
-                        <TableCell className="text-end tabular-nums font-bold">
-                          {formatCurrency(expenseTotal)}
-                        </TableCell>
-                        <TableCell className="text-end">
-                          <span className="tabular-nums text-sm font-medium">100%</span>
-                        </TableCell>
-                      </TableRow>
-                    </TableFooter>
-                  </Table>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                      <TableFooter>
+                        <TableRow>
+                          <TableCell className="font-bold">{t('Total')}</TableCell>
+                          <TableCell className="text-end tabular-nums font-bold">
+                            {formatCurrency(expenseTotal)}
+                          </TableCell>
+                          <TableCell className="text-end">
+                            <span className="tabular-nums text-sm font-medium">100%</span>
+                          </TableCell>
+                        </TableRow>
+                      </TableFooter>
+                    </Table>
+                    {expensesByCategory.length > ROWS_PER_PAGE && (
+                      <div className="flex items-center justify-end gap-1 pt-3">
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-7 w-7"
+                          disabled={expensesPage === 0}
+                          onClick={() => setExpensesPage(p => p - 1)}
+                        >
+                          {isRtl ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+                        </Button>
+                        {Array.from({ length: Math.ceil(expensesByCategory.length / ROWS_PER_PAGE) }).map((_, i) => (
+                          <Button
+                            key={i}
+                            variant={i === expensesPage ? 'default' : 'outline'}
+                            size="icon"
+                            className="h-7 w-7 text-xs"
+                            onClick={() => setExpensesPage(i)}
+                          >
+                            {i + 1}
+                          </Button>
+                        ))}
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-7 w-7"
+                          disabled={expensesPage >= Math.ceil(expensesByCategory.length / ROWS_PER_PAGE) - 1}
+                          onClick={() => setExpensesPage(p => p + 1)}
+                        >
+                          {isRtl ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                        </Button>
+                      </div>
+                    )}
+                  </>
                 )}
               </CardContent>
             </Card>

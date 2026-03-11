@@ -32,7 +32,7 @@ interface CartState {
 
 function calcLineTotal(item: CartItem): number {
   const gross = item.unit_price * item.quantity;
-  const discount = Math.round(gross * (item.discount_percent / 100));
+  const discount = Math.floor(gross * (item.discount_percent / 100));
   return gross - discount;
 }
 
@@ -49,6 +49,7 @@ export const useCartStore = create<CartState>((set, get) => ({
   },
 
   updateQuantity: (index, qty) => {
+    if (qty < 1 || !Number.isInteger(qty)) return;
     const items = [...get().items];
     if (items[index]) items[index] = { ...items[index], quantity: qty };
     set({ items });
@@ -69,7 +70,7 @@ export const useCartStore = create<CartState>((set, get) => ({
   getDiscountTotal: () => {
     const lineDiscounts = get().items.reduce((s, i) => {
       const gross = i.unit_price * i.quantity;
-      return s + Math.round(gross * (i.discount_percent / 100));
+      return s + Math.floor(gross * (i.discount_percent / 100));
     }, 0);
     return lineDiscounts + get().extraDiscount;
   },

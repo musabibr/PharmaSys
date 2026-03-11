@@ -566,8 +566,8 @@ app.whenReady().then(async () => {
 
     // Backup save-as dialog: copies an existing backup + encryption key to a user-chosen location
     ipcMain.handle('backup:saveAs', async (_event, sourcePath: string) => {
-      const win = BrowserWindow.getFocusedWindow();
-      if (!win) return { success: false };
+      const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      if (!win) return { success: false, error: 'No window available' };
       const defaultName = path.basename(sourcePath);
       const { filePath, canceled } = await dialog.showSaveDialog(win, {
         title: 'Save Backup As',
@@ -575,20 +575,24 @@ app.whenReady().then(async () => {
         filters: [{ name: 'Encrypted Backup', extensions: ['enc'] }],
       });
       if (canceled || !filePath) return { success: false };
-      fs.copyFileSync(sourcePath, filePath);
-      // Also copy encryption key alongside (needed for device migration)
-      const keyPath = path.join(dataPath, '.backup-key');
-      if (fs.existsSync(keyPath)) {
-        const keyDest = filePath.replace(/\.enc$/, '.key');
-        fs.copyFileSync(keyPath, keyDest);
+      try {
+        fs.copyFileSync(sourcePath, filePath);
+        // Also copy encryption key alongside (needed for device migration)
+        const keyPath = path.join(dataPath, '.backup-key');
+        if (fs.existsSync(keyPath)) {
+          const keyDest = filePath.replace(/\.enc$/, '.key');
+          fs.copyFileSync(keyPath, keyDest);
+        }
+        return { success: true, savedPath: filePath };
+      } catch (err) {
+        return { success: false, error: `Failed to save backup: ${(err as Error).message}` };
       }
-      return { success: true, savedPath: filePath };
     });
 
     // Restore backup from external file (device migration scenario)
     ipcMain.handle('backup:restoreFromFile', async (_event) => {
-      const win = BrowserWindow.getFocusedWindow();
-      if (!win) return { success: false, error: 'No window' };
+      const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      if (!win) return { success: false, error: 'No window available' };
 
       const { filePaths, canceled } = await dialog.showOpenDialog(win, {
         title: 'Select Backup File',

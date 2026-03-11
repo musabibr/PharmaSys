@@ -142,7 +142,7 @@ export function AddToCartModal({ productId, open, onOpenChange }: AddToCartModal
 
   // Line total calculation
   const lineGross = unitPrice * quantity;
-  const lineDiscount = Math.round(lineGross * (discountPercent / 100));
+  const lineDiscount = Math.floor(lineGross * (discountPercent / 100));
   const lineTotal = lineGross - lineDiscount;
 
   // ── Submit handler ────────────────────────────────────────────────────────

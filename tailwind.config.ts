@@ -67,6 +67,20 @@ const config: Config = {
           'accent-foreground': 'hsl(var(--sidebar-accent-foreground))',
         },
       },
+      screens: {
+        compact: { raw: '(max-height: 800px)' },
+      },
+      width: {
+        sidebar: 'var(--density-sidebar-w)',
+        'sidebar-collapsed': 'var(--density-sidebar-collapsed-w)',
+        cart: 'var(--density-cart-w)',
+      },
+      height: {
+        header: 'var(--density-header-h)',
+      },
+      padding: {
+        density: 'var(--density-content-pad)',
+      },
       borderRadius: {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',

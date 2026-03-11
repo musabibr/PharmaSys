@@ -67,6 +67,23 @@ export function App() {
     root.classList.add(theme);
   }, [theme]);
 
+  // Apply density mode to <html> — auto-detects viewport on 768p screens
+  const density = useUiStore((s) => s.density);
+  useEffect(() => {
+    const apply = () => {
+      let resolved: 'comfort' | 'compact' = density as 'comfort' | 'compact';
+      if (density === 'auto') {
+        resolved = window.innerHeight <= 800 ? 'compact' : 'comfort';
+      }
+      document.documentElement.dataset.density = resolved;
+    };
+    apply();
+    if (density === 'auto') {
+      window.addEventListener('resize', apply);
+      return () => window.removeEventListener('resize', apply);
+    }
+  }, [density]);
+
   // Initialize on mount
   useEffect(() => {
     checkSession();

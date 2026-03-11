@@ -67,6 +67,9 @@ export class ShiftService {
     if (shift.status !== 'open') {
       throw new ValidationError('Shift is already closed', 'shift');
     }
+    if (shift.user_id !== userId) {
+      throw new ValidationError('You can only close your own shift', 'shift');
+    }
 
     const actual   = Money.round(Validate.nonNegativeNumber(actualCash, 'Actual cash'));
     const expected = await this.repo.getExpectedCash(shiftId);

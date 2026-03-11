@@ -12,6 +12,7 @@ import {
   Legend,
 } from 'recharts';
 import { formatCurrency } from '@/lib/utils';
+import { useUiStore } from '@/stores/ui.store';
 
 const useIsRtl = () => {
   const { i18n } = useTranslation();
@@ -117,6 +118,7 @@ export function DailyTrendChart({ data }: DailyTrendChartProps) {
   const { t, i18n } = useTranslation();
   const locale = i18n.language;
   const isRtl = i18n.dir() === 'rtl';
+  const isCompact = useUiStore((s) => s.resolvedDensity()) === 'compact';
 
   // Prepare chart data with formatted dates for X-axis labels
   const chartData = useMemo(() => {
@@ -137,8 +139,8 @@ export function DailyTrendChart({ data }: DailyTrendChartProps) {
   }
 
   return (
-    <div className="min-h-[300px] w-full">
-      <ResponsiveContainer width="100%" height={350}>
+    <div className="min-h-[240px] w-full">
+      <ResponsiveContainer width="100%" height={isCompact ? 260 : 350}>
         <ComposedChart
           data={chartData}
           margin={{ top: 8, right: isRtl ? 50 : 16, left: isRtl ? 8 : 50, bottom: 8 }}

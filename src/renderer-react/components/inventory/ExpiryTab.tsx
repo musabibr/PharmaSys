@@ -35,10 +35,13 @@ import {
 import { Button } from '@/components/ui/button';
 import { usePermission } from '@/hooks/usePermission';
 import { printHtml } from '@/lib/print';
+import { DataPagination } from '@/components/ui/data-pagination';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+const PAGE_SIZE = 10;
 
 type UrgencyBucket = 'expired' | '1-30' | '31-60' | '61-90';
 
@@ -135,6 +138,7 @@ export function ExpiryTab() {
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
   const [urgencyFilter, setUrgencyFilter] = useState<string>('all');
+  const [page, setPage] = useState(1);
 
   // ── Data fetching ──────────────────────────────────────────────────────
 
@@ -217,6 +221,14 @@ export function ExpiryTab() {
 
     return result;
   }, [allBatches, urgencyFilter, searchQuery]);
+
+  // Reset page when filters change
+  useEffect(() => { setPage(1); }, [searchQuery, urgencyFilter]);
+
+  // ── Pagination ──────────────────────────────────────────────────────────
+  const totalPages = Math.max(1, Math.ceil(filteredBatches.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const paginatedBatches = filteredBatches.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   // ── Print handler ──────────────────────────────────────────────────────
 
@@ -459,7 +471,7 @@ export function ExpiryTab() {
         <EmptyState message={t('No expiring or expired items found')} />
       ) : (
         <div className="rounded-md border">
-          <Table>
+          <Table className="sticky-col">
             <TableHeader>
               <TableRow>
                 <TableHead className="w-12 text-center">#</TableHead>
@@ -471,11 +483,11 @@ export function ExpiryTab() {
                 {canViewCosts && (
                   <TableHead className="text-end">{t('Cost Value')}</TableHead>
                 )}
-                <TableHead>{t('Created')}</TableHead>
+                <TableHead className="hidden lg:table-cell">{t('Created')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredBatches.map((batch, idx) => {
+              {paginatedBatches.map((batch, idx) => {
                 const days = daysUntilExpiry(batch.expiry_date);
                 const bucket = getUrgencyBucket(days);
 
@@ -509,7 +521,7 @@ export function ExpiryTab() {
 
                 return (
                   <TableRow key={batch.id}>
-                    <TableCell className="text-center text-muted-foreground">{idx + 1}</TableCell>
+                    <TableCell className="text-center text-muted-foreground">{(safePage - 1) * PAGE_SIZE + idx + 1}</TableCell>
                     <TableCell className="font-medium">
                       {batch.product_name ?? `#${batch.product_id}`}
                     </TableCell>
@@ -542,7 +554,7 @@ export function ExpiryTab() {
                         {formatCurrency(costValue)}
                       </TableCell>
                     )}
-                    <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                    <TableCell className="hidden lg:table-cell text-sm text-muted-foreground whitespace-nowrap">
                       {batch.created_at
                         ? new Date(batch.created_at).toLocaleDateString()
                         : '\u2014'}
@@ -553,6 +565,17 @@ export function ExpiryTab() {
             </TableBody>
           </Table>
         </div>
+      )}
+
+      {/* ── Pagination ────────────────────────────────────────────────── */}
+      {totalPages > 1 && (
+        <DataPagination
+          page={safePage}
+          totalPages={totalPages}
+          total={filteredBatches.length}
+          pageSize={PAGE_SIZE}
+          onPageChange={setPage}
+        />
       )}
     </div>
   );

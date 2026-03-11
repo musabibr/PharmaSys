@@ -53,7 +53,7 @@ import { ProductForm } from './ProductForm';
 // ---------------------------------------------------------------------------
 
 const ALL_CATEGORIES = '__all__';
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 10;
 
 // ---------------------------------------------------------------------------
 // Inline category creation dialog
@@ -442,7 +442,7 @@ export function ProductsTab() {
         </div>
 
         <Select value={categoryId} onValueChange={(v) => { setCategoryId(v); }}>
-          <SelectTrigger className="w-[200px] shrink-0">
+          <SelectTrigger className="w-44 shrink-0">
             <SelectValue placeholder={t('All Categories')} />
           </SelectTrigger>
           <SelectContent>
@@ -481,7 +481,7 @@ export function ProductsTab() {
             }
           />
         ) : (
-          <Table>
+          <Table className="sticky-col">
             <TableHeader>
               <TableRow>
                 <TableHead className="w-12 text-center">#</TableHead>
@@ -491,7 +491,7 @@ export function ProductsTab() {
                     <ArrowUpDown className={`h-3.5 w-3.5 ${sortKey === 'name' ? 'text-foreground' : 'text-muted-foreground/40'}`} />
                   </button>
                 </TableHead>
-                <TableHead>{t('Generic Name')}</TableHead>
+                <TableHead className="hidden lg:table-cell">{t('Generic Name')}</TableHead>
                 <TableHead>{t('Category')}</TableHead>
                 <TableHead>{t('Units')}</TableHead>
                 <TableHead>{t('Stock')}</TableHead>
@@ -508,8 +508,8 @@ export function ProductsTab() {
               {products.map((product, idx) => (
                 <TableRow key={product.id}>
                   <TableCell className="text-center text-muted-foreground">{(page - 1) * PAGE_SIZE + idx + 1}</TableCell>
-                  <TableCell className="font-medium">{product.name}</TableCell>
-                  <TableCell className="text-muted-foreground">
+                  <TableCell className="font-medium truncate max-w-[180px]">{product.name}</TableCell>
+                  <TableCell className="hidden lg:table-cell text-muted-foreground">
                     {product.generic_name || '\u2014'}
                   </TableCell>
                   <TableCell>{product.category_name || '\u2014'}</TableCell>

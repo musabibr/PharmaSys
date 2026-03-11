@@ -89,7 +89,7 @@ export function CartPanel({ onCheckout, onHold, onRetrieveHeld, shiftOpen }: Car
             {items.map((item, index) => {
               const unitLabel = item.unit_type === 'parent' ? item.parent_unit : item.child_unit;
               const lineGross = item.unit_price * item.quantity;
-              const lineDiscount = Math.round(lineGross * (item.discount_percent / 100));
+              const lineDiscount = Math.floor(lineGross * (item.discount_percent / 100));
               const lineTotal = lineGross - lineDiscount;
 
               return (

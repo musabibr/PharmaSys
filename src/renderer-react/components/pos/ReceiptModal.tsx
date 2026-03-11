@@ -256,7 +256,7 @@ export function ReceiptModal({ open, onOpenChange, transaction }: ReceiptModalPr
           </DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="max-h-[60vh]">
+        <ScrollArea className="max-h-[70vh]">
           <div className="space-y-4 px-1 font-mono text-sm">
             {/* ---- Header ---- */}
             <div className="text-center">
@@ -303,7 +303,7 @@ export function ReceiptModal({ open, onOpenChange, transaction }: ReceiptModalPr
               <tbody>
                 {items.map((item: TransactionItem, idx: number) => (
                   <tr key={item.id ?? idx} className="border-b border-dashed last:border-0">
-                    <td className="max-w-[120px] truncate py-1 text-start">
+                    <td className="max-w-[180px] truncate py-1 text-start">
                       {item.product_name ?? `#${item.product_id}`}
                     </td>
                     <td className="py-1 text-center tabular-nums">

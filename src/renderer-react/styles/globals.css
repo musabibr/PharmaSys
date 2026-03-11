@@ -108,6 +108,94 @@
     --sidebar-accent-foreground: 0 0% 100%;
   }
 
+  /* ═══════════════════════════════════════════════════════════════════════ */
+  /*  Density Design Tokens                                                */
+  /*  "comfort" = default (1080p+), "compact" = 768p screens (1366x768)   */
+  /*  One data-density attribute on <html> cascades ALL sizing changes.    */
+  /* ═══════════════════════════════════════════════════════════════════════ */
+
+  :root {
+    /* Layout frame */
+    --density-sidebar-w: 240px;
+    --density-sidebar-collapsed-w: 76px;
+    --density-header-h: 3.5rem;
+    --density-content-pad: 12px;
+
+    /* Card internals */
+    --density-card-pad: 24px;
+    --density-card-pad-sm: 16px;
+
+    /* Table density */
+    --density-table-cell-py: 10px;
+    --density-table-cell-px: 12px;
+    --density-table-font: 13px;
+    --density-table-head-h: 44px;
+
+    /* Dashboard hero */
+    --density-hero-pad: 32px;
+    --density-hero-title: 40px;
+    --density-hero-metric: 48px;
+    --density-hero-metric-sm: 36px;
+
+    /* Dialog */
+    --density-dialog-pad: 24px;
+
+    /* Filter bar */
+    --density-filter-h: 36px;
+    --density-filter-w: 160px;
+    --density-filter-font: 13px;
+
+    /* POS cart */
+    --density-cart-w: 300px;
+
+    /* Buttons */
+    --density-btn-h: 36px;
+    --density-btn-h-sm: 32px;
+
+    /* Spacing scale */
+    --density-gap-sm: 8px;
+    --density-gap-md: 12px;
+    --density-gap-lg: 16px;
+    --density-gap-xl: 24px;
+  }
+
+  /* ── COMPACT density — 1366x768 and similar ──────────────────────────── */
+  [data-density="compact"] {
+    --density-sidebar-w: 200px;
+    --density-sidebar-collapsed-w: 60px;
+    --density-header-h: 2.75rem;
+    --density-content-pad: 8px;
+
+    --density-card-pad: 14px;
+    --density-card-pad-sm: 10px;
+
+    --density-table-cell-py: 5px;
+    --density-table-cell-px: 8px;
+    --density-table-font: 12px;
+    --density-table-head-h: 32px;
+
+    --density-hero-pad: 16px;
+    --density-hero-title: 26px;
+    --density-hero-metric: 32px;
+    --density-hero-metric-sm: 24px;
+
+    --density-dialog-pad: 16px;
+
+    --density-filter-h: 30px;
+    --density-filter-w: 120px;
+    --density-filter-font: 12px;
+
+    --density-cart-w: 260px;
+
+    --density-btn-h: 30px;
+    --density-btn-h-sm: 26px;
+
+    --density-gap-sm: 4px;
+    --density-gap-md: 8px;
+    --density-gap-lg: 12px;
+    --density-gap-xl: 16px;
+  }
+
   * {
     @apply border-border;
   }
@@ -669,3 +757,200 @@ html[dir="rtl"] [dir="ltr"]:not(input):not(textarea):not(pre):not(code) {
 [dir="rtl"] .-translate-x-1    { --tw-translate-x:  0.25rem; }
 [dir="rtl"] .translate-x-1\/2  { --tw-translate-x: -50%; }
 [dir="rtl"] .-translate-x-1\/2 { --tw-translate-x:  50%; }
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Density Engine — Compact Mode CSS Cascade                                 */
+/*  These rules auto-apply tighter spacing to ALL components when             */
+/*  data-density="compact" is set on <html>. No per-component JSX changes.   */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Table density ─────────────────────────────────────────────────────── */
+[data-density="compact"] th {
+  height: var(--density-table-head-h);
+  padding: var(--density-table-cell-py) var(--density-table-cell-px);
+  font-size: var(--density-table-font);
+}
+[data-density="compact"] td {
+  padding: var(--density-table-cell-py) var(--density-table-cell-px);
+  font-size: var(--density-table-font);
+}
+
+/* ── Card padding compression ──────────────────────────────────────────── */
+/* Shadcn CardHeader uses p-6, CardContent uses p-6 pt-0                    */
+[data-density="compact"] .rounded-lg.border.bg-card > .p-6 {
+  padding: var(--density-card-pad);
+}
+[data-density="compact"] .rounded-lg.border.bg-card > .p-6.pt-0 {
+  padding: var(--density-card-pad);
+  padding-top: 0;
+}
+[data-density="compact"] .rounded-lg.border.bg-card > .p-4 {
+  padding: var(--density-card-pad-sm);
+}
+
+/* ── Vertical spacing compression ──────────────────────────────────────── */
+[data-density="compact"] .space-y-6 > :not([hidden]) ~ :not([hidden]) {
+  --tw-space-y-reverse: 0;
+  margin-top: var(--density-gap-lg);
+  margin-bottom: 0;
+}
+[data-density="compact"] .space-y-4 > :not([hidden]) ~ :not([hidden]) {
+  --tw-space-y-reverse: 0;
+  margin-top: var(--density-gap-md);
+  margin-bottom: 0;
+}
+[data-density="compact"] .space-y-3 > :not([hidden]) ~ :not([hidden]) {
+  --tw-space-y-reverse: 0;
+  margin-top: var(--density-gap-sm);
+  margin-bottom: 0;
+}
+
+/* ── Gap compression ───────────────────────────────────────────────────── */
+[data-density="compact"] .gap-6 { gap: var(--density-gap-lg); }
+[data-density="compact"] .gap-4 { gap: var(--density-gap-md); }
+[data-density="compact"] .gap-3 { gap: var(--density-gap-sm); }
+
+/* ── Dashboard hero compression ────────────────────────────────────────── */
+[data-density="compact"] .db-hero {
+  padding: var(--density-hero-pad) !important;
+}
+[data-density="compact"] .db-hero h1,
+[data-density="compact"] .db-hero .text-\[32px\],
+[data-density="compact"] .db-hero .sm\:text-\[40px\] {
+  font-size: var(--density-hero-title) !important;
+  line-height: 1.2;
+}
+[data-density="compact"] .db-hero .text-\[36px\],
+[data-density="compact"] .db-hero .sm\:text-\[48px\],
+[data-density="compact"] .db-hero .text-\[48px\] {
+  font-size: var(--density-hero-metric) !important;
+  line-height: 1.1;
+}
+[data-density="compact"] .db-hero .text-\[28px\],
+[data-density="compact"] .db-hero .sm\:text-\[36px\] {
+  font-size: var(--density-hero-metric-sm) !important;
+  line-height: 1.2;
+}
+
+/* ── Hero decorative elements — scale down ─────────────────────────────── */
+[data-density="compact"] .db-hero-circle-1 {
+  width: 140px;
+  height: 140px;
+}
+[data-density="compact"] .db-hero-circle-2 {
+  width: 70px;
+  height: 70px;
+}
+
+/* ── Filter bar compression ────────────────────────────────────────────── */
+/* Reduce height and font of inputs/selects inside filter areas             */
+[data-density="compact"] .flex.flex-wrap input,
+[data-density="compact"] .flex.flex-wrap select,
+[data-density="compact"] .flex.flex-wrap button[role="combobox"] {
+  height: var(--density-filter-h);
+  font-size: var(--density-filter-font);
+}
+/* Compress fixed-width select triggers */
+[data-density="compact"] button[role="combobox"].w-36,
+[data-density="compact"] button[role="combobox"].w-40,
+[data-density="compact"] button[role="combobox"].w-44 {
+  width: var(--density-filter-w);
+}
+[data-density="compact"] input.w-36,
+[data-density="compact"] input.w-40,
+[data-density="compact"] input.w-44 {
+  width: var(--density-filter-w);
+}
+/* Catch bracket-notation widths (w-[200px], w-[180px], w-[150px], etc.) */
+[data-density="compact"] .flex.flex-wrap button[role="combobox"][class*="w-\["],
+[data-density="compact"] .flex.flex-wrap input[class*="w-\["] {
+  max-width: var(--density-filter-w);
+}
+/* Filter labels */
+[data-density="compact"] .flex.flex-wrap label {
+  font-size: 11px;
+}
+
+/* ── Dialog padding compression ────────────────────────────────────────── */
+[data-density="compact"] [role="dialog"] {
+  padding: var(--density-dialog-pad);
+}
+[data-density="compact"] [role="dialog"] .space-y-1\.5 {
+  gap: 2px;
+}
+
+/* ── Button height compression (Shadcn default h-9 = 36px) ────────────── */
+[data-density="compact"] button.h-9 {
+  height: var(--density-btn-h);
+}
+[data-density="compact"] button.h-8 {
+  height: var(--density-btn-h-sm);
+}
+
+/* ── Sticky first column for wide tables ───────────────────────────────── */
+/* Apply className="sticky-col" on the <Table> component. The Table's       */
+/* internal overflow-auto wrapper enables horizontal scroll, and these       */
+/* rules make the first column stick while scrolling.                        */
+table.sticky-col th:first-child,
+table.sticky-col td:first-child {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: 10;
+  background: hsl(var(--card));
+}
+table.sticky-col th:first-child {
+  z-index: 11;
+}
+/* Subtle edge shadow to indicate more content */
+table.sticky-col th:first-child::after,
+table.sticky-col td:first-child::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  inset-inline-end: -4px;
+  width: 4px;
+  background: linear-gradient(to right, rgba(0,0,0,0.06), transparent);
+  pointer-events: none;
+}
+[dir="rtl"] table.sticky-col th:first-child::after,
+[dir="rtl"] table.sticky-col td:first-child::after {
+  background: linear-gradient(to left, rgba(0,0,0,0.06), transparent);
+  inset-inline-end: auto;
+  inset-inline-start: -4px;
+}
+
+/* ── Summary grids: 2 cols in compact on <1400px viewport ─────────────── */
+@media (max-width: 1399px) {
+  [data-density="compact"] .grid.grid-cols-3:not(.db-bento) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ── Dialog max-height safety in compact ──────────────────────────────── */
+/* !important needed to override Tailwind's max-h-[90vh]/max-h-[85vh]     */
+[data-density="compact"] [role="dialog"] {
+  max-height: calc(100vh - var(--density-header-h) - 1.5rem) !important;
+}
+
+/* ── Empty state padding compression ─────────────────────────────────── */
+/* Reduce large vertical padding on empty/error states in compact mode    */
+[data-density="compact"] .py-20 { padding-top: 2rem; padding-bottom: 2rem; }
+[data-density="compact"] .py-16 { padding-top: 1.5rem; padding-bottom: 1.5rem; }
+[data-density="compact"] .py-12 { padding-top: 1rem; padding-bottom: 1rem; }
+
+/* ── Chart height compression ────────────────────────────────────────── */
+/* Shrink fixed-height chart containers on compact screens                */
+[data-density="compact"] .h-\[350px\] { height: 260px; }
+[data-density="compact"] .h-\[360px\] { height: 260px; }
+[data-density="compact"] .h-\[400px\] { height: 280px; }
+
+/* ── Text scaling in compact ─────────────────────────────────────────── */
+/* Scale down large text in non-hero sections for compact screens         */
+[data-density="compact"] .text-2xl { font-size: 1.25rem; }
+[data-density="compact"] .text-lg { font-size: 0.9375rem; }
+
+/* ── Gap tightening in compact ───────────────────────────────────────── */
+[data-density="compact"] .gap-6 { gap: var(--density-gap-lg); }
+[data-density="compact"] .gap-4 { gap: var(--density-gap-md); }
+[data-density="compact"] .gap-3 { gap: var(--density-gap-sm); }

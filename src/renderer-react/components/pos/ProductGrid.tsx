@@ -39,7 +39,7 @@ interface ProductGridProps {
 
 function GridSkeleton() {
   return (
-    <div className="grid grid-cols-2 gap-2 lg:grid-cols-3 2xl:grid-cols-4">
+    <div className="grid grid-cols-2 gap-2 xl:grid-cols-3 2xl:grid-cols-4">
       {Array.from({ length: 8 }).map((_, i) => (
         <Card key={i}>
           <CardContent className="p-3">
@@ -178,7 +178,7 @@ export function ProductGrid({ onProductSelect, refreshKey }: ProductGridProps) {
 
         {/* Category dropdown */}
         <Select value={categoryId} onValueChange={handleCategoryChange}>
-          <SelectTrigger className="w-[180px] shrink-0">
+          <SelectTrigger className="w-44 shrink-0">
             <SelectValue placeholder={t('All Categories')} />
           </SelectTrigger>
           <SelectContent>

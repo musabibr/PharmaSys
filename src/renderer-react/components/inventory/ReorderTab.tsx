@@ -19,7 +19,7 @@ import { printHtml } from '@/lib/print';
 import { DataPagination } from '@/components/ui/data-pagination';
 import { Button } from '@/components/ui/button';
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 10;
 import {
   AlertTriangle,
   CheckCircle,
@@ -238,13 +238,13 @@ export function ReorderTab() {
 
       {/* ── Table ──────────────────────────────────────────────────────── */}
       <div className="rounded-md border">
-        <Table>
+        <Table className="sticky-col">
           <TableHeader>
             <TableRow>
               <TableHead className="w-12 text-center">#</TableHead>
               <TableHead>{t('Product Name')}</TableHead>
               <TableHead className="text-end">{t('Current Stock')}</TableHead>
-              <TableHead className="text-end">{t('Min Stock Level')}</TableHead>
+              <TableHead className="hidden lg:table-cell text-end">{t('Min Stock Level')}</TableHead>
               <TableHead className="text-end">{t('Daily Velocity')}</TableHead>
               <TableHead className="text-end">{t('Days Left')}</TableHead>
               <TableHead className="text-end">{t('Recommended Order')}</TableHead>
@@ -278,7 +278,7 @@ export function ReorderTab() {
                 return (
                   <TableRow key={item.id}>
                     <TableCell className="text-center text-muted-foreground">{(safePage - 1) * PAGE_SIZE + idx + 1}</TableCell>
-                    <TableCell className="font-medium">{item.name}</TableCell>
+                    <TableCell className="font-medium truncate max-w-[180px]">{item.name}</TableCell>
                     <TableCell className="text-end tabular-nums">
                       {formatQuantity(
                         item.current_stock_base,
@@ -287,7 +287,7 @@ export function ReorderTab() {
                         item.conversion_factor
                       )}
                     </TableCell>
-                    <TableCell className="text-end tabular-nums">
+                    <TableCell className="hidden lg:table-cell text-end tabular-nums">
                       {item.min_stock_level} {item.parent_unit}
                     </TableCell>
                     <TableCell className="text-end tabular-nums">

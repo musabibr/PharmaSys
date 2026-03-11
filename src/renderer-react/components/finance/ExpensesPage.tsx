@@ -62,7 +62,7 @@ import {
 
 const NEW_CATEGORY_SENTINEL = '__new_category__';
 const ALL_CATEGORIES = '__all__';
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 10;
 
 /** Return the first day of the current month as YYYY-MM-DD */
 function firstOfMonth(): string {
@@ -639,7 +639,7 @@ export function ExpensesPage() {
               </p>
             </div>
           ) : (
-            <Table>
+            <Table className="sticky-col">
               <TableHeader>
                 <TableRow>
                   <TableHead>{t('Date')}</TableHead>

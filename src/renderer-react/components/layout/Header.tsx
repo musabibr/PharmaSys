@@ -29,6 +29,9 @@ import {
   RotateCcw,
   Server,
   Monitor,
+  Minimize2,
+  Maximize2,
+  ScanLine,
 } from 'lucide-react';
 
 // ─── Breadcrumb mapping ────────────────────────────────────────────────────
@@ -55,7 +58,7 @@ export function Header({ onChangePassword }: HeaderProps) {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.dir() === 'rtl';
   const { currentUser, logout } = useAuthStore();
-  const { theme, toggleTheme, sidebarCollapsed, toggleSidebar } = useUiStore();
+  const { theme, toggleTheme, sidebarCollapsed, toggleSidebar, density, cycleDensity } = useUiStore();
   const { currentShift } = useShiftStore();
   const { getAvailableTours, startTour, isCompleted, resetAllTours } = useTourContext();
   const conn = useConnectionStatus();
@@ -71,7 +74,7 @@ export function Header({ onChangePassword }: HeaderProps) {
   const availableTours = getAvailableTours();
 
   return (
-    <header className="flex h-14 items-center justify-between border-b border-border px-4">
+    <header className="flex h-header items-center justify-between border-b border-border px-4">
       {/* ── Left side: toggle + breadcrumb ── */}
       <div className="flex items-center gap-3">
         <Button
@@ -137,6 +140,23 @@ export function Header({ onChangePassword }: HeaderProps) {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+
+        {/* Density toggle — cycles auto → compact → comfort */}
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={cycleDensity}
+          aria-label={t('Display density') + `: ${density}`}
+          title={`${t('Density')}: ${density}`}
+        >
+          {density === 'compact' ? (
+            <Minimize2 className="h-4 w-4" />
+          ) : density === 'comfort' ? (
+            <Maximize2 className="h-4 w-4" />
+          ) : (
+            <ScanLine className="h-4 w-4" />
+          )}
+        </Button>
 
         {/* Theme toggle */}
         <Button

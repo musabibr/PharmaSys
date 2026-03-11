@@ -16,7 +16,7 @@ export function AppShell() {
       <Sidebar />
       <div className="flex flex-1 flex-col overflow-hidden">
         <Header onChangePassword={() => setChangePasswordOpen(true)} />
-        <main className="flex-1 overflow-auto p-4 2xl:p-6">
+        <main className="flex-1 overflow-auto p-density">
           <Outlet />
         </main>
       </div>

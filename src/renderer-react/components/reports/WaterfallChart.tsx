@@ -12,6 +12,7 @@ import {
   ReferenceLine,
 } from 'recharts';
 import { formatCurrency } from '@/lib/utils';
+import { useUiStore } from '@/stores/ui.store';
 
 const useIsRtl = () => {
   const { i18n } = useTranslation();
@@ -154,6 +155,7 @@ function formatYTick(value: number): string {
 
 export function WaterfallChart({ data }: WaterfallChartProps) {
   const { t } = useTranslation();
+  const isCompact = useUiStore((s) => s.resolvedDensity()) === 'compact';
 
   const bars = useMemo(() => buildWaterfallBars(data), [data]);
 
@@ -168,7 +170,7 @@ export function WaterfallChart({ data }: WaterfallChartProps) {
   const isRtl = useIsRtl();
 
   return (
-    <ResponsiveContainer width="100%" height={360}>
+    <ResponsiveContainer width="100%" height={isCompact ? 260 : 360}>
       <BarChart
         data={bars}
         margin={{ top: 20, right: isRtl ? 70 : 20, bottom: 20, left: isRtl ? 20 : 70 }}

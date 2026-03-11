@@ -160,7 +160,7 @@ function SortableHead({
 // ---------------------------------------------------------------------------
 // ValuationTab
 // ---------------------------------------------------------------------------
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 10;
 
 export function ValuationTab() {
   const { t } = useTranslation();
@@ -333,7 +333,7 @@ export function ValuationTab() {
 
       {/* ── Table ──────────────────────────────────────────────────────── */}
       <div className="rounded-md border">
-        <Table>
+        <Table className="sticky-col">
           <TableHeader>
             <TableRow>
               <TableHead className="w-12 text-center">#</TableHead>
@@ -344,7 +344,7 @@ export function ValuationTab() {
                 currentDir={sortDir}
                 onSort={handleSort}
               />
-              <TableHead>{t('Category')}</TableHead>
+              <TableHead className="hidden lg:table-cell">{t('Category')}</TableHead>
               <SortableHead
                 label={t('Stock')}
                 sortKey="total_stock_base"
@@ -391,10 +391,10 @@ export function ValuationTab() {
                   <TableRow key={item.product_id}>
                     <TableCell className="text-center text-muted-foreground">{(safePage - 1) * PAGE_SIZE + idx + 1}</TableCell>
                     <TableCell className="font-medium">{item.name}</TableCell>
-                    <TableCell className="text-muted-foreground">
+                    <TableCell className="hidden lg:table-cell text-muted-foreground">
                       {item.category_name ?? '\u2014'}
                     </TableCell>
-                    <TableCell className="text-end tabular-nums">
+                    <TableCell className="text-end whitespace-nowrap tabular-nums">
                       {formatQuantity(
                         item.total_stock_base,
                         item.parent_unit,
@@ -402,19 +402,19 @@ export function ValuationTab() {
                         item.conversion_factor
                       )}
                     </TableCell>
-                    <TableCell className="text-end tabular-nums">
+                    <TableCell className="text-end whitespace-nowrap tabular-nums">
                       {item.batch_count}
                     </TableCell>
                     {canViewCosts && (
                       <>
-                        <TableCell className="text-end tabular-nums">
+                        <TableCell className="text-end whitespace-nowrap tabular-nums">
                           {formatCurrency(item.cost_value)}
                         </TableCell>
-                        <TableCell className="text-end tabular-nums">
+                        <TableCell className="text-end whitespace-nowrap tabular-nums">
                           {formatCurrency(item.retail_value)}
                         </TableCell>
                         <TableCell
-                          className={`text-end tabular-nums font-medium ${
+                          className={`text-end whitespace-nowrap tabular-nums font-medium ${
                             profit >= 0
                               ? 'text-emerald-600 dark:text-emerald-400'
                               : 'text-destructive'

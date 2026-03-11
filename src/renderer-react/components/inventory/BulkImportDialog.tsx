@@ -39,7 +39,7 @@ import {
 // Constants
 // ---------------------------------------------------------------------------
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 10;
 
 // ---------------------------------------------------------------------------
 // Props
@@ -496,7 +496,7 @@ export function BulkImportDialog({ open, onOpenChange, onImported }: BulkImportD
 
         {/* ---- Step 2: Preview ---- */}
         {step === 'preview' && (
-          <div className="flex flex-1 flex-col gap-4 overflow-hidden">
+          <div className="flex flex-1 flex-col gap-4 overflow-hidden min-h-0">
             {/* Summary badges */}
             <div className="flex items-center gap-3">
               {fileName && (
@@ -542,16 +542,16 @@ export function BulkImportDialog({ open, onOpenChange, onImported }: BulkImportD
             )}
 
             {/* Preview table */}
-            <ScrollArea className="flex-1 rounded-md border">
+            <ScrollArea className="flex-1 min-h-0 rounded-md border">
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-12">#</TableHead>
                     <TableHead className="w-12">{t('Status')}</TableHead>
                     <TableHead>{t('Product Name')}</TableHead>
-                    <TableHead>{t('Category')}</TableHead>
+                    <TableHead className="hidden xl:table-cell">{t('Category')}</TableHead>
                     <TableHead>{t('Parent Unit')}</TableHead>
-                    <TableHead>{t('Batch #')}</TableHead>
+                    <TableHead className="hidden xl:table-cell">{t('Batch #')}</TableHead>
                     <TableHead>{t('Expiry Date')}</TableHead>
                     <TableHead className="text-end">{t('Qty')}</TableHead>
                     <TableHead className="text-end">{t('Cost')}</TableHead>
@@ -576,9 +576,9 @@ export function BulkImportDialog({ open, onOpenChange, onImported }: BulkImportD
                         )}
                       </TableCell>
                       <TableCell className="font-medium">{row.name || '---'}</TableCell>
-                      <TableCell>{row.category || '---'}</TableCell>
+                      <TableCell className="hidden xl:table-cell">{row.category || '---'}</TableCell>
                       <TableCell>{row.parentUnit}</TableCell>
-                      <TableCell>{row.batchNumber || '---'}</TableCell>
+                      <TableCell className="hidden xl:table-cell">{row.batchNumber || '---'}</TableCell>
                       <TableCell>{row.expiryDate || '---'}</TableCell>
                       <TableCell className="text-end tabular-nums">
                         {row.quantity || '---'}
@@ -604,7 +604,7 @@ export function BulkImportDialog({ open, onOpenChange, onImported }: BulkImportD
 
             {/* Pagination */}
             {totalPages > 1 && (
-              <div className="flex items-center justify-center gap-2">
+              <div className="flex shrink-0 items-center justify-center gap-2">
                 <Button
                   variant="outline"
                   size="sm"

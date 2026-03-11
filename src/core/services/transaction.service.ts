@@ -203,7 +203,7 @@ export class TransactionService {
       const origSubtotal = original.subtotal ?? 0;
       const origDiscount = original.discount_amount ?? 0;
       const proportionalDiscount = origSubtotal > 0
-        ? Math.round(subtotal * origDiscount / origSubtotal)
+        ? Math.floor(subtotal * origDiscount / origSubtotal)
         : 0;
       const totalAmount = subtotal - proportionalDiscount;
 
@@ -224,7 +224,7 @@ export class TransactionService {
         const origTotal = original.total_amount ?? 0;
         const origCash  = original.cash_tendered ?? 0;
         const cashRatio = origTotal > 0 ? origCash / origTotal : 1;
-        cashTendered    = Math.round(totalAmount * cashRatio);
+        cashTendered    = Math.floor(totalAmount * cashRatio);
         const bankPortion = totalAmount - cashTendered;
         bankName = original.bank_name ?? null;
         paymentBreakdown = JSON.stringify({ cash: cashTendered, bank: bankPortion });
@@ -340,7 +340,10 @@ export class TransactionService {
         const parsed = typeof data.payment === 'string' ? JSON.parse(data.payment) : data.payment;
         const cashPart = parsed.cash ?? 0;
         const bankPart = parsed.bank ?? 0;
-        if (Math.round(cashPart + bankPart) < total_amount) {
+        if (!Number.isInteger(cashPart) || !Number.isInteger(bankPart)) {
+          throw new ValidationError('Payment amounts must be whole numbers', 'payment');
+        }
+        if (cashPart + bankPart < total_amount) {
           throw new ValidationError('Mixed payment parts must sum to total', 'payment');
         }
       } catch (e) {

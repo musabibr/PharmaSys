@@ -199,18 +199,25 @@ describe('DELETE /api/v1/expenses/:id', () => {
 
 describe('GET /api/v1/expenses/cash-drops', () => {
   it('returns cash drops for a shift', async () => {
-    // Get a shift ID from the historical data (paginated result)
-    const shifts = await authRequest(ctx.app, ctx.tokens.admin)
-      .get('/api/v1/shifts')
-      .expect(200);
+    // Open a shift so we have a valid shift ID
+    const openRes = await authRequest(ctx.app, ctx.tokens.admin)
+      .post('/api/v1/shifts/open')
+      .send({ opening_amount: 0 })
+      .expect(201);
 
-    const shiftId = shifts.body.data.data[0].id;
+    const shiftId = openRes.body.data.id;
 
     const res = await authRequest(ctx.app, ctx.tokens.admin)
       .get(`/api/v1/expenses/cash-drops?shiftId=${shiftId}`)
       .expect(200);
 
     expect(res.body.data).toBeInstanceOf(Array);
+
+    // Clean up: close the shift (route expects "actualCash" not "actual_cash")
+    await authRequest(ctx.app, ctx.tokens.admin)
+      .post(`/api/v1/shifts/${shiftId}/close`)
+      .send({ actualCash: 0, notes: 'test cleanup' })
+      .expect(200);
   });
 
   it('rejects cashier (no perm_finance)', async () => {

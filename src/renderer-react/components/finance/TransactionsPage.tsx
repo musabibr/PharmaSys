@@ -52,7 +52,7 @@ import { VoidDialog } from './VoidDialog';
 // Constants
 // ---------------------------------------------------------------------------
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 10;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -532,7 +532,7 @@ export function TransactionsPage() {
 
       {/* ---- Summary Cards ---- */}
       {canViewTotals && (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           <Card>
             <CardContent className="flex items-center gap-3 p-4">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
@@ -608,7 +608,7 @@ export function TransactionsPage() {
             </p>
           </div>
         ) : (
-          <Table>
+          <Table className="sticky-col">
             <TableHeader>
               <TableRow>
                 <TableHead>{t('#')}</TableHead>
@@ -618,8 +618,8 @@ export function TransactionsPage() {
                 <TableHead>{t('Payment')}</TableHead>
                 <TableHead className="text-end">{t('Cash')}</TableHead>
                 <TableHead className="text-end">{t('Bank Amt')}</TableHead>
-                <TableHead>{t('Bank')}</TableHead>
-                <TableHead>{t('Reference')}</TableHead>
+                <TableHead className="hidden lg:table-cell">{t('Bank')}</TableHead>
+                <TableHead className="hidden lg:table-cell">{t('Reference')}</TableHead>
                 <TableHead className="text-end">{t('Total')}</TableHead>
                 <TableHead>{t('Status')}</TableHead>
                 <TableHead className="text-end">{t('Actions')}</TableHead>
@@ -645,7 +645,7 @@ export function TransactionsPage() {
                   </TableCell>
 
                   {/* User */}
-                  <TableCell className="text-sm">
+                  <TableCell className="truncate max-w-[120px] text-sm">
                     {txn.username || '\u2014'}
                   </TableCell>
 
@@ -689,12 +689,12 @@ export function TransactionsPage() {
                   </TableCell>
 
                   {/* Bank */}
-                  <TableCell className="text-sm">
+                  <TableCell className="hidden lg:table-cell text-sm">
                     {txn.bank_name || '\u2014'}
                   </TableCell>
 
                   {/* Reference */}
-                  <TableCell className="font-mono text-xs">
+                  <TableCell className="hidden lg:table-cell font-mono text-xs">
                     {txn.reference_number || '\u2014'}
                   </TableCell>
 

@@ -28,7 +28,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 10;
 
 const STATUS_BADGE: Record<string, 'default' | 'secondary' | 'destructive'> = {
   paid: 'default',
@@ -210,7 +210,7 @@ export function PurchaseListTab({ onSelect, initialSupplierId }: PurchaseListTab
               </SelectContent>
             </Select>
           </div>
-          <div className="relative flex-1 min-w-[200px]">
+          <div className="relative flex-1 min-w-[140px]">
             <Search className="absolute start-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder={t('Search supplier, invoice...')}
@@ -243,16 +243,16 @@ export function PurchaseListTab({ onSelect, initialSupplierId }: PurchaseListTab
             <p>{t('No purchases found')}</p>
           </div>
         ) : (
-          <Table>
+          <Table className="sticky-col">
             <TableHeader>
               <TableRow>
                 <TableHead>{t('Purchase #')}</TableHead>
                 <TableHead>{t('Date')}</TableHead>
                 <TableHead>{t('Supplier')}</TableHead>
-                <TableHead>{t('Invoice Number')}</TableHead>
+                <TableHead className="hidden lg:table-cell">{t('Invoice Number')}</TableHead>
                 <TableHead className="text-end">{t('Total')}</TableHead>
                 <TableHead className="text-end">{t('Paid')}</TableHead>
-                <TableHead className="text-end">{t('Remaining')}</TableHead>
+                <TableHead className="hidden lg:table-cell text-end">{t('Remaining')}</TableHead>
                 <TableHead>{t('Status')}</TableHead>
               </TableRow>
             </TableHeader>
@@ -266,10 +266,10 @@ export function PurchaseListTab({ onSelect, initialSupplierId }: PurchaseListTab
                   <TableCell className="font-medium">{p.purchase_number}</TableCell>
                   <TableCell>{p.purchase_date}</TableCell>
                   <TableCell>{p.supplier_name ?? t('N/A')}</TableCell>
-                  <TableCell>{p.invoice_reference ?? '-'}</TableCell>
+                  <TableCell className="hidden lg:table-cell">{p.invoice_reference ?? '-'}</TableCell>
                   <TableCell className="text-end tabular-nums">{formatCurrency(p.total_amount)}</TableCell>
                   <TableCell className="text-end tabular-nums">{formatCurrency(p.total_paid)}</TableCell>
-                  <TableCell className="text-end tabular-nums font-medium text-destructive">
+                  <TableCell className="hidden lg:table-cell text-end tabular-nums font-medium text-destructive">
                     {p.total_amount - p.total_paid > 0 ? formatCurrency(p.total_amount - p.total_paid) : '-'}
                   </TableCell>
                   <TableCell>

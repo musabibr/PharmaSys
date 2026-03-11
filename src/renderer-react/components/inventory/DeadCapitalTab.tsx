@@ -39,7 +39,7 @@ import {
 // Constants
 // ---------------------------------------------------------------------------
 const THRESHOLD_OPTIONS = [30, 60, 90, 180, 365] as const;
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 10;
 
 // ---------------------------------------------------------------------------
 // Helper: format a date string concisely
@@ -360,14 +360,14 @@ export function DeadCapitalTab() {
 
       {/* ── Table ──────────────────────────────────────────────────────── */}
       <div className="rounded-md border">
-        <Table>
+        <Table className="sticky-col">
           <TableHeader>
             <TableRow>
               <TableHead className="w-12 text-center">#</TableHead>
               <TableHead>{t('Product Name')}</TableHead>
               <TableHead>{t('Last Sold')}</TableHead>
               <TableHead className="text-end">{t('Days Since Sale')}</TableHead>
-              <TableHead>{t('In Stock Since')}</TableHead>
+              <TableHead className="hidden lg:table-cell">{t('In Stock Since')}</TableHead>
               <TableHead className="text-end">{t('Stock Quantity')}</TableHead>
               {canViewCosts && (
                 <TableHead className="text-end">{t('Stock Value')}</TableHead>
@@ -401,14 +401,14 @@ export function DeadCapitalTab() {
                 return (
                   <TableRow key={item.id}>
                     <TableCell className="text-center text-muted-foreground">{(safePage - 1) * PAGE_SIZE + idx + 1}</TableCell>
-                    <TableCell className="font-medium">{item.name}</TableCell>
+                    <TableCell className="font-medium truncate max-w-[180px]">{item.name}</TableCell>
                     <TableCell className="text-muted-foreground">
                       {item.last_sold ? formatDate(item.last_sold) : t('Never')}
                     </TableCell>
                     <TableCell className="text-end tabular-nums">
                       {item.last_sold ? item.days_since_sale : '\u2014'}
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
+                    <TableCell className="hidden lg:table-cell text-sm text-muted-foreground">
                       {formatDuration(item.days_in_inventory, t)}
                     </TableCell>
                     <TableCell className="text-end tabular-nums">

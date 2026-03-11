@@ -113,11 +113,11 @@ export function POSPage() {
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1 gap-3 pt-3">
+      <div className="flex min-h-0 flex-1 gap-2 pt-3 xl:gap-3">
         <div data-tour="pos-grid" className="min-h-0 flex-1">
           <ProductGrid onProductSelect={handleProductSelect} refreshKey={productRefreshKey} />
         </div>
-        <div data-tour="pos-cart" className="w-[340px] min-h-0 2xl:w-[400px]">
+        <div data-tour="pos-cart" className="w-cart min-h-0">
           <CartPanel
             onCheckout={handleCheckout}
             onHold={handleHold}

@@ -125,7 +125,7 @@ function DashboardSkeleton() {
         </div>
       </div>
       {/* Grid skeleton */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:gap-4">
         {Array.from({ length: 4 }).map((_, i) => (
           <Card key={i}><CardContent className="p-5">
             <Skeleton className="mb-3 h-3 w-20" />
@@ -351,7 +351,7 @@ export function DashboardPage() {
       {/* ═══════════════════════════════════════════════════════════════════════ */}
       {/*  BENTO GRID — Mixed-size metric cards                                  */}
       {/* ═══════════════════════════════════════════════════════════════════════ */}
-      <div data-tour="dashboard-bento" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div data-tour="dashboard-bento" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:gap-4">
         {/* Purchase Alerts — Installment Notifications */}
         {canSeePurchases && (
           <Card

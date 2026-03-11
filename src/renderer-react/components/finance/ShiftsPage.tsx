@@ -838,7 +838,7 @@ function ShiftHistorySection({ onSelectShift, refreshKey }: ShiftHistorySectionP
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
-  const PAGE_SIZE = 15;
+  const PAGE_SIZE = 10;
 
   const fetchShifts = useCallback(async () => {
     setLoading(true);
@@ -939,7 +939,7 @@ function ShiftHistorySection({ onSelectShift, refreshKey }: ShiftHistorySectionP
               type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
-              className="h-9 w-[150px]"
+              className="h-9 w-36"
             />
           </div>
           <div className="space-y-1">
@@ -948,7 +948,7 @@ function ShiftHistorySection({ onSelectShift, refreshKey }: ShiftHistorySectionP
               type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
-              className="h-9 w-[150px]"
+              className="h-9 w-36"
             />
           </div>
           <div className="space-y-1">
@@ -1013,13 +1013,13 @@ function ShiftHistorySection({ onSelectShift, refreshKey }: ShiftHistorySectionP
         {/* Table */}
         {!loading && shifts.length > 0 && (
           <div className="rounded-md border">
-            <Table>
+            <Table className="sticky-col">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[50px]">#</TableHead>
+                  <TableHead className="w-[40px]">#</TableHead>
                   <TableHead>{t('Opened By')}</TableHead>
                   <TableHead>{t('Opened At')}</TableHead>
-                  <TableHead>{t('Closed At')}</TableHead>
+                  <TableHead className="hidden lg:table-cell">{t('Closed At')}</TableHead>
                   <TableHead>{t('Duration')}</TableHead>
                   <TableHead className="text-end">{t('Opening')}</TableHead>
                   <TableHead className="text-end">{t('Closing')}</TableHead>
@@ -1039,7 +1039,7 @@ function ShiftHistorySection({ onSelectShift, refreshKey }: ShiftHistorySectionP
                     <TableCell className="tabular-nums">
                       {formatDateTime(shift.opened_at)}
                     </TableCell>
-                    <TableCell className="tabular-nums">
+                    <TableCell className="hidden lg:table-cell tabular-nums">
                       {formatDateTime(shift.closed_at)}
                     </TableCell>
                     <TableCell>
