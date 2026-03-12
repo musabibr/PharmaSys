@@ -27,6 +27,11 @@ export function productRoutes(services: ServiceContainer): Router {
     res.json({ data: await services.product.search(String(req.query.q ?? '')) });
   }));
 
+  router.get('/barcode/:barcode', requireAuth, handle(async (req, res) => {
+    const product = await services.product.findByBarcode(String(req.params.barcode));
+    res.json({ data: product ?? null });
+  }));
+
   router.get('/:id', requireAuth, handle(async (req, res) => {
     res.json({ data: await services.product.getById(Number(req.params.id)) });
   }));

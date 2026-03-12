@@ -6,6 +6,17 @@ import type { Batch } from '@/api/types';
 import { formatCurrency } from '@/lib/utils';
 import { usePermission } from '@/hooks/usePermission';
 import { useSettingsStore } from '@/stores/settings.store';
+
+/** Generate a default batch number: BN-YYYYMMDD-XXX */
+let _batchSeq = 0;
+function generateBatchNumber(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  _batchSeq = (_batchSeq % 999) + 1;
+  return `BN-${y}${m}${day}-${String(_batchSeq).padStart(3, '0')}`;
+}
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -102,8 +113,8 @@ export function BatchForm({
         batch.selling_price_child_override || batch.selling_price_child || 0
       );
     } else {
-      // Create mode: empty form
-      setBatchNumber('');
+      // Create mode: auto-generate batch number
+      setBatchNumber(generateBatchNumber());
       setExpiryDate('');
       setQuantity(1);
       setCostPerParent(0);

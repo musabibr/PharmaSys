@@ -20,6 +20,10 @@ export function registerProductHandlers(router: IpcRouter, services: ServiceCont
     return await services.product.search(query);
   });
 
+  router.handle('products:findByBarcode', async (_user, barcode: string) => {
+    return await services.product.findByBarcode(barcode) ?? null;
+  });
+
   router.handle('products:create', async (user, data: CreateProductInput) => {
     return await services.product.create(data, user!.id);
   }, { permission: 'inventory.products.manage' });

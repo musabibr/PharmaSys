@@ -207,6 +207,8 @@ export function ExpensesPage() {
 
   // ── Dialog state ──────────────────────────────────────────────────────────
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [detailExpense, setDetailExpense] = useState<Expense | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
 
   // ── New Expense form state ────────────────────────────────────────────────
   const [formCategoryId, setFormCategoryId] = useState('');
@@ -653,7 +655,11 @@ export function ExpensesPage() {
               </TableHeader>
               <TableBody>
                 {expenses.map((expense) => (
-                  <TableRow key={expense.id}>
+                  <TableRow
+                    key={expense.id}
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => { setDetailExpense(expense); setDetailOpen(true); }}
+                  >
                     <TableCell className="whitespace-nowrap text-muted-foreground">
                       {formatDate(expense.expense_date || expense.created_at)}
                     </TableCell>
@@ -686,7 +692,7 @@ export function ExpensesPage() {
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-destructive hover:text-destructive"
-                          onClick={() => handleDelete(expense)}
+                          onClick={(e) => { e.stopPropagation(); handleDelete(expense); }}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -896,6 +902,83 @@ export function ExpensesPage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Expense Detail Dialog ──────────────────────────────────────────── */}
+      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t('Expense Details')}</DialogTitle>
+            <DialogDescription>
+              {detailExpense
+                ? `#${detailExpense.id} — ${formatDate(detailExpense.expense_date || detailExpense.created_at)}`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+
+          {detailExpense && (
+            <div className="space-y-4 py-2">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs text-muted-foreground">{t('Category')}</p>
+                  <p className="font-medium">
+                    {detailExpense.category_name ?? `#${detailExpense.category_id}`}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">{t('Amount')}</p>
+                  <p className="font-medium text-lg">{formatCurrency(detailExpense.amount)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">{t('Payment')}</p>
+                  <Badge
+                    variant={detailExpense.payment_method === 'cash' ? 'secondary' : 'outline'}
+                  >
+                    {detailExpense.payment_method === 'cash'
+                      ? t('Cash')
+                      : detailExpense.payment_method === 'bank_transfer'
+                        ? t('Bank Transfer')
+                        : detailExpense.payment_method ?? '\u2014'}
+                  </Badge>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">{t('Date')}</p>
+                  <p className="font-medium">
+                    {formatDate(detailExpense.expense_date || detailExpense.created_at)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">{t('User')}</p>
+                  <p className="font-medium">
+                    {detailExpense.username ?? `#${detailExpense.user_id}`}
+                  </p>
+                </div>
+                {detailExpense.shift_id && (
+                  <div>
+                    <p className="text-xs text-muted-foreground">{t('Shift')}</p>
+                    <p className="font-medium">#{detailExpense.shift_id}</p>
+                  </div>
+                )}
+              </div>
+
+              {detailExpense.description && (
+                <>
+                  <Separator />
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">{t('Description')}</p>
+                    <p className="text-sm whitespace-pre-wrap">{detailExpense.description}</p>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDetailOpen(false)}>
+              {t('Close')}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

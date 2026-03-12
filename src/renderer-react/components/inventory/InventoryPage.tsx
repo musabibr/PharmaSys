@@ -1,4 +1,6 @@
+import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useLocation } from 'react-router-dom';
 import {
   Package,
   Layers,
@@ -22,6 +24,7 @@ import { useAnyPermission, usePermission } from '@/hooks/usePermission';
 
 export function InventoryPage() {
   const { t } = useTranslation();
+  const location = useLocation();
 
   const canViewProducts   = usePermission('inventory.products.view');
   const canViewBatches    = usePermission('inventory.batches.view');
@@ -30,7 +33,10 @@ export function InventoryPage() {
   const canViewReorder    = useAnyPermission(['inventory.reorder', 'inventory.low_stock']);
   const canViewDeadCap    = usePermission('inventory.dead_capital');
 
-  // Determine default tab: first visible tab
+  // Read initial tab from route state (e.g., navigate('/inventory', { state: { tab: 'reorder' } }))
+  const stateTab = (location.state as { tab?: string } | null)?.tab;
+
+  // Determine default tab: route state or first visible tab
   const defaultTab =
     canViewProducts  ? 'products' :
     canViewBatches   ? 'batches' :
@@ -40,9 +46,16 @@ export function InventoryPage() {
     canViewDeadCap   ? 'dead-capital' :
     'products';
 
+  const [tab, setTab] = useState(stateTab || defaultTab);
+
+  // When navigating back with a different state.tab, update the active tab
+  useEffect(() => {
+    if (stateTab) setTab(stateTab);
+  }, [stateTab]);
+
   return (
     <div className="flex h-full flex-col">
-      <Tabs defaultValue={defaultTab} className="flex h-full flex-col">
+      <Tabs value={tab} onValueChange={setTab} className="flex h-full flex-col">
         <TabsList data-tour="inv-tabs" className="w-full justify-start">
           {canViewProducts && (
             <TabsTrigger value="products" className="gap-1.5">

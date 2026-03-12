@@ -34,6 +34,11 @@ export class ProductService {
     return await this.repo.search(query.trim());
   }
 
+  async findByBarcode(barcode: string): Promise<Product | undefined> {
+    if (!barcode?.trim()) return undefined;
+    return await this.repo.findByBarcode(barcode.trim());
+  }
+
   async create(data: CreateProductInput, userId: number): Promise<Product> {
     const name = Validate.requiredString(data.name, 'Product name', 200);
 

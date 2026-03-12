@@ -131,6 +131,9 @@ contextBridge.exposeInMainWorld('api', {
         search: (query) =>
             ipcRenderer.invoke('products:search', query),
 
+        findByBarcode: (barcode) =>
+            ipcRenderer.invoke('products:findByBarcode', barcode),
+
         bulkCreate: (items) =>
             ipcRenderer.invoke('products:bulkCreate', items),
     },

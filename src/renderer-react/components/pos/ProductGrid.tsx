@@ -159,6 +159,23 @@ export function ProductGrid({ onProductSelect, refreshKey }: ProductGridProps) {
     setCategoryId(value);
   };
 
+  // ── Barcode scanner: Enter key triggers exact barcode lookup ─────────
+  const handleSearchKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter') return;
+    const trimmed = query.trim();
+    if (!trimmed) return;
+    try {
+      const product = await api.products.findByBarcode(trimmed);
+      if (product) {
+        onProductSelect(product.id);
+        setQuery('');
+      }
+      // If not found by barcode, normal search results are already showing
+    } catch {
+      // Barcode lookup failed — fall through to normal search display
+    }
+  }, [query, onProductSelect]);
+
   // ── Render ─────────────────────────────────────────────────────────────
   return (
     <div className="flex h-full flex-col gap-3">
@@ -172,6 +189,7 @@ export function ProductGrid({ onProductSelect, refreshKey }: ProductGridProps) {
             placeholder={t('Search by name, generic name, or barcode...')}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={handleSearchKeyDown}
             className="ps-9"
           />
         </div>

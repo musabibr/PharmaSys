@@ -479,6 +479,7 @@ export interface PharmaSysApi {
     update(id: number, data: Partial<Product>): Promise<Product>;
     delete(id: number): Promise<{ success: boolean }>;
     search(query: string): Promise<Product[]>;
+    findByBarcode(barcode: string): Promise<Product | null>;
     bulkCreate(items: unknown[]): Promise<{ success: boolean; created: number; errors: unknown[] }>;
   };
 

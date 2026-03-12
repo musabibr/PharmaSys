@@ -70,7 +70,8 @@ function formatDateTime(dateStr: string): string {
 function getDefaultDateRange(): { from: string; to: string } {
   const now = new Date();
   const to = now.toISOString().split('T')[0];
-  const from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  // Default to start of current month
+  const from = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
   return { from, to };
 }
 

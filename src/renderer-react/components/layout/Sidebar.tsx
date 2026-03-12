@@ -258,7 +258,7 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        'sb-root flex h-full flex-col transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]',
+        'sb-root flex h-full flex-col transition-all duration-300 ease-in-out',
         sidebarCollapsed ? 'w-sidebar-collapsed' : 'w-sidebar'
       )}
     >

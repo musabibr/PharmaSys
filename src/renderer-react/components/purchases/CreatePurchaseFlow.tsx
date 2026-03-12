@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import {
   Loader2, Plus, Trash2, Save, Upload, ChevronLeft, ChevronRight,
-  CheckCircle2, XCircle, Search, FileText, SkipForward, Clock,
+  CheckCircle2, XCircle, Search, FileText, SkipForward, Clock, Pencil,
 } from 'lucide-react';
 import { api, throwIfError } from '@/api';
 import type { ExpensePaymentMethod, Product, Category } from '@/api/types';
@@ -25,11 +25,27 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
+import { Separator } from '@/components/ui/separator';
 import { SupplierSelect } from './SupplierSelect';
+import { ProductForm } from '@/components/inventory/ProductForm';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
 const PAGE_SIZE = 10;
+
+/** Generate a default batch number: BN-YYYYMMDD-XXX */
+let _batchSeq = 0;
+function generateBatchNumber(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  _batchSeq = (_batchSeq % 999) + 1;
+  return `BN-${y}${m}${day}-${String(_batchSeq).padStart(3, '0')}`;
+}
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -56,6 +72,7 @@ interface ImportItem {
   sellPrice: number;
   sellPriceChild: number;
   batchNumber: string;
+  barcode: string;
   categoryName: string;
   usageInstructions: string;
 }
@@ -184,6 +201,8 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
   const [bulkCategory, setBulkCategory] = useState('');
   const [newCategoryName, setNewCategoryName] = useState('');
   const [creatingCategoryForKey, setCreatingCategoryForKey] = useState<string | null>(null);
+  const [showProductForm, setShowProductForm] = useState(false);
+  const [editingItem, setEditingItem] = useState<ImportItem | null>(null);
 
   // Step 4: Purchase details
   const [supplierId, setSupplierId] = useState<number | null>(null);
@@ -243,7 +262,8 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
         sellPriceChild: row.cost_per_parent > 0 && row.child_unit && (row.conversion_factor || 1) > 1
           ? Math.floor(Math.round(row.cost_per_parent * (1 + defaultMarkup / 100)) / (row.conversion_factor || 1))
           : 0,
-        batchNumber: '',
+        batchNumber: generateBatchNumber(),
+        barcode: '',
         categoryName: '',
         usageInstructions: '',
       }));
@@ -317,6 +337,11 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
     }));
   }
 
+  function saveEditingItem(updated: ImportItem) {
+    setImportItems(prev => prev.map(item => item._key === updated._key ? updated : item));
+    setEditingItem(null);
+  }
+
   function removeItem(key: string) {
     setImportItems(prev => prev.filter(item => item._key !== key));
   }
@@ -326,8 +351,8 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
       _key: `item-new-${Date.now()}`,
       name: '', genericName: '', expiryDate: '',
       parentUnit: 'Unit', childUnit: '', convFactor: 1,
-      quantity: 0, costPerParent: 0, sellPrice: 0, sellPriceChild: 0, batchNumber: '',
-      categoryName: '', usageInstructions: '',
+      quantity: 0, costPerParent: 0, sellPrice: 0, sellPriceChild: 0, batchNumber: generateBatchNumber(),
+      barcode: '', categoryName: '', usageInstructions: '',
     }]);
     // Navigate to the last page
     const newTotal = importItems.length + 1;
@@ -387,6 +412,30 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
       toast.error(err instanceof Error ? err.message : t('Failed to load products'));
     } finally {
       setMatchLoading(false);
+    }
+  }
+
+  async function handleProductCreated() {
+    try {
+      const products = await api.products.getAll();
+      setAllProducts(products);
+      // Re-match: update any "new" items that now match an existing product
+      setMatchedItems(prev => prev.map(item => {
+        if (item.matchType !== 'new') return item;
+        const found = products.find(p => fuzzyMatch(item.name, p.name));
+        if (found) {
+          return {
+            ...item,
+            matchType: 'existing' as const,
+            matchedProductId: found.id,
+            matchedProductName: found.name,
+            categoryName: found.category_name || '',
+          };
+        }
+        return item;
+      }));
+    } catch {
+      // Non-critical — user can still manually match
     }
   }
 
@@ -516,6 +565,7 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
               generic_name: item.genericName || undefined,
               usage_instructions: item.usageInstructions || undefined,
               category_name: item.categoryName || undefined,
+              barcode: item.barcode || undefined,
               parent_unit: item.parentUnit || 'Unit',
               child_unit: item.childUnit || undefined,
               conversion_factor: item.convFactor || 1,
@@ -693,9 +743,10 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                   <TableRow className="bg-muted/50">
                     <TableHead className="w-8 whitespace-nowrap">#</TableHead>
                     <TableHead className="max-w-[15rem] whitespace-nowrap">{t('Name')}*</TableHead>
-                    <TableHead className="hidden xl:table-cell max-w-[15rem] whitespace-nowrap">{t('Generic Name')}</TableHead>
-                    <TableHead className="hidden xl:table-cell whitespace-nowrap">{t('Category')}</TableHead>
-                    <TableHead className="hidden xl:table-cell whitespace-nowrap">{t('Usage Instructions')}</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Barcode')}</TableHead>
+                    <TableHead className="max-w-[15rem] whitespace-nowrap">{t('Generic Name')}</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Category')}</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Usage Instructions')}</TableHead>
                     <TableHead className="whitespace-nowrap">{t('Expiry Date')}</TableHead>
                     <TableHead className="whitespace-nowrap">{t('Base Unit')}</TableHead>
                     <TableHead className="whitespace-nowrap">{t('Small Unit')}</TableHead>
@@ -703,7 +754,7 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                     <TableHead className="whitespace-nowrap">{t('Qty')}*</TableHead>
                     <TableHead className="whitespace-nowrap">{t('Cost')}*</TableHead>
                     <TableHead className="whitespace-nowrap">{t('Sell/Base')}*</TableHead>
-                    <TableHead className="hidden xl:table-cell whitespace-nowrap">{t('Sell/Small')}</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Sell/Small')}</TableHead>
                     <TableHead className="w-8"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -718,7 +769,15 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                         className={hasError ? 'bg-destructive/5 border-s-2 border-s-destructive' : ''}
                       >
                         <TableCell className="text-muted-foreground text-xs">
-                          {globalIdx + 1}
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 hover:text-primary"
+                            onClick={() => setEditingItem(item)}
+                            title={t('Edit item details')}
+                          >
+                            {globalIdx + 1}
+                            <Pencil className="h-3 w-3 opacity-40 hover:opacity-100" />
+                          </button>
                         </TableCell>
                         <TableCell className="max-w-[15rem]">
                           <Input
@@ -729,7 +788,15 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                             maxLength={60}
                           />
                         </TableCell>
-                        <TableCell className="hidden xl:table-cell max-w-[15rem]">
+                        <TableCell className="whitespace-nowrap">
+                          <Input
+                            value={item.barcode}
+                            onChange={e => updateItem(item._key, 'barcode', e.target.value)}
+                            className="h-8 text-xs w-32"
+                            placeholder={t('e.g. 6001234567890')}
+                          />
+                        </TableCell>
+                        <TableCell className="max-w-[15rem]">
                           <Input
                             value={item.genericName}
                             onChange={e => updateItem(item._key, 'genericName', e.target.value)}
@@ -738,7 +805,7 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                             maxLength={60}
                           />
                         </TableCell>
-                        <TableCell className="hidden xl:table-cell">
+                        <TableCell className="">
                           {creatingCategoryForKey === item._key ? (
                             <Input
                               className="h-8 text-xs"
@@ -796,7 +863,7 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                             </div>
                           )}
                         </TableCell>
-                        <TableCell className="hidden xl:table-cell">
+                        <TableCell className="">
                           <Input
                             value={item.usageInstructions}
                             onChange={e => updateItem(item._key, 'usageInstructions', e.target.value)}
@@ -886,7 +953,7 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                             placeholder={item.costPerParent > 0 ? String(Math.round(item.costPerParent * (1 + defaultMarkup / 100))) : '0'}
                           />
                         </TableCell>
-                        <TableCell className="hidden xl:table-cell whitespace-nowrap">
+                        <TableCell className="whitespace-nowrap">
                           <Input
                             type="number"
                             step="1"
@@ -1026,6 +1093,19 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                   </div>
                 )}
 
+                {/* Add new product button */}
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setShowProductForm(true)} className="gap-1">
+                    <Plus className="h-3.5 w-3.5" />
+                    {t('Add New Product')}
+                  </Button>
+                  {newCount > 0 && (
+                    <span className="text-xs text-muted-foreground">
+                      {t('{{count}} new products will be created', { count: newCount })}
+                    </span>
+                  )}
+                </div>
+
                 {/* Match table */}
                 <div className="rounded-md border overflow-x-auto">
                   <Table className="sticky-col">
@@ -1035,7 +1115,7 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                         <TableHead>{t('Invoice Name')}</TableHead>
                         <TableHead>{t('Status')}</TableHead>
                         <TableHead>{t('Matched Product')}</TableHead>
-                        <TableHead className="hidden xl:table-cell">{t('Category')}</TableHead>
+                        <TableHead className="">{t('Category')}</TableHead>
                         <TableHead className="w-16">{t('Actions')}</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -1114,7 +1194,7 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                                 <span className="text-xs text-muted-foreground">—</span>
                               )}
                             </TableCell>
-                            <TableCell className="hidden xl:table-cell">
+                            <TableCell className="">
                               {item.matchType === 'existing' ? (
                                 <span className="text-sm text-muted-foreground">{item.categoryName || '—'}</span>
                               ) : (
@@ -1613,6 +1693,347 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
           </Button>
         </div>
       )}
+
+      <ProductForm
+        open={showProductForm}
+        onOpenChange={setShowProductForm}
+        product={null}
+        onSaved={handleProductCreated}
+      />
+
+      {/* ── Edit Item Dialog ─────────────────────────────────────────────── */}
+      <EditItemDialog
+        item={editingItem}
+        onClose={() => setEditingItem(null)}
+        onSave={saveEditingItem}
+        categories={allCategories}
+        onCreateCategory={(name) => {
+          if (!allCategories.find(c => c.name === name)) {
+            setAllCategories(prev => [...prev, { id: -Date.now(), name }]);
+          }
+        }}
+        defaultMarkup={defaultMarkup}
+      />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// EditItemDialog — full-form view of an ImportItem for easier editing
+// ---------------------------------------------------------------------------
+
+interface EditItemDialogProps {
+  item: ImportItem | null;
+  onClose: () => void;
+  onSave: (item: ImportItem) => void;
+  categories: { id: number; name: string }[];
+  onCreateCategory: (name: string) => void;
+  defaultMarkup: number;
+}
+
+function EditItemDialog({ item, onClose, onSave, categories, onCreateCategory, defaultMarkup }: EditItemDialogProps) {
+  const { t } = useTranslation();
+  const [draft, setDraft] = useState<ImportItem | null>(null);
+  const [markup, setMarkup] = useState(defaultMarkup);
+
+  // Sync draft when item changes
+  useEffect(() => {
+    if (item) {
+      setDraft({ ...item });
+      // Compute effective markup from cost/sell
+      if (item.costPerParent > 0 && item.sellPrice > 0) {
+        setMarkup(Math.round(((item.sellPrice - item.costPerParent) / item.costPerParent) * 100));
+      } else {
+        setMarkup(defaultMarkup);
+      }
+    } else {
+      setDraft(null);
+    }
+  }, [item, defaultMarkup]);
+
+  if (!draft) return null;
+
+  function update(field: keyof ImportItem, value: string | number) {
+    setDraft(prev => {
+      if (!prev) return prev;
+      const updated = { ...prev, [field]: value };
+      // Auto-calculate child sell price
+      if (field === 'childUnit' || field === 'convFactor' || field === 'sellPrice') {
+        if (updated.childUnit && updated.convFactor >= 1 && updated.sellPrice > 0) {
+          updated.sellPriceChild = Math.floor(updated.sellPrice / updated.convFactor);
+        } else if (!updated.childUnit) {
+          updated.sellPriceChild = 0;
+        }
+      }
+      // Auto-fill sell price from cost using current markup
+      if (field === 'costPerParent') {
+        const cost = Number(value) || 0;
+        if (cost > 0) {
+          updated.sellPrice = Math.round(cost * (1 + markup / 100));
+          if (updated.childUnit && updated.convFactor >= 1 && updated.sellPrice > 0) {
+            updated.sellPriceChild = Math.floor(updated.sellPrice / updated.convFactor);
+          }
+        }
+      }
+      // Update markup when sell price changes manually
+      if (field === 'sellPrice' && updated.costPerParent > 0) {
+        const sell = Number(value) || 0;
+        setMarkup(Math.round(((sell - updated.costPerParent) / updated.costPerParent) * 100));
+      }
+      return updated;
+    });
+  }
+
+  function applyMarkup(newMarkup: number) {
+    setMarkup(newMarkup);
+    setDraft(prev => {
+      if (!prev || prev.costPerParent <= 0) return prev;
+      const sell = Math.round(prev.costPerParent * (1 + newMarkup / 100));
+      const updated = { ...prev, sellPrice: sell };
+      if (updated.childUnit && updated.convFactor >= 1 && sell > 0) {
+        updated.sellPriceChild = Math.floor(sell / updated.convFactor);
+      }
+      return updated;
+    });
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (draft) onSave(draft);
+  }
+
+  return (
+    <Dialog open={!!item} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{t('Edit Item')}</DialogTitle>
+          <DialogDescription>{t('Update the item details below.')}</DialogDescription>
+        </DialogHeader>
+
+        <form onSubmit={handleSubmit}>
+          <div className="space-y-4 py-2">
+            {/* Name */}
+            <div className="space-y-1.5">
+              <Label htmlFor="ei-name">
+                {t('Name')} <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="ei-name"
+                value={draft.name}
+                onChange={e => update('name', e.target.value)}
+                placeholder={t('Product Name')}
+                autoFocus
+                maxLength={60}
+              />
+            </div>
+
+            {/* Generic Name */}
+            <div className="space-y-1.5">
+              <Label htmlFor="ei-generic">{t('Generic Name')}</Label>
+              <Input
+                id="ei-generic"
+                value={draft.genericName}
+                onChange={e => update('genericName', e.target.value)}
+                placeholder={t('Generic')}
+                maxLength={60}
+              />
+            </div>
+
+            {/* Barcode */}
+            <div className="space-y-1.5">
+              <Label htmlFor="ei-barcode">{t('Barcode')}</Label>
+              <Input
+                id="ei-barcode"
+                value={draft.barcode}
+                onChange={e => update('barcode', e.target.value)}
+                placeholder={t('e.g. 6001234567890')}
+              />
+            </div>
+
+            {/* Category */}
+            <div className="space-y-1.5">
+              <Label>{t('Category')}</Label>
+              <Select
+                value={draft.categoryName || ''}
+                onValueChange={val => update('categoryName', val)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={t('Select category')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {categories.map(cat => (
+                    <SelectItem key={cat.id} value={cat.name}>
+                      {cat.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Usage Instructions */}
+            <div className="space-y-1.5">
+              <Label htmlFor="ei-usage">{t('Usage Instructions')}</Label>
+              <textarea
+                id="ei-usage"
+                value={draft.usageInstructions}
+                onChange={e => update('usageInstructions', e.target.value)}
+                placeholder={t('e.g. 3 times daily')}
+                rows={2}
+                className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              />
+            </div>
+
+            <Separator />
+
+            {/* Unit configuration */}
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="ei-parent-unit">{t('Base Unit')}</Label>
+                <Input
+                  id="ei-parent-unit"
+                  value={draft.parentUnit}
+                  onChange={e => update('parentUnit', e.target.value)}
+                  placeholder="Box"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ei-child-unit">{t('Small Unit')}</Label>
+                <Input
+                  id="ei-child-unit"
+                  value={draft.childUnit}
+                  onChange={e => update('childUnit', e.target.value)}
+                  placeholder={t('Optional')}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ei-conv">{t('Conversion Factor')}</Label>
+                <Input
+                  id="ei-conv"
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={draft.childUnit ? (draft.convFactor || '') : ''}
+                  onChange={e => update('convFactor', Math.max(1, Math.round(Number(e.target.value) || 1)))}
+                  disabled={!draft.childUnit}
+                />
+              </div>
+            </div>
+
+            {/* Unit preview */}
+            {draft.childUnit && draft.convFactor > 1 && (
+              <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
+                1 {draft.parentUnit || t('Base Unit')} = {draft.convFactor} {draft.childUnit || t('Small Unit')}
+              </p>
+            )}
+
+            <Separator />
+
+            {/* Batch & Expiry */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="ei-batch">{t('Batch #')}</Label>
+                <Input
+                  id="ei-batch"
+                  value={draft.batchNumber}
+                  onChange={e => update('batchNumber', e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ei-expiry">{t('Expiry Date')}</Label>
+                <Input
+                  id="ei-expiry"
+                  value={draft.expiryDate}
+                  onChange={e => update('expiryDate', e.target.value)}
+                  placeholder="YYYY-MM-DD"
+                />
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Pricing */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="ei-qty">
+                  {t('Qty')} <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="ei-qty"
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={draft.quantity || ''}
+                  onChange={e => update('quantity', Math.round(Number(e.target.value) || 0))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ei-cost">
+                  {t('Cost')} <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="ei-cost"
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={draft.costPerParent || ''}
+                  onChange={e => update('costPerParent', Math.round(Number(e.target.value) || 0))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ei-markup">{t('Markup %')}</Label>
+                <Input
+                  id="ei-markup"
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={markup || ''}
+                  onChange={e => applyMarkup(Math.round(Number(e.target.value) || 0))}
+                  disabled={!draft.costPerParent}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ei-sell">{t('Sell/Base')}</Label>
+                <Input
+                  id="ei-sell"
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={draft.sellPrice || ''}
+                  onChange={e => update('sellPrice', Math.round(Number(e.target.value) || 0))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ei-sell-child">{t('Sell/Small')}</Label>
+                <Input
+                  id="ei-sell-child"
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={draft.childUnit ? (draft.sellPriceChild || '') : ''}
+                  onChange={e => update('sellPriceChild', Math.round(Number(e.target.value) || 0))}
+                  disabled={!draft.childUnit}
+                />
+              </div>
+            </div>
+
+            {/* Line total */}
+            {draft.costPerParent > 0 && draft.quantity > 0 && (
+              <p className="rounded-md bg-muted px-3 py-2 text-sm font-medium">
+                {t('Total')}: {(draft.costPerParent * draft.quantity).toLocaleString()} SDG
+              </p>
+            )}
+          </div>
+
+          <DialogFooter className="pt-2">
+            <Button type="button" variant="outline" onClick={onClose}>
+              {t('Cancel')}
+            </Button>
+            <Button type="submit">
+              {t('Save Changes')}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
