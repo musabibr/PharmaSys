@@ -1,13 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Search, FileText, ChevronLeft, ChevronRight, Printer, CreditCard } from 'lucide-react';
+import { Search, FileText, ChevronLeft, ChevronRight, Printer, CreditCard, PackagePlus } from 'lucide-react';
 import { api } from '@/api';
 import type { Purchase, PurchasePaymentStatus, Supplier } from '@/api/types';
-import { formatCurrency, cn } from '@/lib/utils';
+import { formatCurrency, formatDate, displayInvoiceId, cn } from '@/lib/utils';
 import { printHtml } from '@/lib/print';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useApiCall } from '@/api/hooks';
 import { usePermission } from '@/hooks/usePermission';
+import { AddItemsDialog } from './AddItemsDialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -45,6 +46,8 @@ interface PurchaseListTabProps {
   initialStatus?: string;
   /** Hide the status filter dropdown (archive mode) */
   hideStatusFilter?: boolean;
+  /** Exclude fully-paid invoices from default listing (they appear via search) */
+  excludePaid?: boolean;
 }
 
 function createDefaultFilters(supplierId?: number | null, status?: string) {
@@ -60,9 +63,11 @@ function createDefaultFilters(supplierId?: number | null, status?: string) {
   };
 }
 
-export function PurchaseListTab({ onSelect, initialSupplierId, initialStatus, hideStatusFilter }: PurchaseListTabProps) {
+export function PurchaseListTab({ onSelect, initialSupplierId, initialStatus, hideStatusFilter, excludePaid }: PurchaseListTabProps) {
   const { t } = useTranslation();
   const canPay = usePermission('purchases.pay');
+  const canCreate = usePermission('purchases.manage');
+  const [addItemsTarget, setAddItemsTarget] = useState<Purchase | null>(null);
   const [filters, setFilters] = useState(() => createDefaultFilters(initialSupplierId, initialStatus));
   const { data: suppliers } = useApiCall(() => api.suppliers.getAll(), []);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
@@ -92,6 +97,10 @@ export function PurchaseListTab({ onSelect, initialSupplierId, initialStatus, hi
       if (filters.status !== 'all') apiFilters.payment_status = filters.status;
       if (debouncedSearch) apiFilters.search = debouncedSearch;
       if (filters.supplierId !== 'all') apiFilters.supplier_id = filters.supplierId;
+      // Auto-archive: hide paid invoices unless user is actively searching
+      if (excludePaid && !debouncedSearch && filters.status === 'all') {
+        apiFilters.payment_status_exclude = 'paid';
+      }
 
       const result = await api.purchases.getAll(apiFilters);
       setPurchases(Array.isArray(result.data) ? result.data : []);
@@ -101,7 +110,7 @@ export function PurchaseListTab({ onSelect, initialSupplierId, initialStatus, hi
     } finally {
       setLoading(false);
     }
-  }, [filters.startDate, filters.endDate, filters.status, filters.supplierId, debouncedSearch, page]);
+  }, [filters.startDate, filters.endDate, filters.status, filters.supplierId, debouncedSearch, page, excludePaid]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -113,11 +122,11 @@ export function PurchaseListTab({ onSelect, initialSupplierId, initialStatus, hi
 
     const rows = purchases
       .map(
-        (p) => `<tr>
-          <td>${p.purchase_number}</td>
-          <td style="white-space:nowrap">${p.purchase_date}</td>
+        (p, i) => `<tr>
+          <td>${i + 1 + (page - 1) * PAGE_SIZE}</td>
+          <td>${displayInvoiceId(p)}</td>
+          <td style="white-space:nowrap">${formatDate(p.purchase_date)}</td>
           <td>${p.supplier_name ?? '-'}</td>
-          <td>${p.invoice_reference ?? '-'}</td>
           <td class="num">${formatCurrency(p.total_amount)}</td>
           <td class="num">${formatCurrency(p.total_paid)}</td>
           <td class="num">${p.total_amount - p.total_paid > 0 ? formatCurrency(p.total_amount - p.total_paid) : '-'}</td>
@@ -130,16 +139,16 @@ export function PurchaseListTab({ onSelect, initialSupplierId, initialStatus, hi
       <div class="header">
         <div>
           <h2>${t('Purchases')}</h2>
-          <p>${filters.startDate} — ${filters.endDate}</p>
+          <p>${formatDate(filters.startDate)} — ${formatDate(filters.endDate)}</p>
         </div>
       </div>
       <table>
         <thead>
           <tr>
-            <th>${t('Purchase #')}</th>
+            <th>#</th>
+            <th>${t('Invoice #')}</th>
             <th>${t('Date')}</th>
             <th>${t('Supplier')}</th>
-            <th>${t('Invoice Number')}</th>
             <th>${t('Total')}</th>
             <th>${t('Paid')}</th>
             <th>${t('Remaining')}</th>
@@ -237,6 +246,12 @@ export function PurchaseListTab({ onSelect, initialSupplierId, initialStatus, hi
         </CardContent>
       </Card>
 
+      {excludePaid && !debouncedSearch && filters.status === 'all' && (
+        <p className="text-xs text-muted-foreground px-1">
+          {t('Fully paid invoices are archived. Search by invoice number or supplier to find them.')}
+        </p>
+      )}
+
       {/* Table */}
       <div className="flex-1 overflow-auto rounded-md border">
         {loading ? (
@@ -254,28 +269,28 @@ export function PurchaseListTab({ onSelect, initialSupplierId, initialStatus, hi
           <Table className="sticky-col">
             <TableHeader>
               <TableRow>
-                <TableHead>{t('Purchase #')}</TableHead>
+                <TableHead className="w-10 text-center">#</TableHead>
+                <TableHead>{t('Invoice #')}</TableHead>
                 <TableHead>{t('Date')}</TableHead>
                 <TableHead>{t('Supplier')}</TableHead>
-                <TableHead className="hidden lg:table-cell">{t('Invoice Number')}</TableHead>
                 <TableHead className="text-end">{t('Total')}</TableHead>
                 <TableHead className="text-end">{t('Paid')}</TableHead>
                 <TableHead className="hidden lg:table-cell text-end">{t('Remaining')}</TableHead>
                 <TableHead>{t('Status')}</TableHead>
-                {canPay && <TableHead className="w-16"></TableHead>}
+                {(canPay || canCreate) && <TableHead className="w-24"></TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
-              {purchases.map(p => (
+              {purchases.map((p, idx) => (
                 <TableRow
                   key={p.id}
                   className="cursor-pointer hover:bg-muted/50"
                   onClick={() => onSelect(p)}
                 >
-                  <TableCell className="font-medium">{p.purchase_number}</TableCell>
-                  <TableCell>{p.purchase_date}</TableCell>
+                  <TableCell className="text-center text-muted-foreground">{(page - 1) * PAGE_SIZE + idx + 1}</TableCell>
+                  <TableCell className="font-medium">{displayInvoiceId(p)}</TableCell>
+                  <TableCell className="whitespace-nowrap">{formatDate(p.purchase_date)}</TableCell>
                   <TableCell>{p.supplier_name ?? t('N/A')}</TableCell>
-                  <TableCell className="hidden lg:table-cell">{p.invoice_reference ?? '-'}</TableCell>
                   <TableCell className="text-end tabular-nums">{formatCurrency(p.total_amount)}</TableCell>
                   <TableCell className="text-end tabular-nums">{formatCurrency(p.total_paid)}</TableCell>
                   <TableCell className="hidden lg:table-cell text-end tabular-nums font-medium text-destructive">
@@ -286,19 +301,32 @@ export function PurchaseListTab({ onSelect, initialSupplierId, initialStatus, hi
                       {t(p.payment_status)}
                     </Badge>
                   </TableCell>
-                  {canPay && (
+                  {(canPay || canCreate) && (
                     <TableCell>
-                      {p.payment_status !== 'paid' && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="gap-1 h-7 text-xs"
-                          onClick={(e) => { e.stopPropagation(); onSelect(p); }}
-                        >
-                          <CreditCard className="h-3 w-3" />
-                          {t('Pay')}
-                        </Button>
-                      )}
+                      <div className="flex items-center gap-1">
+                        {canCreate && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="gap-1 h-7 text-xs"
+                            onClick={(e) => { e.stopPropagation(); setAddItemsTarget(p); }}
+                            title={t('Add Items')}
+                          >
+                            <PackagePlus className="h-3 w-3" />
+                          </Button>
+                        )}
+                        {canPay && p.payment_status !== 'paid' && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-1 h-7 text-xs"
+                            onClick={(e) => { e.stopPropagation(); onSelect(p); }}
+                          >
+                            <CreditCard className="h-3 w-3" />
+                            {t('Pay')}
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   )}
                 </TableRow>
@@ -323,6 +351,17 @@ export function PurchaseListTab({ onSelect, initialSupplierId, initialStatus, hi
             </Button>
           </div>
         </div>
+      )}
+
+      {/* Add Items Dialog */}
+      {addItemsTarget && (
+        <AddItemsDialog
+          purchaseId={addItemsTarget.id}
+          purchaseNumber={addItemsTarget.purchase_number}
+          open={!!addItemsTarget}
+          onOpenChange={(o) => { if (!o) setAddItemsTarget(null); }}
+          onSuccess={() => { setAddItemsTarget(null); fetchData(); }}
+        />
       )}
     </div>
   );

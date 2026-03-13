@@ -347,11 +347,14 @@ export interface PurchaseItem {
   conversion_factor?: number;
 }
 
+export type PaymentAdjustmentStrategy = 'next' | 'spread' | 'new_installment';
+
 export interface PurchasePayment {
   id: number;
   purchase_id: number;
   due_date: string;
   amount: number;
+  paid_amount: number | null;
   is_paid: number;
   paid_date: string | null;
   payment_method: ExpensePaymentMethod | null;
@@ -364,6 +367,48 @@ export interface PurchasePayment {
   purchase_number?: string;
   supplier_name?: string;
   paid_by_username?: string;
+}
+
+export interface CreatePurchaseItemInput {
+  product_id?: number;
+  new_product?: {
+    name: string;
+    generic_name?: string;
+    usage_instructions?: string;
+    category_name?: string;
+    barcode?: string;
+    parent_unit?: string;
+    child_unit?: string;
+    conversion_factor?: number;
+    min_stock_level?: number;
+  };
+  quantity: number;
+  cost_per_parent: number;
+  selling_price_parent: number;
+  selling_price_child?: number;
+  expiry_date: string;
+  batch_number?: string;
+}
+
+export interface CreatePurchaseInput {
+  purchase_date: string;
+  supplier_id?: number | null;
+  invoice_reference?: string | null;
+  total_amount: number;
+  alert_days_before?: number;
+  notes?: string | null;
+  items?: CreatePurchaseItemInput[];
+  payment_plan: {
+    type: 'full' | 'installments';
+    payment_method?: ExpensePaymentMethod;
+    reference_number?: string;
+    installments?: Array<{ due_date: string; amount: number }>;
+  };
+  initial_payment?: {
+    amount: number;
+    payment_method: ExpensePaymentMethod;
+    reference_number?: string;
+  };
 }
 
 export interface PurchaseReport {
@@ -580,7 +625,7 @@ export interface PharmaSysApi {
     getById(id: number): Promise<Purchase>;
     getItems(purchaseId: number): Promise<PurchaseItem[]>;
     getPayments(purchaseId: number): Promise<PurchasePayment[]>;
-    create(data: unknown): Promise<Purchase>;
+    create(data: CreatePurchaseInput): Promise<Purchase>;
     update(id: number, data: {
       supplier_id?: number | null;
       invoice_reference?: string | null;
@@ -589,7 +634,9 @@ export interface PharmaSysApi {
       alert_days_before?: number;
     }): Promise<Purchase>;
     delete(id: number): Promise<{ ok: boolean }>;
-    markPaymentPaid(paymentId: number, paymentMethod: ExpensePaymentMethod, referenceNumber?: string): Promise<PurchasePayment>;
+    addItems(purchaseId: number, data: { items: CreatePurchaseItemInput[] }): Promise<Purchase>;
+    markPaymentPaid(paymentId: number, paymentMethod: ExpensePaymentMethod, referenceNumber?: string, paidAmount?: number, adjustmentStrategy?: PaymentAdjustmentStrategy): Promise<PurchasePayment>;
+    updatePaymentSchedule(purchaseId: number, payments: Array<{ id: number; amount: number; due_date: string }>): Promise<Purchase>;
     getAgingPayments(): Promise<AgingPayment[]>;
     getOverdueSummary(): Promise<{ count: number; total: number }>;
     getUpcomingPayments(): Promise<UpcomingPayment[]>;

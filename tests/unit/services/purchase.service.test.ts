@@ -30,7 +30,7 @@ const samplePurchase: Purchase = {
 
 const samplePayment: PurchasePayment = {
   id: 1, purchase_id: 1, due_date: '2026-04-01',
-  amount: 5000, is_paid: 0, paid_date: null,
+  amount: 5000, is_paid: 0, paid_date: null, paid_amount: null,
   payment_method: null, reference_number: null, expense_id: null, paid_by_user_id: null,
   notes: null, created_at: '2026-03-02', updated_at: '2026-03-02',
   purchase_number: 'PUR-20260302-001', supplier_name: 'Al-Rahma Pharma',

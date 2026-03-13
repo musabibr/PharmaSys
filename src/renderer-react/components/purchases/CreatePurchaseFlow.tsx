@@ -3,12 +3,12 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import {
   Loader2, Plus, Trash2, Save, Upload, ChevronLeft, ChevronRight,
-  CheckCircle2, XCircle, Search, FileText, SkipForward, Clock, Pencil,
+  CheckCircle2, XCircle, Search, FileText, SkipForward, Clock, Pencil, PenLine,
 } from 'lucide-react';
 import { api, throwIfError } from '@/api';
 import type { ExpensePaymentMethod, Product, Category } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings.store';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -58,6 +58,23 @@ interface Installment {
   amount: number;
 }
 
+/** Manual item entry (separate from PDF-imported items) */
+interface ManualItem {
+  _key: string;
+  productId: number | null;
+  productName: string;
+  quantity: number;
+  costPerParent: number;
+  sellPrice: number;
+  sellPriceChild: number;
+  expiryDate: string;
+  batchNumber: string;
+  parentUnit: string;
+  childUnit: string;
+  convFactor: number;
+  categoryName: string;
+}
+
 /** Editable row from PDF parsing (used in Step 2: Review) */
 interface ImportItem {
   _key: string;
@@ -87,6 +104,8 @@ interface MatchedItem extends ImportItem {
 
 interface CreatePurchaseFlowProps {
   onComplete: () => void;
+  /** When true, skip the import step and go straight to manual entry */
+  startManual?: boolean;
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -173,7 +192,7 @@ function Stepper({ currentStep, hasItems }: { currentStep: Step; hasItems: boole
 
 // ─── Component ─────────────────────────────────────────────────────────────
 
-export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
+export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFlowProps) {
   const { t } = useTranslation();
   const getSetting = useSettingsStore((s) => s.getSetting);
   const defaultMarkup = Number(getSetting('default_markup_percent', '20')) || 20;
@@ -203,6 +222,7 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
   const [creatingCategoryForKey, setCreatingCategoryForKey] = useState<string | null>(null);
   const [showProductForm, setShowProductForm] = useState(false);
   const [editingItem, setEditingItem] = useState<ImportItem | null>(null);
+  const [editedKeys, setEditedKeys] = useState<Set<string>>(new Set());
 
   // Step 4: Purchase details
   const [supplierId, setSupplierId] = useState<number | null>(null);
@@ -222,13 +242,51 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
   const [initialPayRef, setInitialPayRef] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // Whether we have items from PDF (vs manual total-only mode)
+  // Manual items mode (separate from PDF import)
+  const [manualItems, setManualItems] = useState<ManualItem[]>([]);
+  const [showManualProductForm, setShowManualProductForm] = useState(false);
+  const [manualProductQuery, setManualProductQuery] = useState('');
+  const [manualSearchOpen, setManualSearchOpen] = useState(false);
+  const [manualMode, setManualMode] = useState<'items' | 'total'>('total');
+  // Edit dialog state for manual items — uses ImportItem to reuse EditItemDialog
+  const [manualEditItem, setManualEditItem] = useState<ImportItem | null>(null);
+  const [manualEditKey, setManualEditKey] = useState<string | null>(null); // null = adding new, string = editing existing
+
+  // Whether we have items from PDF (vs manual mode)
   const hasItems = importItems.length > 0;
+  const hasManualItems = manualItems.length > 0;
 
   // Load categories on mount so they're available in Step 2 (Review)
   useEffect(() => {
     api.categories.getAll().then(cats => setAllCategories(cats)).catch(() => {});
   }, []);
+
+  // Auto-skip to manual entry when startManual prop is set
+  // Also reset all form state to prevent stale data from previous tab usage
+  useEffect(() => {
+    if (startManual) {
+      setImportItems([]);
+      setMatchedItems([]);
+      setManualMode('items');
+      setManualItems([]);
+      setSupplierId(null);
+      setInvoiceRef('');
+      setPurchaseDate(new Date().toISOString().slice(0, 10));
+      setTotalAmount(0);
+      setAlertDays(7);
+      setNotes('');
+      setPaymentType('installments');
+      setPaymentMethod('cash');
+      setBankReference('');
+      setInstallments([{ _key: crypto.randomUUID(), dueDate: '', amount: 0 }]);
+      setInitialPayment(0);
+      setInitialPayMethod('cash');
+      setInitialPayRef('');
+      setStep('details');
+      api.products.getAll().then(p => setAllProducts(p)).catch(() => {});
+      api.categories.getAll().then(c => setAllCategories(Array.isArray(c) ? c : [])).catch(() => {});
+    }
+  }, [startManual]);
 
   // ─── Step 1: Import handlers ──────────────────────────────────────────────
 
@@ -316,8 +374,125 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
   function handleSkipToManual() {
     setImportItems([]);
     setMatchedItems([]);
+    setManualMode('items');
     setStep('details');
+    // Load products for manual item search
+    api.products.getAll().then(p => setAllProducts(p)).catch(() => {});
   }
+
+  // ─── Manual Items handlers ──────────────────────────────────────────────────
+
+  /** Open the EditItemDialog pre-populated from a product (or blank) to add a manual item */
+  function openManualItemDialog(product?: Product) {
+    const importItem: ImportItem = {
+      _key: `manual-${Date.now()}`,
+      name: product?.name ?? '',
+      genericName: product?.generic_name ?? '',
+      expiryDate: '',
+      parentUnit: product?.parent_unit ?? 'Box',
+      childUnit: product?.child_unit ?? '',
+      convFactor: product?.conversion_factor ?? 1,
+      quantity: 1,
+      costPerParent: 0,
+      sellPrice: product?.selling_price ?? 0,
+      sellPriceChild: product?.selling_price_child ?? 0,
+      batchNumber: generateBatchNumber(),
+      barcode: product?.barcode ?? '',
+      categoryName: product?.category_name ?? '',
+      usageInstructions: product?.usage_instructions ?? '',
+    };
+    setManualEditKey(null); // null = adding new
+    setManualEditItem(importItem);
+    setManualProductQuery('');
+    setManualSearchOpen(false);
+  }
+
+  /** Open the EditItemDialog to edit an existing manual item */
+  function editManualItem(item: ManualItem) {
+    const importItem: ImportItem = {
+      _key: item._key,
+      name: item.productName,
+      genericName: '',
+      expiryDate: item.expiryDate,
+      parentUnit: item.parentUnit,
+      childUnit: item.childUnit,
+      convFactor: item.convFactor,
+      quantity: item.quantity,
+      costPerParent: item.costPerParent,
+      sellPrice: item.sellPrice,
+      sellPriceChild: item.sellPriceChild,
+      batchNumber: item.batchNumber,
+      barcode: '',
+      categoryName: item.categoryName,
+      usageInstructions: '',
+    };
+    setManualEditKey(item._key); // editing existing
+    setManualEditItem(importItem);
+  }
+
+  /** Save from the EditItemDialog back into manual items list */
+  function saveManualEditItem(updated: ImportItem) {
+    const manual: ManualItem = {
+      _key: updated._key,
+      productId: null, // will be resolved on submit if product exists
+      productName: updated.name,
+      quantity: updated.quantity,
+      costPerParent: updated.costPerParent,
+      sellPrice: updated.sellPrice,
+      sellPriceChild: updated.sellPriceChild,
+      expiryDate: updated.expiryDate,
+      batchNumber: updated.batchNumber,
+      parentUnit: updated.parentUnit,
+      childUnit: updated.childUnit,
+      convFactor: updated.convFactor,
+      categoryName: updated.categoryName,
+    };
+    // Try to match to an existing product by name
+    const matched = allProducts.find(p => p.name.toLowerCase() === updated.name.toLowerCase());
+    if (matched) manual.productId = matched.id;
+
+    if (manualEditKey) {
+      // Editing existing item — replace
+      setManualItems(prev => prev.map(m => m._key === manualEditKey ? manual : m));
+    } else {
+      // Adding new
+      setManualItems(prev => [...prev, manual]);
+    }
+    setManualEditItem(null);
+    setManualEditKey(null);
+  }
+
+  /** Called after ProductForm creates a new product — refresh list and open edit dialog */
+  async function handleManualProductCreated() {
+    try {
+      const products = await api.products.getAll();
+      setAllProducts(products);
+      // Find the newest product (highest id) and open edit dialog for it
+      if (products.length > 0) {
+        const newest = products.reduce((a, b) => (a.id > b.id ? a : b));
+        openManualItemDialog(newest);
+      }
+    } catch {
+      // fallback: just refresh
+    }
+  }
+
+
+  function removeManualItem(key: string) {
+    setManualItems(prev => prev.filter(i => i._key !== key));
+  }
+
+
+  const manualSearchResults = manualProductQuery.trim().length >= 2
+    ? allProducts.filter(p => {
+        const q = normalizeForMatch(manualProductQuery);
+        return normalizeForMatch(p.name).includes(q) ||
+          (p.generic_name && normalizeForMatch(p.generic_name).includes(q)) ||
+          (p.barcode && p.barcode.includes(manualProductQuery.trim()));
+      }).slice(0, 8)
+    : [];
+
+  const manualItemsTotal = manualItems.reduce((sum, item) => sum + (item.costPerParent * item.quantity), 0);
 
   // ─── Step 2: Review handlers ──────────────────────────────────────────────
 
@@ -339,6 +514,7 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
 
   function saveEditingItem(updated: ImportItem) {
     setImportItems(prev => prev.map(item => item._key === updated._key ? updated : item));
+    setEditedKeys(prev => new Set(prev).add(updated._key));
     setEditingItem(null);
   }
 
@@ -497,7 +673,7 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
 
   const invoiceTotal = hasItems
     ? matchedItems.reduce((sum, item) => sum + (item.costPerParent * item.quantity), 0)
-    : totalAmount;
+    : hasManualItems ? manualItemsTotal : totalAmount;
 
   const installmentTotal = installments.reduce((sum, i) => sum + (i.amount || 0), 0);
   const installmentDiff = invoiceTotal - installmentTotal - (initialPayment || 0);
@@ -505,6 +681,10 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
   // ─── Submit ─────────────────────────────────────────────────────────────
 
   const handleSubmit = useCallback(async () => {
+    if (!hasItems && !hasManualItems && manualMode === 'items') {
+      toast.error(t('Add at least one item or switch to Total Only'));
+      return;
+    }
     if (!invoiceTotal || invoiceTotal <= 0) {
       toast.error(t('Invoice total is required'));
       return;
@@ -512,6 +692,24 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
     if (!purchaseDate) {
       toast.error(t('Purchase date is required'));
       return;
+    }
+
+    // Validate manual items
+    if (hasManualItems) {
+      for (let i = 0; i < manualItems.length; i++) {
+        if (!manualItems[i].productName.trim()) {
+          toast.error(t('Item {{n}} is missing a product name', { n: i + 1 }));
+          return;
+        }
+        if (manualItems[i].quantity <= 0) {
+          toast.error(t('Item {{n}} quantity must be greater than 0', { n: i + 1 }));
+          return;
+        }
+        if (manualItems[i].costPerParent <= 0) {
+          toast.error(t('Item {{n}} cost must be greater than 0', { n: i + 1 }));
+          return;
+        }
+      }
     }
 
     if (paymentType === 'installments') {
@@ -546,39 +744,72 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
 
     setSubmitting(true);
     try {
-      // Build items array from matched items
-      const purchaseItems = hasItems ? matchedItems.map(item => {
-        if (item.matchType === 'existing' && item.matchedProductId) {
-          return {
-            product_id: item.matchedProductId,
-            quantity: item.quantity,
-            cost_per_parent: item.costPerParent,
-            selling_price_parent: item.sellPrice,
-            selling_price_child: item.sellPriceChild || undefined,
-            expiry_date: item.expiryDate,
-            batch_number: item.batchNumber || undefined,
-          };
-        } else {
-          return {
-            new_product: {
-              name: item.name,
-              generic_name: item.genericName || undefined,
-              usage_instructions: item.usageInstructions || undefined,
-              category_name: item.categoryName || undefined,
-              barcode: item.barcode || undefined,
-              parent_unit: item.parentUnit || 'Unit',
-              child_unit: item.childUnit || undefined,
-              conversion_factor: item.convFactor || 1,
-            },
-            quantity: item.quantity,
-            cost_per_parent: item.costPerParent,
-            selling_price_parent: item.sellPrice,
-            selling_price_child: item.sellPriceChild || undefined,
-            expiry_date: item.expiryDate,
-            batch_number: item.batchNumber || undefined,
-          };
-        }
-      }) : undefined;
+      // Build items array from matched items (PDF) or manual items
+      let purchaseItems;
+      if (hasItems) {
+        purchaseItems = matchedItems.map(item => {
+          if (item.matchType === 'existing' && item.matchedProductId) {
+            return {
+              product_id: item.matchedProductId,
+              quantity: item.quantity,
+              cost_per_parent: item.costPerParent,
+              selling_price_parent: item.sellPrice,
+              selling_price_child: item.sellPriceChild || undefined,
+              expiry_date: item.expiryDate,
+              batch_number: item.batchNumber || undefined,
+            };
+          } else {
+            return {
+              new_product: {
+                name: item.name,
+                generic_name: item.genericName || undefined,
+                usage_instructions: item.usageInstructions || undefined,
+                category_name: item.categoryName || undefined,
+                barcode: item.barcode || undefined,
+                parent_unit: item.parentUnit || 'Unit',
+                child_unit: item.childUnit || undefined,
+                conversion_factor: item.convFactor || 1,
+              },
+              quantity: item.quantity,
+              cost_per_parent: item.costPerParent,
+              selling_price_parent: item.sellPrice,
+              selling_price_child: item.sellPriceChild || undefined,
+              expiry_date: item.expiryDate,
+              batch_number: item.batchNumber || undefined,
+            };
+          }
+        });
+      } else if (hasManualItems) {
+        purchaseItems = manualItems.map(item => {
+          if (item.productId) {
+            return {
+              product_id: item.productId,
+              quantity: item.quantity,
+              cost_per_parent: item.costPerParent,
+              selling_price_parent: item.sellPrice,
+              selling_price_child: item.sellPriceChild || undefined,
+              expiry_date: item.expiryDate || '',
+              batch_number: item.batchNumber || undefined,
+            };
+          } else {
+            return {
+              new_product: {
+                name: item.productName,
+                category_name: item.categoryName || undefined,
+                parent_unit: item.parentUnit || 'Unit',
+                child_unit: item.childUnit || undefined,
+                conversion_factor: item.convFactor || 1,
+              },
+              quantity: item.quantity,
+              cost_per_parent: item.costPerParent,
+              selling_price_parent: item.sellPrice,
+              selling_price_child: item.sellPriceChild || undefined,
+              expiry_date: item.expiryDate || '',
+              batch_number: item.batchNumber || undefined,
+            };
+          }
+        });
+      }
 
       // Build installment plan — prepend initial payment if specified
       const allInstallments = paymentType === 'installments'
@@ -588,7 +819,7 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
           ]
         : undefined;
 
-      const result = throwIfError(await api.purchases.create({
+      throwIfError(await api.purchases.create({
         supplier_id: supplierId ?? undefined,
         invoice_reference: invoiceRef || undefined,
         purchase_date: purchaseDate,
@@ -599,26 +830,15 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
         payment_plan: paymentType === 'full'
           ? { type: 'full' as const, payment_method: paymentMethod, reference_number: paymentMethod === 'bank_transfer' ? bankReference.trim() : undefined }
           : { type: 'installments', installments: allInstallments! },
+        // Pass initial payment to backend for atomic handling (creates expense + marks paid)
+        initial_payment: paymentType === 'installments' && initialPayment > 0
+          ? {
+              amount: initialPayment,
+              payment_method: initialPayMethod,
+              reference_number: initialPayMethod === 'bank_transfer' ? initialPayRef.trim() : undefined,
+            }
+          : undefined,
       }));
-
-      // Auto-mark initial payment as paid if specified
-      if (paymentType === 'installments' && initialPayment > 0 && result?.payments?.length) {
-        const firstPayment = result.payments.find(
-          (p: { amount: number; is_paid: number }) => p.amount === initialPayment && !p.is_paid
-        );
-        if (firstPayment) {
-          try {
-            await api.purchases.markPaymentPaid(
-              firstPayment.id,
-              initialPayMethod,
-              initialPayMethod === 'bank_transfer' ? initialPayRef.trim() : undefined
-            );
-          } catch {
-            // Purchase was created but initial payment marking failed — user can pay later
-            toast.warning(t('Purchase created but initial payment could not be recorded'));
-          }
-        }
-      }
 
       toast.success(t('Purchase created successfully'));
       onComplete();
@@ -631,7 +851,7 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
     supplierId, invoiceRef, purchaseDate, invoiceTotal, alertDays, notes,
     paymentType, paymentMethod, bankReference, installments, installmentDiff,
     initialPayment, initialPayMethod, initialPayRef,
-    hasItems, matchedItems, onComplete, t, totalAmount,
+    hasItems, hasManualItems, matchedItems, manualItems, manualMode, onComplete, t, totalAmount,
   ]);
 
   // ─── Render ─────────────────────────────────────────────────────────────
@@ -700,15 +920,20 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
               className="hidden"
             />
 
-            {/* Skip link */}
-            <div className="flex justify-center">
-              <button
+            {/* Skip to manual entry */}
+            <div className="flex justify-center pt-2">
+              <Button
+                variant="outline"
+                size="lg"
                 onClick={handleSkipToManual}
-                className="text-sm text-muted-foreground hover:text-primary underline underline-offset-4 transition-colors"
+                className="gap-2"
               >
-                <SkipForward className="inline h-3.5 w-3.5 me-1 -mt-0.5" />
-                {t('Skip — enter total manually')}
-              </button>
+                <PenLine className="h-4 w-4" />
+                <div className="flex flex-col items-start">
+                  <span className="text-sm font-medium">{t('Enter Invoice Manually')}</span>
+                  <span className="text-xs text-muted-foreground">{t('Skip PDF import and enter items or total directly')}</span>
+                </div>
+              </Button>
             </div>
           </CardContent>
         </Card>
@@ -771,10 +996,14 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                         <TableCell className="text-muted-foreground text-xs">
                           <button
                             type="button"
-                            className="inline-flex items-center gap-1 hover:text-primary"
+                            className={cn(
+                              "inline-flex items-center gap-1 hover:text-primary",
+                              editedKeys.has(item._key) && "text-emerald-600 font-semibold"
+                            )}
                             onClick={() => setEditingItem(item)}
                             title={t('Edit item details')}
                           >
+                            {editedKeys.has(item._key) && <CheckCircle2 className="h-3 w-3" />}
                             {globalIdx + 1}
                             <Pencil className="h-3 w-3 opacity-40 hover:opacity-100" />
                           </button>
@@ -1319,7 +1548,42 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
       {/* ════════════════════════════════════════════════════════════════════ */}
       {step === 'details' && (
         <>
-          {/* Items summary card (when items exist) */}
+          {/* ── 1. Purchase Identification ──────────────────────────────────── */}
+          <Card>
+            <CardHeader>
+              <CardTitle>{t('Purchase Details')}</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Purchase Date + Invoice Number (identification first) */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <Label>{t('Purchase Date')}</Label>
+                  <Input
+                    type="date"
+                    value={purchaseDate}
+                    onChange={e => setPurchaseDate(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>{t('Invoice Number')}</Label>
+                  <Input
+                    value={invoiceRef}
+                    onChange={e => setInvoiceRef(e.target.value)}
+                    placeholder={t('Invoice #')}
+                  />
+                </div>
+              </div>
+
+              {/* Supplier */}
+              <div className="space-y-1.5">
+                <Label>{t('Supplier')}</Label>
+                <SupplierSelect value={supplierId} onChange={(id) => setSupplierId(id)} />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* ── 2. Items ───────────────────────────────────────────────────────── */}
+          {/* PDF mode: summary of imported items */}
           {hasItems && (
             <Card className="bg-muted/30">
               <CardContent className="p-4">
@@ -1339,49 +1603,193 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
             </Card>
           )}
 
-          <Card>
-            <CardHeader>
-              <CardTitle>{t('Purchase Details')}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {/* Supplier */}
-              <div className="space-y-1.5">
-                <Label>{t('Supplier')}</Label>
-                <SupplierSelect value={supplierId} onChange={(id) => setSupplierId(id)} />
-              </div>
-
-              {/* Invoice Number + Date */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <Label>{t('Invoice Number')}</Label>
-                  <Input
-                    value={invoiceRef}
-                    onChange={e => setInvoiceRef(e.target.value)}
-                    placeholder={t('Invoice #')}
-                  />
+          {/* Manual mode: item entry or total-only */}
+          {!hasItems && (
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle>{t('Items')}</CardTitle>
+                  <div className="flex items-center gap-1 rounded-md border p-0.5">
+                    <button
+                      className={cn(
+                        'px-3 py-1 text-xs rounded-sm transition-colors',
+                        manualMode === 'items'
+                          ? 'bg-primary text-primary-foreground'
+                          : 'text-muted-foreground hover:text-foreground'
+                      )}
+                      onClick={() => setManualMode('items')}
+                    >
+                      {t('Add Items')}
+                    </button>
+                    <button
+                      className={cn(
+                        'px-3 py-1 text-xs rounded-sm transition-colors',
+                        manualMode === 'total'
+                          ? 'bg-primary text-primary-foreground'
+                          : 'text-muted-foreground hover:text-foreground'
+                      )}
+                      onClick={() => setManualMode('total')}
+                    >
+                      {t('Total Only')}
+                    </button>
+                  </div>
                 </div>
-                <div className="space-y-1.5">
-                  <Label>{t('Purchase Date')}</Label>
-                  <Input
-                    type="date"
-                    value={purchaseDate}
-                    onChange={e => setPurchaseDate(e.target.value)}
-                  />
-                </div>
-              </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {manualMode === 'items' ? (
+                  <>
+                    {/* Product search bar */}
+                    <div className="relative">
+                      <div className="flex items-center gap-2">
+                        <div className="relative flex-1">
+                          <Search className="absolute start-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                          <Input
+                            value={manualProductQuery}
+                            onChange={e => {
+                              setManualProductQuery(e.target.value);
+                              setManualSearchOpen(true);
+                            }}
+                            onFocus={() => setManualSearchOpen(true)}
+                            placeholder={t('Search products or type new name...')}
+                            className="ps-9"
+                          />
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1 shrink-0"
+                          onClick={() => setShowManualProductForm(true)}
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          {t('New Product')}
+                        </Button>
+                      </div>
+                      {/* Search results dropdown */}
+                      {manualSearchOpen && manualProductQuery.trim().length >= 2 && (
+                        <div className="absolute z-10 mt-1 w-full rounded-md border bg-popover shadow-md">
+                          {manualSearchResults.length > 0 ? (
+                            <div className="max-h-48 overflow-y-auto p-1">
+                              {manualSearchResults.map(p => (
+                                <button
+                                  key={p.id}
+                                  className="w-full flex items-center justify-between text-start px-3 py-2 text-sm hover:bg-accent rounded-sm"
+                                  onClick={() => openManualItemDialog(p)}
+                                >
+                                  <div>
+                                    <span className="font-medium">{p.name}</span>
+                                    {p.generic_name && (
+                                      <span className="text-xs text-muted-foreground ms-2">({p.generic_name})</span>
+                                    )}
+                                  </div>
+                                  {(p.selling_price ?? 0) > 0 && (
+                                    <span className="text-xs text-muted-foreground">{formatCurrency(p.selling_price!)}</span>
+                                  )}
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="p-3 text-center">
+                              <p className="text-sm text-muted-foreground">{t('No products found')}</p>
+                              <Button
+                                variant="link"
+                                size="sm"
+                                className="mt-1 gap-1"
+                                onClick={() => { setManualSearchOpen(false); setShowManualProductForm(true); }}
+                              >
+                                <Plus className="h-3 w-3" />
+                                {t('Create new product')}
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
 
-              {/* Total + Alert days */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <Label>{t('Invoice Total')} (SDG)</Label>
-                  {hasItems ? (
-                    <Input
-                      type="text"
-                      value={formatCurrency(invoiceTotal)}
-                      readOnly
-                      className="bg-muted"
-                    />
-                  ) : (
+                    {/* Manual items list — click to edit via full dialog */}
+                    {manualItems.length > 0 && (
+                      <div className="space-y-2">
+                        {manualItems.map((item, idx) => {
+                          const hasError = !item.productName || item.quantity <= 0 || item.costPerParent <= 0;
+                          return (
+                            <div
+                              key={item._key}
+                              className={cn(
+                                'flex items-center gap-3 rounded-md border p-3 cursor-pointer hover:bg-accent/50 transition-colors',
+                                hasError && 'border-destructive/50 bg-destructive/5',
+                              )}
+                              onClick={() => editManualItem(item)}
+                            >
+                              <span className="text-xs text-muted-foreground w-5 shrink-0">{idx + 1}</span>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm font-medium truncate">{item.productName || t('Unnamed')}</span>
+                                  {item.productId ? (
+                                    <Badge variant="outline" className="text-[10px] shrink-0">{t('Existing')}</Badge>
+                                  ) : (
+                                    <Badge variant="secondary" className="text-[10px] shrink-0">{t('New')}</Badge>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
+                                  <span>{t('Qty')}: {item.quantity}</span>
+                                  <span>{t('Cost')}: {formatCurrency(item.costPerParent)}</span>
+                                  <span>{t('Sell')}: {formatCurrency(item.sellPrice)}</span>
+                                  {item.childUnit && <span>{item.parentUnit} → {item.childUnit} (×{item.convFactor})</span>}
+                                  {item.expiryDate && <span>{t('Exp')}: {item.expiryDate}</span>}
+                                  {item.batchNumber && <span>{t('Batch')}: {item.batchNumber}</span>}
+                                </div>
+                              </div>
+                              <span className="text-sm font-semibold tabular-nums shrink-0">
+                                {formatCurrency(item.costPerParent * item.quantity)}
+                              </span>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-muted-foreground"
+                                  onClick={(e) => { e.stopPropagation(); editManualItem(item); }}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                  onClick={(e) => { e.stopPropagation(); removeManualItem(item._key); }}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Items total */}
+                    {manualItems.length > 0 && (
+                      <div className="flex justify-end">
+                        <div className="text-sm">
+                          <span className="text-muted-foreground">{t('Items Total')}: </span>
+                          <span className="font-semibold text-base">{formatCurrency(manualItemsTotal)}</span>
+                          <span className="text-xs text-muted-foreground ms-1">
+                            ({manualItems.length} {manualItems.length === 1 ? t('item') : t('items')})
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {manualItems.length === 0 && (
+                      <div className="flex flex-col items-center justify-center py-8 text-center">
+                        <Search className="h-8 w-8 text-muted-foreground/40 mb-2" />
+                        <p className="text-sm text-muted-foreground">{t('Search for products above to add items')}</p>
+                        <p className="text-xs text-muted-foreground mt-1">{t('or switch to "Total Only" for a quick entry')}</p>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  /* Total Only mode */
+                  <div className="space-y-1.5">
+                    <Label>{t('Invoice Total')} (SDG)</Label>
                     <Input
                       type="number"
                       step="1"
@@ -1389,9 +1797,30 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                       value={totalAmount || ''}
                       onChange={e => setTotalAmount(Math.round(Number(e.target.value) || 0))}
                       placeholder="0"
+                      autoFocus
                     />
-                  )}
-                </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* ── 3. Additional Details ──────────────────────────────────────────── */}
+          <Card>
+            <CardContent className="pt-5 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                {/* Invoice total (read-only when computed from items, or editable in total-only mode) */}
+                {(hasItems || manualMode === 'items') && (
+                  <div className="space-y-1.5">
+                    <Label>{t('Invoice Total')} (SDG)</Label>
+                    <Input
+                      type="text"
+                      value={formatCurrency(invoiceTotal)}
+                      readOnly
+                      className="bg-muted"
+                    />
+                  </div>
+                )}
                 <div className="space-y-1.5">
                   <Label>{t('Alert Days Before Due')}</Label>
                   <Input
@@ -1407,8 +1836,6 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                   </p>
                 </div>
               </div>
-
-              {/* Notes */}
               <div className="space-y-1.5">
                 <Label>{t('Notes')}</Label>
                 <Textarea
@@ -1421,6 +1848,7 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
             </CardContent>
           </Card>
 
+          {/* ── 4. Payment ─────────────────────────────────────────────────────── */}
           {/* Payment Section */}
           <Card>
             <CardHeader>
@@ -1484,9 +1912,14 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                 <div className="space-y-4">
                   {/* Amount Already Paid */}
                   <div className="rounded-md border bg-muted/30 p-4 space-y-3">
-                    <div className="flex items-center gap-2">
-                      <CheckCircle2 className="h-4 w-4 text-primary" />
-                      <Label className="font-semibold text-sm">{t('Amount Already Paid')}</Label>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="h-4 w-4 text-primary" />
+                        <Label className="font-semibold text-sm">{t('Amount Already Paid')}</Label>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1 ms-6">
+                        {t('Enter the amount already paid to the supplier before recording this invoice')}
+                      </p>
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
@@ -1523,6 +1956,13 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                         className="h-8"
                       />
                     )}
+                    {invoiceTotal > 0 && initialPayment > 0 && (
+                      <div className="flex items-center gap-3 text-xs pt-1 border-t">
+                        <span>{t('Total')}: <strong>{formatCurrency(invoiceTotal)}</strong></span>
+                        <span>{t('Already Paid')}: <strong className="text-emerald-600 dark:text-emerald-400">{formatCurrency(initialPayment)}</strong></span>
+                        <span>{t('Remaining for installments')}: <strong>{formatCurrency(Math.max(0, invoiceTotal - initialPayment))}</strong></span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Remaining installments */}
@@ -1541,6 +1981,15 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
+                        {installments.length === 0 && (
+                          <TableRow>
+                            <TableCell colSpan={4} className="text-center text-sm text-muted-foreground py-4">
+                              {initialPayment >= invoiceTotal
+                                ? t('Full amount covered by initial payment')
+                                : t('Add at least one installment')}
+                            </TableCell>
+                          </TableRow>
+                        )}
                         {installments.map((inst, idx) => (
                           <TableRow key={inst._key}>
                             <TableCell className="text-muted-foreground">{idx + 1}</TableCell>
@@ -1564,16 +2013,14 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
                               />
                             </TableCell>
                             <TableCell>
-                              {installments.length > 1 && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                                  onClick={() => removeInstallment(inst._key)}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
-                              )}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                onClick={() => removeInstallment(inst._key)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -1620,21 +2067,6 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
       {/* Step 2: Review footer */}
       {step === 'review' && (
         <div className="shrink-0 flex items-center justify-between border-t bg-background/95 backdrop-blur px-4 py-2.5 shadow-[0_-2px_8px_rgba(0,0,0,0.06)]">
-          <div className="flex items-center gap-3">
-            <Badge variant="success">
-              <CheckCircle2 className="me-1 h-3 w-3" />
-              {reviewValid} {t('valid')}
-            </Badge>
-            {reviewErrors > 0 && (
-              <Badge variant="destructive">
-                <XCircle className="me-1 h-3 w-3" />
-                {reviewErrors} {t('errors')}
-              </Badge>
-            )}
-            <span className="text-sm text-muted-foreground">
-              {t('Total')}: <span className="font-medium text-foreground">{formatCurrency(reviewTotal)}</span>
-            </span>
-          </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => setStep('import')}>
               <ChevronLeft className="me-1 h-4 w-4" />
@@ -1650,20 +2082,37 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
               <ChevronRight className="ms-1 h-4 w-4" />
             </Button>
           </div>
+          <div className="flex items-center gap-3">
+            <Badge variant="success">
+              <CheckCircle2 className="me-1 h-3 w-3" />
+              {reviewValid} {t('valid')}
+            </Badge>
+            {reviewErrors > 0 && (
+              <Badge variant="destructive">
+                <XCircle className="me-1 h-3 w-3" />
+                {reviewErrors} {t('errors')}
+              </Badge>
+            )}
+            <span className="text-sm text-muted-foreground">
+              {t('Total')}: <span className="font-medium text-foreground">{formatCurrency(reviewTotal)}</span>
+            </span>
+          </div>
         </div>
       )}
 
       {/* Step 3: Match footer */}
       {step === 'match' && !matchLoading && (
-        <div className="shrink-0 flex justify-between border-t bg-background/95 backdrop-blur px-4 py-2.5 shadow-[0_-2px_8px_rgba(0,0,0,0.06)]">
-          <Button variant="outline" size="sm" onClick={() => setStep('review')}>
-            <ChevronLeft className="me-1 h-4 w-4" />
-            {t('Back')}
-          </Button>
-          <Button size="sm" onClick={() => setStep('details')}>
-            {t('Next')}
-            <ChevronRight className="ms-1 h-4 w-4" />
-          </Button>
+        <div className="shrink-0 flex items-center justify-between border-t bg-background/95 backdrop-blur px-4 py-2.5 shadow-[0_-2px_8px_rgba(0,0,0,0.06)]">
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setStep('review')}>
+              <ChevronLeft className="me-1 h-4 w-4" />
+              {t('Back')}
+            </Button>
+            <Button size="sm" onClick={() => setStep('details')}>
+              {t('Next')}
+              <ChevronRight className="ms-1 h-4 w-4" />
+            </Button>
+          </div>
         </div>
       )}
 
@@ -1675,7 +2124,12 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
               <ChevronLeft className="me-1 h-4 w-4" />
               {t('Back')}
             </Button>
-          ) : <div />}
+          ) : (
+            <Button variant="outline" onClick={() => { setManualItems([]); setManualProductQuery(''); setStep('import'); }}>
+              <ChevronLeft className="me-1 h-4 w-4" />
+              {t('Back')}
+            </Button>
+          )}
           <Button
             onClick={handleSubmit}
             disabled={submitting || !invoiceTotal}
@@ -1699,6 +2153,28 @@ export function CreatePurchaseFlow({ onComplete }: CreatePurchaseFlowProps) {
         onOpenChange={setShowProductForm}
         product={null}
         onSaved={handleProductCreated}
+      />
+
+      {/* ── Product Form for Manual Invoice mode ─────────────────────────── */}
+      <ProductForm
+        open={showManualProductForm}
+        onOpenChange={setShowManualProductForm}
+        product={null}
+        onSaved={handleManualProductCreated}
+      />
+
+      {/* ── Edit Item Dialog for Manual Invoice mode ─────────────────────── */}
+      <EditItemDialog
+        item={manualEditItem}
+        onClose={() => { setManualEditItem(null); setManualEditKey(null); }}
+        onSave={saveManualEditItem}
+        categories={allCategories}
+        onCreateCategory={(name) => {
+          if (!allCategories.find(c => c.name === name)) {
+            setAllCategories(prev => [...prev, { id: -Date.now(), name }]);
+          }
+        }}
+        defaultMarkup={defaultMarkup}
       />
 
       {/* ── Edit Item Dialog ─────────────────────────────────────────────── */}
@@ -1780,6 +2256,16 @@ function EditItemDialog({ item, onClose, onSave, categories, onCreateCategory, d
         const sell = Number(value) || 0;
         setMarkup(Math.round(((sell - updated.costPerParent) / updated.costPerParent) * 100));
       }
+      // Reverse-calculate parent sell price from child sell price
+      if (field === 'sellPriceChild' && updated.childUnit && updated.convFactor > 1) {
+        const childSell = Number(value) || 0;
+        if (childSell > 0) {
+          updated.sellPrice = childSell * updated.convFactor;
+          if (updated.costPerParent > 0) {
+            setMarkup(Math.round(((updated.sellPrice - updated.costPerParent) / updated.costPerParent) * 100));
+          }
+        }
+      }
       return updated;
     });
   }
@@ -1846,6 +2332,7 @@ function EditItemDialog({ item, onClose, onSave, categories, onCreateCategory, d
                 id="ei-barcode"
                 value={draft.barcode}
                 onChange={e => update('barcode', e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') e.preventDefault(); }}
                 placeholder={t('e.g. 6001234567890')}
               />
             </div>

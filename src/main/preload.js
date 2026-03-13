@@ -416,8 +416,14 @@ contextBridge.exposeInMainWorld('api', {
         delete: (id) =>
             ipcRenderer.invoke('purchases:delete', id),
 
-        markPaymentPaid: (paymentId, paymentMethod, referenceNumber) =>
-            ipcRenderer.invoke('purchases:markPaymentPaid', paymentId, paymentMethod, referenceNumber),
+        addItems: (purchaseId, data) =>
+            ipcRenderer.invoke('purchases:addItems', purchaseId, data),
+
+        markPaymentPaid: (paymentId, paymentMethod, referenceNumber, paidAmount, adjustmentStrategy) =>
+            ipcRenderer.invoke('purchases:markPaymentPaid', paymentId, paymentMethod, referenceNumber, paidAmount, adjustmentStrategy),
+
+        updatePaymentSchedule: (purchaseId, payments) =>
+            ipcRenderer.invoke('purchases:updateSchedule', purchaseId, payments),
 
         getAgingPayments: () =>
             ipcRenderer.invoke('purchases:getAgingPayments'),

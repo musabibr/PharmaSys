@@ -7,9 +7,9 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { api } from '@/api';
-import type { Purchase, PurchasePayment, Supplier, ExpensePaymentMethod } from '@/api/types';
+import type { Purchase, PurchasePayment, Supplier, ExpensePaymentMethod, PaymentAdjustmentStrategy } from '@/api/types';
 import { Input } from '@/components/ui/input';
-import { formatCurrency, cn } from '@/lib/utils';
+import { formatCurrency, formatDate, displayInvoiceId, cn } from '@/lib/utils';
 import { useApiCall } from '@/api/hooks';
 import { usePermission } from '@/hooks/usePermission';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -60,8 +60,11 @@ export function SupplierTab() {
   const [purchaseDetail, setPurchaseDetail] = useState<Purchase | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [payingId, setPayingId] = useState<number | null>(null);
-  const [payMethod, setPayMethod] = useState<ExpensePaymentMethod>('cash');
-  const [payRef, setPayRef] = useState('');
+  // Per-payment state keyed by payment.id
+  const [payMethods, setPayMethods] = useState<Record<number, ExpensePaymentMethod>>({});
+  const [payRefs, setPayRefs] = useState<Record<number, string>>({});
+  const [paidAmounts, setPaidAmounts] = useState<Record<number, number | null>>({});
+  const [adjustmentStrategies, setAdjustmentStrategies] = useState<Record<number, PaymentAdjustmentStrategy>>({});
   const [refreshKey, setRefreshKey] = useState(0);
 
   // Filters
@@ -208,18 +211,36 @@ export function SupplierTab() {
   }, [expandedPurchase]);
 
   const handleMarkPaid = useCallback(async (payment: PurchasePayment) => {
-    if (payMethod === 'bank_transfer' && !payRef.trim()) {
+    const method = payMethods[payment.id] ?? 'cash';
+    const ref = payRefs[payment.id] ?? '';
+    if (method === 'bank_transfer' && !ref.trim()) {
       toast.error(t('Reference number is required for bank transfers'));
       return;
     }
+    const rawAmount = paidAmounts[payment.id] ?? payment.amount;
+    const effectiveAmount = Number.isFinite(rawAmount) && rawAmount > 0 ? rawAmount : payment.amount;
+    // Block overpayment on last remaining installment (frontend guard — backend also validates)
+    const unpaidCount = purchaseDetail?.payments?.filter(p => !p.is_paid).length ?? 0;
+    if (unpaidCount === 1 && effectiveAmount > payment.amount) {
+      toast.error(t('Cannot overpay the last remaining installment'));
+      return;
+    }
+    const strategy = adjustmentStrategies[payment.id] ?? 'next';
+    const amountDiffers = effectiveAmount !== payment.amount;
     setPayingId(payment.id);
     try {
       await api.purchases.markPaymentPaid(
-        payment.id, payMethod,
-        payMethod === 'bank_transfer' ? payRef.trim() : undefined
+        payment.id, method,
+        method === 'bank_transfer' ? ref.trim() : undefined,
+        amountDiffers ? effectiveAmount : undefined,
+        amountDiffers ? strategy : undefined
       );
       toast.success(t('Payment marked as paid'));
-      setPayRef('');
+      // Clean up per-payment state for this row
+      setPayMethods(prev => { const next = { ...prev }; delete next[payment.id]; return next; });
+      setPayRefs(prev => { const next = { ...prev }; delete next[payment.id]; return next; });
+      setPaidAmounts(prev => { const next = { ...prev }; delete next[payment.id]; return next; });
+      setAdjustmentStrategies(prev => { const next = { ...prev }; delete next[payment.id]; return next; });
       if (expandedPurchase) {
         const detail = await api.purchases.getById(expandedPurchase);
         setPurchaseDetail(detail);
@@ -234,7 +255,7 @@ export function SupplierTab() {
     } finally {
       setPayingId(null);
     }
-  }, [payMethod, payRef, expandedPurchase, expandedSupplier, t]);
+  }, [payMethods, payRefs, paidAmounts, adjustmentStrategies, expandedPurchase, expandedSupplier, t]);
 
   if (suppliersLoading) {
     return (
@@ -402,12 +423,9 @@ export function SupplierTab() {
                                 )}
                                 <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
                                 <div className="flex-1 min-w-0">
-                                  <span className="font-medium">{p.purchase_number}</span>
-                                  {p.invoice_reference && (
-                                    <span className="ms-2 text-muted-foreground">({p.invoice_reference})</span>
-                                  )}
+                                  <span className="font-medium">{displayInvoiceId(p)}</span>
                                 </div>
-                                <span className="text-xs text-muted-foreground">{p.purchase_date}</span>
+                                <span className="text-xs text-muted-foreground">{formatDate(p.purchase_date)}</span>
                                 <span className="tabular-nums">{formatCurrency(p.total_amount)}</span>
                                 <span className="tabular-nums text-emerald-600 dark:text-emerald-400">
                                   {formatCurrency(p.total_paid)}
@@ -435,6 +453,7 @@ export function SupplierTab() {
                                     <Table>
                                       <TableHeader>
                                         <TableRow>
+                                          <TableHead className="h-8 text-xs w-10 text-center">#</TableHead>
                                           <TableHead className="h-8 text-xs">{t('Due Date')}</TableHead>
                                           <TableHead className="h-8 text-xs text-end">{t('Amount')}</TableHead>
                                           <TableHead className="h-8 text-xs">{t('Status')}</TableHead>
@@ -444,11 +463,16 @@ export function SupplierTab() {
                                         </TableRow>
                                       </TableHeader>
                                       <TableBody>
-                                        {purchaseDetail.payments.map(payment => (
+                                        {purchaseDetail.payments.map((payment, pIdx) => (
                                           <TableRow key={payment.id}>
-                                            <TableCell className="py-1.5 text-sm">{payment.due_date}</TableCell>
+                                            <TableCell className="py-1.5 text-sm text-center text-muted-foreground">{pIdx + 1}</TableCell>
+                                            <TableCell className="py-1.5 text-sm">{formatDate(payment.due_date)}</TableCell>
                                             <TableCell className="py-1.5 text-sm text-end tabular-nums">
-                                              {formatCurrency(payment.amount)}
+                                              {payment.is_paid && payment.paid_amount === 0
+                                                ? <span className="text-[10px] text-muted-foreground">{t('Covered by overpayment')}</span>
+                                                : payment.is_paid && payment.paid_amount != null && payment.paid_amount > 0 && payment.paid_amount !== payment.amount
+                                                  ? <>{formatCurrency(payment.paid_amount)} <span className="text-[10px] text-muted-foreground">/ {formatCurrency(payment.amount)}</span></>
+                                                  : formatCurrency(payment.amount)}
                                             </TableCell>
                                             <TableCell className="py-1.5 text-sm">
                                               {payment.is_paid ? (
@@ -461,16 +485,43 @@ export function SupplierTab() {
                                                 </span>
                                               )}
                                             </TableCell>
-                                            <TableCell className="py-1.5 text-sm">{payment.paid_date ?? '-'}</TableCell>
+                                            <TableCell className="py-1.5 text-sm">{formatDate(payment.paid_date) || '-'}</TableCell>
                                             <TableCell className="py-1.5 text-xs text-muted-foreground">{payment.reference_number ?? '-'}</TableCell>
                                             {canPay && (
                                               <TableCell className="py-1.5 text-end">
-                                                {!payment.is_paid && (
-                                                  <div className="flex flex-col items-end gap-1">
+                                                {!payment.is_paid && (() => {
+                                                  const unpaidCount = purchaseDetail!.payments.filter(p => !p.is_paid).length;
+                                                  const isLastUnpaid = unpaidCount === 1;
+                                                  return (
+                                                  <div className="flex flex-col items-end gap-1.5">
+                                                    {/* Amount first — most important input */}
+                                                    <div className="flex flex-col items-end gap-0.5">
+                                                      <div className="flex items-center gap-1.5">
+                                                        <span className="text-[10px] text-muted-foreground">{t('Amount to Pay')}:</span>
+                                                        <Input
+                                                          type="number"
+                                                          className="h-7 w-24 text-xs tabular-nums"
+                                                          value={paidAmounts[payment.id] ?? payment.amount}
+                                                          onChange={e => {
+                                                            const val = e.target.value === '' ? null : Number(e.target.value);
+                                                            setPaidAmounts(prev => ({ ...prev, [payment.id]: val }));
+                                                          }}
+                                                          min={1}
+                                                          max={isLastUnpaid ? payment.amount : undefined}
+                                                        />
+                                                      </div>
+                                                      {isLastUnpaid && (
+                                                        <span className="text-[10px] text-muted-foreground">{t('Last installment — cannot overpay')}</span>
+                                                      )}
+                                                    </div>
+                                                    {/* Method + Reference */}
                                                     <div className="flex items-center gap-2">
                                                       <Select
-                                                        value={payMethod}
-                                                        onValueChange={v => { setPayMethod(v as ExpensePaymentMethod); if (v !== 'bank_transfer') setPayRef(''); }}
+                                                        value={payMethods[payment.id] ?? 'cash'}
+                                                        onValueChange={v => {
+                                                          setPayMethods(prev => ({ ...prev, [payment.id]: v as ExpensePaymentMethod }));
+                                                          if (v !== 'bank_transfer') setPayRefs(prev => { const next = { ...prev }; delete next[payment.id]; return next; });
+                                                        }}
                                                       >
                                                         <SelectTrigger className="h-7 w-28 text-xs">
                                                           <SelectValue />
@@ -480,30 +531,53 @@ export function SupplierTab() {
                                                           <SelectItem value="bank_transfer">{t('Bank Transfer')}</SelectItem>
                                                         </SelectContent>
                                                       </Select>
-                                                      <Button
-                                                        size="sm"
-                                                        className="h-7 text-xs"
-                                                        onClick={() => handleMarkPaid(payment)}
-                                                        disabled={payingId === payment.id}
-                                                      >
-                                                        {payingId === payment.id ? (
-                                                          <Loader2 className="h-3 w-3 animate-spin" />
-                                                        ) : (
-                                                          <CreditCard className="me-1 h-3 w-3" />
-                                                        )}
-                                                        {t('Pay')}
-                                                      </Button>
                                                     </div>
-                                                    {payMethod === 'bank_transfer' && (
+                                                    {(payMethods[payment.id] ?? 'cash') === 'bank_transfer' && (
                                                       <Input
                                                         className="h-7 w-40 text-xs"
-                                                        value={payRef}
-                                                        onChange={e => setPayRef(e.target.value)}
+                                                        value={payRefs[payment.id] ?? ''}
+                                                        onChange={e => setPayRefs(prev => ({ ...prev, [payment.id]: e.target.value }))}
                                                         placeholder={t('Enter reference number')}
                                                       />
                                                     )}
+                                                    {/* Strategy (conditional) */}
+                                                    {!isLastUnpaid && paidAmounts[payment.id] != null && paidAmounts[payment.id] !== payment.amount && (() => {
+                                                      const isOverpay = paidAmounts[payment.id]! > payment.amount;
+                                                      return (
+                                                        <Select
+                                                          value={adjustmentStrategies[payment.id] ?? 'next'}
+                                                          onValueChange={v => setAdjustmentStrategies(prev => ({ ...prev, [payment.id]: v as PaymentAdjustmentStrategy }))}
+                                                        >
+                                                          <SelectTrigger className="h-7 w-48 text-xs">
+                                                            <SelectValue />
+                                                          </SelectTrigger>
+                                                          <SelectContent>
+                                                            <SelectItem value="next">{t('Adjust next installment')}</SelectItem>
+                                                            <SelectItem value="spread">{t('Spread among remaining')}</SelectItem>
+                                                            {!isOverpay && (
+                                                              <SelectItem value="new_installment">{t('Create new installment')}</SelectItem>
+                                                            )}
+                                                          </SelectContent>
+                                                        </Select>
+                                                      );
+                                                    })()}
+                                                    {/* Pay button — last (confirms action) */}
+                                                    <Button
+                                                      size="sm"
+                                                      className="h-7 text-xs"
+                                                      onClick={() => handleMarkPaid(payment)}
+                                                      disabled={payingId === payment.id}
+                                                    >
+                                                      {payingId === payment.id ? (
+                                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                                      ) : (
+                                                        <CreditCard className="me-1 h-3 w-3" />
+                                                      )}
+                                                      {t('Pay')}
+                                                    </Button>
                                                   </div>
-                                                )}
+                                                  );
+                                                })()}
                                               </TableCell>
                                             )}
                                           </TableRow>

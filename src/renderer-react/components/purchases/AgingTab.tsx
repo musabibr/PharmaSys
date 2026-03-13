@@ -4,7 +4,7 @@ import { api } from '@/api';
 import type { AgingPayment, UpcomingPayment } from '@/api/types';
 import { useApiCall } from '@/api/hooks';
 import { usePermission } from '@/hooks/usePermission';
-import { formatCurrency, cn } from '@/lib/utils';
+import { formatCurrency, formatDate, cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -103,6 +103,7 @@ export function AgingTab({ onPayAction }: AgingTabProps) {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10 text-center">#</TableHead>
                   <TableHead>{t('Supplier')}</TableHead>
                   <TableHead>{t('Invoice #')}</TableHead>
                   <TableHead>{t('Due Date')}</TableHead>
@@ -112,13 +113,14 @@ export function AgingTab({ onPayAction }: AgingTabProps) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {overdueItems.map((item: AgingPayment) => (
+                {overdueItems.map((item: AgingPayment, idx: number) => (
                   <TableRow key={item.payment_id}>
+                    <TableCell className="text-center text-muted-foreground">{idx + 1}</TableCell>
                     <TableCell className="font-medium">
                       {item.supplier_name ?? t('Unknown')}
                     </TableCell>
                     <TableCell>{item.invoice_reference ?? item.purchase_number}</TableCell>
-                    <TableCell>{item.due_date}</TableCell>
+                    <TableCell>{formatDate(item.due_date)}</TableCell>
                     <TableCell className="text-end tabular-nums font-medium">{formatCurrency(item.amount)}</TableCell>
                     <TableCell className="text-end">
                       <span className={cn(
@@ -165,6 +167,7 @@ export function AgingTab({ onPayAction }: AgingTabProps) {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10 text-center">#</TableHead>
                   <TableHead>{t('Supplier')}</TableHead>
                   <TableHead>{t('Invoice #')}</TableHead>
                   <TableHead>{t('Due Date')}</TableHead>
@@ -174,13 +177,14 @@ export function AgingTab({ onPayAction }: AgingTabProps) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {upcomingItems.map((item: UpcomingPayment) => (
+                {upcomingItems.map((item: UpcomingPayment, idx: number) => (
                   <TableRow key={item.payment_id}>
+                    <TableCell className="text-center text-muted-foreground">{idx + 1}</TableCell>
                     <TableCell className="font-medium">
                       {item.supplier_name ?? t('Unknown')}
                     </TableCell>
                     <TableCell>{item.invoice_reference ?? item.purchase_number}</TableCell>
-                    <TableCell>{item.due_date}</TableCell>
+                    <TableCell>{formatDate(item.due_date)}</TableCell>
                     <TableCell className="text-end tabular-nums font-medium">{formatCurrency(item.amount)}</TableCell>
                     <TableCell className="text-end">
                       <span className="inline-flex items-center rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">

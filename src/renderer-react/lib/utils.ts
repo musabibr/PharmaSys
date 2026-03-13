@@ -12,6 +12,19 @@ export function formatCurrency(amount: number | null | undefined, symbol = 'SDG'
   return `${value.toLocaleString()} ${symbol}`;
 }
 
+/** Format ISO date string (YYYY-MM-DD) as DD-MM-YYYY for display */
+export function formatDate(isoString: string | null | undefined): string {
+  if (!isoString) return '';
+  const [y, m, d] = isoString.split('-');
+  if (!y || !m || !d) return isoString;
+  return `${d}-${m}-${y}`;
+}
+
+/** Show invoice_reference if available, otherwise fall back to purchase_number */
+export function displayInvoiceId(purchase: { invoice_reference?: string | null; purchase_number: string }): string {
+  return purchase.invoice_reference?.trim() || purchase.purchase_number;
+}
+
 /** Format base quantity into parent + child units */
 export function formatQuantity(
   quantityBase: number,

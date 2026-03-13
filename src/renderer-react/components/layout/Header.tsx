@@ -47,6 +47,7 @@ const BREADCRUMB_MAP: Record<string, string> = {
   '/users': 'User Management',
   '/audit': 'Audit Log',
   '/settings': 'Settings',
+  '/purchases': 'Purchases',
 };
 
 interface HeaderProps {

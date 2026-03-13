@@ -434,6 +434,10 @@ export class MigrationRepository {
     await this._migrateColumn('purchase_payments', 'reference_number',
       'ALTER TABLE purchase_payments ADD COLUMN reference_number TEXT');
 
+    // Actual paid amount on purchase payments (for flexible payments)
+    await this._migrateColumn('purchase_payments', 'paid_amount',
+      'ALTER TABLE purchase_payments ADD COLUMN paid_amount INTEGER');
+
     this.base.save();
   }
 

@@ -2,8 +2,8 @@ import type { IpcRouter }        from '../ipc-router';
 import type { ServiceContainer } from '../../../core/services/index';
 import type {
   CreateSupplierInput, UpdateSupplierInput,
-  CreatePurchaseInput, UpdatePurchaseInput, PurchaseFilters,
-  ExpensePaymentMethod,
+  CreatePurchaseInput, CreatePurchaseItemInput, UpdatePurchaseInput, PurchaseFilters,
+  ExpensePaymentMethod, PaymentAdjustmentStrategy,
 } from '../../../core/types/models';
 
 export function registerPurchaseHandlers(router: IpcRouter, services: ServiceContainer): void {
@@ -56,9 +56,17 @@ export function registerPurchaseHandlers(router: IpcRouter, services: ServiceCon
     return { ok: true };
   }, { permission: 'purchases.delete' });
 
-  router.handle('purchases:markPaymentPaid', async (user, paymentId: number, paymentMethod: ExpensePaymentMethod, referenceNumber?: string) => {
-    return await services.purchase.markPaymentPaid(paymentId, paymentMethod, user!.id, referenceNumber);
+  router.handle('purchases:addItems', async (user, purchaseId: number, data: { items: CreatePurchaseItemInput[] }) => {
+    return await services.purchase.addItemsToPurchase(purchaseId, data.items, user!.id);
+  }, { permission: 'purchases.manage' });
+
+  router.handle('purchases:markPaymentPaid', async (user, paymentId: number, paymentMethod: ExpensePaymentMethod, referenceNumber?: string, paidAmount?: number, adjustmentStrategy?: PaymentAdjustmentStrategy) => {
+    return await services.purchase.markPaymentPaid(paymentId, paymentMethod, user!.id, referenceNumber, paidAmount, adjustmentStrategy);
   }, { permission: 'purchases.pay' });
+
+  router.handle('purchases:updateSchedule', async (user, purchaseId: number, payments: Array<{ id: number; amount: number; due_date: string }>) => {
+    return await services.purchase.updatePaymentSchedule(purchaseId, payments, user!.id);
+  }, { permission: 'purchases.edit' });
 
   // ─── Aging & Summary ──────────────────────────────────────────────────────
 

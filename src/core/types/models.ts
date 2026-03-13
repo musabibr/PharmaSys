@@ -693,11 +693,14 @@ export interface PurchaseItem {
   conversion_factor?: number;
 }
 
+export type PaymentAdjustmentStrategy = 'next' | 'spread' | 'new_installment';
+
 export interface PurchasePayment {
   id: number;
   purchase_id: number;
   due_date: string;
   amount: number;
+  paid_amount: number | null;
   is_paid: number;
   paid_date: string | null;
   payment_method: ExpensePaymentMethod | null;
@@ -801,6 +804,11 @@ export interface CreatePurchaseInput {
   notes?: string;
   items?: CreatePurchaseItemInput[];
   payment_plan: CreatePaymentPlanInput;
+  initial_payment?: {
+    amount: number;
+    payment_method: ExpensePaymentMethod;
+    reference_number?: string;
+  };
 }
 
 export interface PurchaseFilters {
@@ -808,6 +816,7 @@ export interface PurchaseFilters {
   end_date?: string;
   supplier_id?: number;
   payment_status?: PurchasePaymentStatus;
+  payment_status_exclude?: PurchasePaymentStatus;
   search?: string;
   page?: number;
   limit?: number;

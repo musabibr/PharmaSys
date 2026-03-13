@@ -12,6 +12,7 @@ import type {
   PaginatedResult, AgingPayment, UpcomingPayment,
   CreatePurchaseInput, CreatePurchaseItemInput,
   UpdatePurchaseInput, ExpensePaymentMethod,
+  PaymentAdjustmentStrategy,
 } from '../types/models';
 import { Validate } from '../common/validation';
 import { Money } from '../common/money';
@@ -149,6 +150,81 @@ export class PurchaseService {
     return await this.getById(id);
   }
 
+  // ─── Update Payment Schedule ────────────────────────────────────────────────
+
+  async updatePaymentSchedule(
+    purchaseId: number,
+    payments: Array<{ id: number; amount: number; due_date: string }>,
+    userId: number,
+  ): Promise<Purchase> {
+    Validate.id(purchaseId);
+
+    if (!payments || payments.length === 0) {
+      throw new ValidationError('At least one payment must be provided');
+    }
+
+    // Validate each payment entry (can do outside transaction — pure input validation)
+    for (const p of payments) {
+      Validate.id(p.id);
+      if (!Number.isFinite(p.amount) || p.amount <= 0) {
+        throw new ValidationError('Payment amount must be a positive number');
+      }
+      Validate.dateString(p.due_date, 'Due date');
+    }
+
+    // Fetch + validate + apply all inside one transaction to prevent race conditions
+    await this.base.inTransaction(async () => {
+      const purchase = await this.purchaseRepo.getById(purchaseId);
+      if (!purchase) throw new NotFoundError('Purchase', purchaseId);
+
+      // Verify all payment IDs belong to this purchase and are unpaid
+      const allPayments = purchase.payments ?? [];
+      const unpaidMap = new Map(
+        allPayments.filter(pp => !pp.is_paid).map(pp => [pp.id, pp])
+      );
+
+      for (const p of payments) {
+        if (!unpaidMap.has(p.id)) {
+          throw new ValidationError(
+            `Payment ${p.id} is either not part of this purchase or is already paid`
+          );
+        }
+      }
+
+      // Calculate: paid total (from already paid installments) + new unpaid total = purchase total
+      const paidTotal = allPayments
+        .filter(pp => pp.is_paid)
+        .reduce((sum, pp) => sum + (pp.paid_amount ?? pp.amount), 0);
+      const newUnpaidTotal = payments.reduce((sum, p) => sum + Math.round(p.amount), 0);
+
+      if (paidTotal + newUnpaidTotal !== purchase.total_amount) {
+        throw new ValidationError(
+          `Schedule total (${paidTotal + newUnpaidTotal}) must equal purchase total (${purchase.total_amount}). ` +
+          `Already paid: ${paidTotal}, new unpaid total: ${newUnpaidTotal}`
+        );
+      }
+
+      for (const p of payments) {
+        const rounded = Math.round(p.amount);
+        const existing = unpaidMap.get(p.id)!;
+        if (rounded !== existing.amount) {
+          await this.purchaseRepo.updatePaymentAmount(p.id, rounded);
+        }
+        if (p.due_date !== existing.due_date) {
+          await this.purchaseRepo.updatePaymentDueDate(p.id, p.due_date);
+        }
+      }
+    });
+
+    this.bus.emit('entity:mutated', {
+      action: 'UPDATE_PAYMENT_SCHEDULE', table: 'purchase_payments',
+      recordId: purchaseId, userId,
+      newValues: { payments: payments.map(p => ({ id: p.id, amount: p.amount, due_date: p.due_date })) },
+    });
+
+    return await this.getById(purchaseId);
+  }
+
   // ─── Delete Purchase ────────────────────────────────────────────────────────
 
   async deletePurchase(id: number, userId: number): Promise<void> {
@@ -164,7 +240,18 @@ export class PurchaseService {
       );
     }
 
-    await this.purchaseRepo.delete(id);
+    // Collect batch IDs before deletion (CASCADE will remove purchase_items)
+    const batchIds = await this.purchaseRepo.getItemBatchIds(id);
+
+    await this.base.inTransaction(async () => {
+      // Delete purchase (CASCADE removes items + payments)
+      await this.purchaseRepo.delete(id);
+
+      // Clean up orphan batches (only those not referenced by any transaction)
+      for (const batchId of batchIds) {
+        await this.purchaseRepo.deleteBatchIfOrphan(batchId);
+      }
+    });
 
     this.bus.emit('entity:mutated', {
       action: 'DELETE_PURCHASE', table: 'purchases',
@@ -174,6 +261,91 @@ export class PurchaseService {
         total_amount: existing.total_amount,
         supplier_name: existing.supplier_name,
       },
+    });
+  }
+
+  // ─── Add Items to Purchase ──────────────────────────────────────────────────
+
+  async addItemsToPurchase(
+    purchaseId: number,
+    items: CreatePurchaseItemInput[],
+    userId: number,
+  ): Promise<Purchase> {
+    Validate.id(purchaseId);
+    const purchase = await this.purchaseRepo.getById(purchaseId);
+    if (!purchase) throw new NotFoundError('Purchase', purchaseId);
+
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new ValidationError('At least one item is required', 'items');
+    }
+
+    return await this.base.inTransaction(async () => {
+      // 1. Create products/batches/purchase_items
+      await this._processItems(purchaseId, items, userId);
+
+      // 2. Calculate additional total
+      const additionalTotal = items.reduce(
+        (sum, it) => sum + Money.round(it.quantity * it.cost_per_parent), 0
+      );
+      const newTotal = purchase.total_amount + additionalTotal;
+
+      // 3. Update total amount
+      await this.purchaseRepo.updateTotalAmount(purchaseId, newTotal);
+
+      // 4. Adjust installment schedule to cover the additional total
+      //    Without this, installments sum to less than purchase total → stuck at 'partial'
+      const unpaid = await this.purchaseRepo.getUnpaidPayments(purchaseId);
+      if (unpaid.length > 0) {
+        // Add the additional total to the last unpaid installment
+        const last = unpaid[unpaid.length - 1];
+        await this.purchaseRepo.updatePaymentAmount(last.id, last.amount + additionalTotal);
+      } else {
+        // All installments are already paid — create a new one for the additional amount
+        const today = new Date().toISOString().slice(0, 10);
+        const lastPayment = purchase.payments?.[purchase.payments.length - 1];
+        let dueDate = today;
+        if (lastPayment) {
+          const d = new Date(lastPayment.due_date + 'T00:00:00Z');
+          d.setUTCDate(d.getUTCDate() + 30);
+          dueDate = d.toISOString().slice(0, 10);
+        }
+        await this.purchaseRepo.insertPayment({
+          purchase_id: purchaseId,
+          due_date: dueDate,
+          amount: additionalTotal,
+          is_paid: 0,
+          paid_date: null,
+          payment_method: null,
+          reference_number: null,
+          expense_id: null,
+          paid_by_user_id: null,
+        });
+      }
+
+      // 5. Recalculate payment status using fresh total_paid from DB
+      const totalPaid = await this.purchaseRepo.getPaidTotal(purchaseId);
+      const newStatus = totalPaid >= newTotal
+        ? 'paid' as const
+        : totalPaid > 0
+          ? 'partial' as const
+          : 'unpaid' as const;
+
+      await this.purchaseRepo.updateTotals(purchaseId, totalPaid, newStatus);
+
+      // 6. Emit event
+      this.bus.emit('entity:mutated', {
+        action: 'ADD_PURCHASE_ITEMS', table: 'purchase_items',
+        recordId: purchaseId, userId,
+        newValues: {
+          item_count: items.length,
+          additional_total: additionalTotal,
+          new_total: newTotal,
+          new_status: newStatus,
+        },
+      });
+
+      // 7. Return updated purchase
+      return (await this.purchaseRepo.getById(purchaseId))!;
     });
   }
 
@@ -190,9 +362,11 @@ export class PurchaseService {
       ? data.items!.reduce((sum, it) => sum + Money.round(it.quantity * it.cost_per_parent), 0)
       : Money.round(Validate.positiveNumber(data.total_amount, 'Total amount'));
 
+    let supplierName: string | null = null;
     if (data.supplier_id) {
       const supplier = await this.supplierRepo.getById(data.supplier_id);
       if (!supplier) throw new NotFoundError('Supplier', data.supplier_id);
+      supplierName = supplier.name;
     }
 
     // Validate payment plan
@@ -206,6 +380,12 @@ export class PurchaseService {
     const isPaidInFull = data.payment_plan.type === 'full';
     const initialStatus = isPaidInFull ? 'paid' as const : 'unpaid' as const;
     const initialPaid = isPaidInFull ? totalAmount : 0;
+
+    // Build descriptive label for expenses
+    const invoiceLabel = data.invoice_reference
+      ? `Invoice #${data.invoice_reference}`
+      : purchaseNumber;
+    const supplierLabel = supplierName ? ` — ${supplierName}` : '';
 
     // Everything in one transaction
     return await this.base.inTransaction(async () => {
@@ -237,7 +417,7 @@ export class PurchaseService {
           {
             category_id: expCatId,
             amount: totalAmount,
-            description: `Supplier payment for ${purchaseNumber}`,
+            description: `Supplier invoice payment — ${invoiceLabel}${supplierLabel}`,
             expense_date: purchaseDate,
             payment_method: data.payment_plan.payment_method ?? 'cash',
           },
@@ -258,8 +438,9 @@ export class PurchaseService {
           paid_by_user_id: userId,
         });
       } else if (data.payment_plan.installments) {
+        const insertedPaymentIds: number[] = [];
         for (const inst of data.payment_plan.installments) {
-          await this.purchaseRepo.insertPayment({
+          const payId = await this.purchaseRepo.insertPayment({
             purchase_id: purchaseId,
             due_date: inst.due_date,
             amount: inst.amount,
@@ -270,6 +451,76 @@ export class PurchaseService {
             expense_id: null,
             paid_by_user_id: null,
           });
+          insertedPaymentIds.push(payId);
+        }
+
+        // Handle initial (upfront) payment atomically within the same transaction
+        if (data.initial_payment && data.initial_payment.amount > 0 && insertedPaymentIds.length > 0) {
+          const initPay = data.initial_payment;
+          const initAmount = Math.round(initPay.amount);
+
+          // Validate initial payment
+          Validate.enum(initPay.payment_method, ['cash', 'bank_transfer'] as const, 'Initial payment method');
+          if (initPay.payment_method === 'bank_transfer' && !initPay.reference_number?.trim()) {
+            throw new ValidationError('Reference number is required for bank transfer initial payments', 'reference_number');
+          }
+          if (initAmount <= 0) {
+            throw new ValidationError('Initial payment amount must be positive', 'initial_payment.amount');
+          }
+          if (initAmount > totalAmount) {
+            throw new ValidationError('Initial payment cannot exceed total amount', 'initial_payment.amount');
+          }
+
+          const firstPaymentId = insertedPaymentIds[0];
+          const firstInstallmentAmount = data.payment_plan.installments![0].amount;
+          const expCatId = await this._getOrCreateSupplierPaymentCategory();
+          const shift = await this.shiftRepo.findOpenByUser(userId);
+
+          const expenseResult = await this.expenseRepo.create(
+            {
+              category_id: expCatId,
+              amount: initAmount,
+              description: `Supplier invoice upfront payment — ${invoiceLabel}${supplierLabel}`,
+              expense_date: purchaseDate,
+              payment_method: initPay.payment_method,
+            },
+            userId,
+            shift?.id ?? null,
+          );
+          const expenseId = expenseResult.lastInsertRowid as number;
+
+          // Mark first installment as paid
+          await this.purchaseRepo.markPaymentPaid(
+            firstPaymentId, purchaseDate, initPay.payment_method, expenseId, userId,
+            initPay.reference_number?.trim() ?? null,
+            initAmount,
+          );
+
+          // Handle overpayment: if paid more than first installment, distribute excess
+          const diff = initAmount - firstInstallmentAmount;
+          if (diff > 0 && insertedPaymentIds.length > 1) {
+            let remaining = diff;
+            for (let i = 1; i < insertedPaymentIds.length && remaining > 0; i++) {
+              const nextPayment = await this.purchaseRepo.getPaymentById(insertedPaymentIds[i]);
+              if (!nextPayment || nextPayment.is_paid) continue;
+              if (remaining >= nextPayment.amount) {
+                remaining -= nextPayment.amount;
+                await this.purchaseRepo.markPaymentPaid(
+                  nextPayment.id, purchaseDate, initPay.payment_method, expenseId,
+                  userId, null, nextPayment.amount,
+                );
+              } else {
+                await this.purchaseRepo.updatePaymentAmount(nextPayment.id, nextPayment.amount - remaining);
+                remaining = 0;
+              }
+            }
+          }
+
+          // Update purchase totals
+          const newPaidTotal = await this.purchaseRepo.getPaidTotal(purchaseId);
+          const newStatus = newPaidTotal >= totalAmount ? 'paid' as const
+            : newPaidTotal > 0 ? 'partial' as const : 'unpaid' as const;
+          await this.purchaseRepo.updateTotals(purchaseId, newPaidTotal, newStatus);
         }
       }
 
@@ -299,6 +550,8 @@ export class PurchaseService {
     paymentMethod: ExpensePaymentMethod,
     userId: number,
     referenceNumber?: string,
+    paidAmount?: number,
+    adjustmentStrategy?: PaymentAdjustmentStrategy,
   ): Promise<PurchasePayment> {
     Validate.id(paymentId, 'Payment');
     Validate.enum(paymentMethod, ['cash', 'bank_transfer'] as const, 'Payment method');
@@ -313,21 +566,56 @@ export class PurchaseService {
       throw new BusinessRuleError('This payment has already been marked as paid');
     }
 
+    const effectiveAmount = paidAmount != null ? Math.round(paidAmount) : payment.amount;
+    if (!Number.isFinite(effectiveAmount) || effectiveAmount <= 0) {
+      throw new ValidationError('Paid amount must be a valid positive number', 'paid_amount');
+    }
+
     const purchase = await this.purchaseRepo.getById(payment.purchase_id);
     if (!purchase) throw new NotFoundError('Purchase', payment.purchase_id);
+
+    // Pre-validate overpayment cap BEFORE entering the transaction.
+    // IMPORTANT: Exclude the current payment from unpaid list — it hasn't been marked paid yet,
+    // but the excess can only go to OTHER unpaid installments.
+    const diff = effectiveAmount - payment.amount;
+    if (diff > 0) {
+      const unpaidPreCheck = (await this.purchaseRepo.getUnpaidPayments(purchase.id))
+        .filter(p => p.id !== paymentId);
+      const otherUnpaidTotal = unpaidPreCheck.reduce((sum, p) => sum + p.amount, 0);
+
+      if (unpaidPreCheck.length === 0) {
+        // This is the only remaining installment — overpayment is not allowed
+        throw new BusinessRuleError(
+          `Cannot overpay the last remaining installment. ` +
+          `Maximum payable: ${payment.amount}`
+        );
+      }
+
+      if (diff > otherUnpaidTotal) {
+        throw new BusinessRuleError(
+          `Overpayment of ${effectiveAmount} exceeds remaining balance. ` +
+          `Maximum payable: ${payment.amount + otherUnpaidTotal}`
+        );
+      }
+    }
 
     return await this.base.inTransaction(async () => {
       const today = new Date().toISOString().slice(0, 10);
 
-      // 1. Create expense
+      // 1. Create expense for the actual paid amount
       const expCatId = await this._getOrCreateSupplierPaymentCategory();
       const shift = await this.shiftRepo.findOpenByUser(userId);
+
+      const payInvoiceLabel = purchase.invoice_reference
+        ? `Invoice #${purchase.invoice_reference}`
+        : purchase.purchase_number;
+      const paySupplierLabel = purchase.supplier_name ? ` — ${purchase.supplier_name}` : '';
 
       const expenseResult = await this.expenseRepo.create(
         {
           category_id: expCatId,
-          amount: payment.amount,
-          description: `Supplier payment for ${purchase.purchase_number}`,
+          amount: effectiveAmount,
+          description: `Supplier invoice payment — ${payInvoiceLabel}${paySupplierLabel}`,
           expense_date: today,
           payment_method: paymentMethod,
         },
@@ -336,13 +624,133 @@ export class PurchaseService {
       );
       const expenseId = expenseResult.lastInsertRowid as number;
 
-      // 2. Mark payment as paid
+      // 2. Mark payment as paid with actual paid amount
       await this.purchaseRepo.markPaymentPaid(
         paymentId, today, paymentMethod, expenseId, userId,
-        referenceNumber?.trim() ?? null
+        referenceNumber?.trim() ?? null,
+        effectiveAmount,
       );
 
-      // 3. Recalculate totals
+      // 3. Handle difference between scheduled and paid amount
+      if (diff !== 0) {
+        const strategy = adjustmentStrategy ?? 'next';
+        const allUnpaid = await this.purchaseRepo.getUnpaidPayments(purchase.id);
+        // Reorder: installments due AFTER the current one first, then earlier ones.
+        // This ensures "next" picks the chronologically next installment, not the absolute earliest.
+        const afterCurrent = allUnpaid.filter(p => p.due_date >= payment.due_date);
+        const beforeCurrent = allUnpaid.filter(p => p.due_date < payment.due_date);
+        const unpaid = [...afterCurrent, ...beforeCurrent];
+
+        if (diff > 0) {
+          // Overpayment: the excess covers subsequent installment(s).
+          // The original expense already records the full effectiveAmount,
+          // so auto-paid installments get paid_amount=0 to avoid double-counting
+          // in getPaidTotal() (which sums COALESCE(paid_amount, amount) for is_paid=1).
+          const excess = diff;
+
+          if (strategy === 'spread' && unpaid.length > 1) {
+            // Spread: distribute excess reduction equally across all remaining installments
+            const perInstallment = Math.floor(excess / unpaid.length);
+            const remainder = excess - (perInstallment * unpaid.length);
+            for (let i = 0; i < unpaid.length; i++) {
+              const reduction = i === unpaid.length - 1 ? perInstallment + remainder : perInstallment;
+              if (reduction >= unpaid[i].amount) {
+                // Reduction covers this installment fully → mark it paid
+                await this.purchaseRepo.markPaymentPaid(
+                  unpaid[i].id, today, paymentMethod, expenseId,
+                  userId, null, unpaid[i].amount,
+                );
+              } else {
+                // Reduce this installment's scheduled amount
+                await this.purchaseRepo.updatePaymentAmount(unpaid[i].id, unpaid[i].amount - reduction);
+              }
+            }
+          } else {
+            // 'next' strategy (default): apply excess sequentially
+            let remaining = excess;
+            for (const next of unpaid) {
+              if (remaining <= 0) break;
+              if (remaining >= next.amount) {
+                remaining -= next.amount;
+                await this.purchaseRepo.markPaymentPaid(
+                  next.id, today, paymentMethod, expenseId,
+                  userId, null, next.amount,
+                );
+              } else {
+                await this.purchaseRepo.updatePaymentAmount(next.id, next.amount - remaining);
+                remaining = 0;
+              }
+            }
+          }
+        } else {
+          // Underpayment: deficit needs to be redistributed
+          const deficit = Math.abs(diff);
+
+          if (strategy === 'next') {
+            // Add deficit to next unpaid installment
+            if (unpaid.length > 0) {
+              await this.purchaseRepo.updatePaymentAmount(unpaid[0].id, unpaid[0].amount + deficit);
+            } else {
+              // No unpaid installments left — create a new one for the deficit
+              const dueDate = new Date(payment.due_date + 'T00:00:00Z');
+              dueDate.setUTCDate(dueDate.getUTCDate() + 30);
+              await this.purchaseRepo.insertPayment({
+                purchase_id: purchase.id,
+                due_date: dueDate.toISOString().slice(0, 10),
+                amount: deficit,
+                is_paid: 0,
+                paid_date: null,
+                payment_method: null,
+                reference_number: null,
+                expense_id: null,
+                paid_by_user_id: null,
+              });
+            }
+          } else if (strategy === 'spread') {
+            // Spread deficit equally among remaining unpaid installments
+            if (unpaid.length > 0) {
+              const perInstallment = Math.floor(deficit / unpaid.length);
+              const remainder = deficit - (perInstallment * unpaid.length);
+              for (let i = 0; i < unpaid.length; i++) {
+                const extra = i === unpaid.length - 1 ? perInstallment + remainder : perInstallment;
+                await this.purchaseRepo.updatePaymentAmount(unpaid[i].id, unpaid[i].amount + extra);
+              }
+            } else {
+              // No unpaid installments left — create a new one for the deficit
+              const dueDate = new Date(payment.due_date + 'T00:00:00Z');
+              dueDate.setUTCDate(dueDate.getUTCDate() + 30);
+              await this.purchaseRepo.insertPayment({
+                purchase_id: purchase.id,
+                due_date: dueDate.toISOString().slice(0, 10),
+                amount: deficit,
+                is_paid: 0,
+                paid_date: null,
+                payment_method: null,
+                reference_number: null,
+                expense_id: null,
+                paid_by_user_id: null,
+              });
+            }
+          } else if (strategy === 'new_installment') {
+            // Create a new installment for the deficit
+            const dueDate = new Date(payment.due_date + 'T00:00:00Z');
+            dueDate.setUTCDate(dueDate.getUTCDate() + 30);
+            await this.purchaseRepo.insertPayment({
+              purchase_id: purchase.id,
+              due_date: dueDate.toISOString().slice(0, 10),
+              amount: deficit,
+              is_paid: 0,
+              paid_date: null,
+              payment_method: null,
+              reference_number: null,
+              expense_id: null,
+              paid_by_user_id: null,
+            });
+          }
+        }
+      }
+
+      // 4. Recalculate totals
       const totalPaid = await this.purchaseRepo.getPaidTotal(purchase.id);
       const newStatus = totalPaid >= purchase.total_amount
         ? 'paid' as const
@@ -352,14 +760,17 @@ export class PurchaseService {
 
       await this.purchaseRepo.updateTotals(purchase.id, totalPaid, newStatus);
 
-      // 4. Emit event
+      // 5. Emit event (includes adjustment details for audit trail)
       this.bus.emit('entity:mutated', {
         action: 'MARK_PAYMENT_PAID', table: 'purchase_payments',
         recordId: paymentId, userId,
         newValues: {
           purchase_id: purchase.id,
-          amount: payment.amount,
+          scheduled_amount: payment.amount,
+          paid_amount: effectiveAmount,
           payment_method: paymentMethod,
+          adjustment_strategy: diff !== 0 ? (adjustmentStrategy ?? 'next') : undefined,
+          adjustment_amount: diff !== 0 ? diff : undefined,
           new_status: newStatus,
         },
       });
@@ -407,6 +818,7 @@ export class PurchaseService {
       } else if (item.new_product) {
         // ── New product → create product + batch ──
         const np = item.new_product;
+        Validate.requiredString(np.name, 'Product name');
 
         // Resolve or create category
         let categoryId: number | null = null;

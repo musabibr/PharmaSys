@@ -309,6 +309,11 @@ export function createMockPurchaseRepo() {
     getOverdueSummary: jest.fn().mockResolvedValue({ count: 0, total: 0 }),
     getUpcomingPayments: jest.fn().mockResolvedValue([]),
     getUpcomingSummary: jest.fn().mockResolvedValue({ count: 0, total: 0 }),
+    getUnpaidPayments: jest.fn().mockResolvedValue([]),
+    updatePaymentAmount: jest.fn().mockResolvedValue(undefined),
+    updateTotalAmount: jest.fn().mockResolvedValue(undefined),
+    update: jest.fn().mockResolvedValue(undefined),
+    delete: jest.fn().mockResolvedValue(undefined),
   };
 }
 

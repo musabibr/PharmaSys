@@ -48,6 +48,14 @@ export function purchaseRoutes(services: ServiceContainer): Router {
     res.json({ data: await services.purchase.getUpcomingSummary() });
   }));
 
+  router.post('/:id/items', requireMicroPerm('purchases.manage'), handle(async (req, res) => {
+    res.status(201).json({
+      data: await services.purchase.addItemsToPurchase(
+        Number(req.params.id), req.body.items, req.user!.id
+      ),
+    });
+  }));
+
   router.get('/:id', requireMicroPerm('purchases.view'), handle(async (req, res) => {
     res.json({ data: await services.purchase.getById(Number(req.params.id)) });
   }));
@@ -73,6 +81,14 @@ export function purchaseRoutes(services: ServiceContainer): Router {
     res.json({ data: { ok: true } });
   }));
 
+  router.patch('/:id/schedule', requireMicroPerm('purchases.edit'), handle(async (req, res) => {
+    res.json({
+      data: await services.purchase.updatePaymentSchedule(
+        Number(req.params.id), req.body.payments, req.user!.id
+      ),
+    });
+  }));
+
   router.post('/payments/:paymentId/pay', requireMicroPerm('purchases.pay'), handle(async (req, res) => {
     const paymentMethod = req.body.payment_method as ExpensePaymentMethod;
     res.json({
@@ -81,6 +97,8 @@ export function purchaseRoutes(services: ServiceContainer): Router {
         paymentMethod,
         req.user!.id,
         req.body.reference_number,
+        req.body.paid_amount != null ? Number(req.body.paid_amount) : undefined,
+        req.body.adjustment_strategy,
       ),
     });
   }));

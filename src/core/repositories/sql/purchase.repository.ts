@@ -18,6 +18,7 @@ export class PurchaseRepository implements IPurchaseRepository {
     if (filters.end_date)       { conditions.push("p.purchase_date <= ?");   params.push(filters.end_date); }
     if (filters.supplier_id)    { conditions.push("p.supplier_id = ?");      params.push(filters.supplier_id); }
     if (filters.payment_status) { conditions.push("p.payment_status = ?");   params.push(filters.payment_status); }
+    if (filters.payment_status_exclude) { conditions.push("p.payment_status != ?"); params.push(filters.payment_status_exclude); }
     if (filters.search) {
       const q = `%${String(filters.search).slice(0, 100)}%`;
       conditions.push(`(p.purchase_number LIKE ? OR p.invoice_reference LIKE ? OR s.name LIKE ?)`);
@@ -172,14 +173,16 @@ export class PurchaseRepository implements IPurchaseRepository {
     expenseId: number,
     userId: number,
     referenceNumber: string | null = null,
+    paidAmount: number | null = null,
   ): Promise<void> {
     await this.base.runImmediate(
       `UPDATE purchase_payments
        SET is_paid = 1, paid_date = ?, payment_method = ?,
            reference_number = ?, expense_id = ?, paid_by_user_id = ?,
+           paid_amount = ?,
            updated_at = datetime('now')
        WHERE id = ?`,
-      [paidDate, paymentMethod, referenceNumber, expenseId, userId, paymentId]
+      [paidDate, paymentMethod, referenceNumber, expenseId, userId, paidAmount, paymentId]
     );
   }
 
@@ -211,12 +214,42 @@ export class PurchaseRepository implements IPurchaseRepository {
 
   async getPaidTotal(purchaseId: number): Promise<number> {
     const row = await this.base.getOne<{ total: number }>(
-      `SELECT COALESCE(SUM(amount), 0) as total
+      `SELECT COALESCE(SUM(COALESCE(paid_amount, amount)), 0) as total
        FROM purchase_payments
        WHERE purchase_id = ? AND is_paid = 1`,
       [purchaseId]
     );
     return row?.total ?? 0;
+  }
+
+  async getUnpaidPayments(purchaseId: number): Promise<PurchasePayment[]> {
+    return await this.base.getAll<PurchasePayment>(
+      `SELECT * FROM purchase_payments
+       WHERE purchase_id = ? AND is_paid = 0
+       ORDER BY due_date ASC, id ASC`,
+      [purchaseId]
+    );
+  }
+
+  async updatePaymentAmount(paymentId: number, newAmount: number): Promise<void> {
+    await this.base.runImmediate(
+      `UPDATE purchase_payments SET amount = ?, updated_at = datetime('now') WHERE id = ?`,
+      [newAmount, paymentId]
+    );
+  }
+
+  async updatePaymentDueDate(paymentId: number, newDate: string): Promise<void> {
+    await this.base.runImmediate(
+      `UPDATE purchase_payments SET due_date = ?, updated_at = datetime('now') WHERE id = ?`,
+      [newDate, paymentId]
+    );
+  }
+
+  async updateTotalAmount(purchaseId: number, newTotal: number): Promise<void> {
+    await this.base.runImmediate(
+      `UPDATE purchases SET total_amount = ?, updated_at = datetime('now') WHERE id = ?`,
+      [newTotal, purchaseId]
+    );
   }
 
   async update(id: number, data: UpdatePurchaseInput): Promise<void> {
@@ -268,6 +301,24 @@ export class PurchaseRepository implements IPurchaseRepository {
       return `PUR-${datePrefix}-${String(seq).padStart(3, '0')}`;
     }
     return `PUR-${datePrefix}-001`;
+  }
+
+  async getItemBatchIds(purchaseId: number): Promise<number[]> {
+    const rows = await this.base.getAll<{ batch_id: number }>(
+      `SELECT batch_id FROM purchase_items WHERE purchase_id = ? AND batch_id IS NOT NULL`,
+      [purchaseId]
+    );
+    return rows.map(r => r.batch_id);
+  }
+
+  async deleteBatchIfOrphan(batchId: number): Promise<void> {
+    // Only check transaction_items — purchase_items are already CASCADE-deleted
+    // when this runs inside deletePurchase's transaction.
+    await this.base.runImmediate(
+      `DELETE FROM batches WHERE id = ?
+       AND NOT EXISTS (SELECT 1 FROM transaction_items WHERE batch_id = ?)`,
+      [batchId, batchId]
+    );
   }
 
   async getAgingPayments(): Promise<AgingPayment[]> {
