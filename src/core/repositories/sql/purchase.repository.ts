@@ -186,6 +186,14 @@ export class PurchaseRepository implements IPurchaseRepository {
     );
   }
 
+  async deleteUnpaidPayments(purchaseId: number): Promise<number> {
+    const result = await this.base.runImmediate(
+      `DELETE FROM purchase_payments WHERE purchase_id = ? AND is_paid = 0`,
+      [purchaseId]
+    );
+    return result.changes ?? 0;
+  }
+
   async updateTotals(
     purchaseId: number,
     totalPaid: number,

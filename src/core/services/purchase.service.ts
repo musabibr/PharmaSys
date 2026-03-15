@@ -225,6 +225,74 @@ export class PurchaseService {
     return await this.getById(purchaseId);
   }
 
+  /**
+   * Replace all unpaid installments with a new schedule.
+   * Used when the user deferred installments during creation and now wants to set them up.
+   */
+  async replaceUnpaidSchedule(
+    purchaseId: number,
+    newPayments: Array<{ amount: number; due_date: string }>,
+    userId: number,
+  ): Promise<Purchase> {
+    Validate.id(purchaseId);
+
+    if (!newPayments || newPayments.length === 0) {
+      throw new ValidationError('At least one installment must be provided');
+    }
+
+    for (let i = 0; i < newPayments.length; i++) {
+      const p = newPayments[i];
+      if (!Number.isFinite(p.amount) || p.amount <= 0) {
+        throw new ValidationError(`Installment ${i + 1} amount must be positive`);
+      }
+      Validate.dateString(p.due_date, `Installment ${i + 1} due date`);
+    }
+
+    await this.base.inTransaction(async () => {
+      const purchase = await this.purchaseRepo.getById(purchaseId);
+      if (!purchase) throw new NotFoundError('Purchase', purchaseId);
+
+      const allPayments = purchase.payments ?? [];
+      const paidTotal = allPayments
+        .filter(pp => pp.is_paid)
+        .reduce((sum, pp) => sum + (pp.paid_amount ?? pp.amount), 0);
+      const newUnpaidTotal = newPayments.reduce((sum, p) => sum + Math.round(p.amount), 0);
+
+      if (paidTotal + newUnpaidTotal !== purchase.total_amount) {
+        throw new ValidationError(
+          `Schedule total (${paidTotal + newUnpaidTotal}) must equal purchase total (${purchase.total_amount}). ` +
+          `Already paid: ${paidTotal}, new unpaid total: ${newUnpaidTotal}`
+        );
+      }
+
+      // Delete all existing unpaid payments
+      await this.purchaseRepo.deleteUnpaidPayments(purchaseId);
+
+      // Insert new payments
+      for (const p of newPayments) {
+        await this.purchaseRepo.insertPayment({
+          purchase_id: purchaseId,
+          due_date: p.due_date,
+          amount: Math.round(p.amount),
+          is_paid: 0,
+          paid_date: null,
+          payment_method: null,
+          reference_number: null,
+          expense_id: null,
+          paid_by_user_id: null,
+        });
+      }
+    });
+
+    this.bus.emit('entity:mutated', {
+      action: 'REPLACE_PAYMENT_SCHEDULE', table: 'purchase_payments',
+      recordId: purchaseId, userId,
+      newValues: { payments: newPayments },
+    });
+
+    return await this.getById(purchaseId);
+  }
+
   // ─── Delete Purchase ────────────────────────────────────────────────────────
 
   async deletePurchase(id: number, userId: number): Promise<void> {

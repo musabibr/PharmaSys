@@ -17,7 +17,8 @@ export type MutationAction =
   | 'MANUAL_BACKUP'    | 'RESTORE_BACKUP'
   | 'CREATE_SUPPLIER'  | 'UPDATE_SUPPLIER'
   | 'CREATE_PURCHASE'  | 'UPDATE_PURCHASE' | 'DELETE_PURCHASE' | 'ADD_PURCHASE_ITEMS' | 'MARK_PAYMENT_PAID'
-  | 'UPDATE_PAYMENT_SCHEDULE';
+  | 'UPDATE_PAYMENT_SCHEDULE'
+  | 'REPLACE_PAYMENT_SCHEDULE';
 
 export interface EntityMutatedEvent {
   action: MutationAction;

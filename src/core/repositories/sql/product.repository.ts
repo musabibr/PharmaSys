@@ -199,74 +199,76 @@ export class ProductRepository implements IProductRepository {
   async bulkCreate(items: BulkCreateProductInput[]): Promise<Array<{ success: boolean; name: string; error?: string }>> {
     const results: Array<{ success: boolean; name: string; error?: string }> = [];
 
-    for (const item of items) {
-      try {
-        // Resolve or create category
-        let categoryId: number | null = null;
-        if (item.category_name) {
-          const cat = await this.base.getOne<{ id: number }>(
-            `SELECT id FROM categories WHERE name = ?`,
-            [item.category_name]
-          );
-          if (cat) {
-            categoryId = cat.id;
-          } else {
-            const catResult = await this.base.run(
-              `INSERT INTO categories (name) VALUES (?)`,
+    await this.base.inTransaction(async () => {
+      for (const item of items) {
+        try {
+          // Resolve or create category
+          let categoryId: number | null = null;
+          if (item.category_name) {
+            const cat = await this.base.getOne<{ id: number }>(
+              `SELECT id FROM categories WHERE name = ?`,
               [item.category_name]
             );
-            categoryId = catResult.lastInsertRowid;
+            if (cat) {
+              categoryId = cat.id;
+            } else {
+              const catResult = await this.base.run(
+                `INSERT INTO categories (name) VALUES (?)`,
+                [item.category_name]
+              );
+              categoryId = catResult.lastInsertRowid;
+            }
           }
+
+          // Insert product
+          const prodResult = await this.base.run(
+            `INSERT INTO products (name, generic_name, category_id, barcode,
+             parent_unit, child_unit, conversion_factor, min_stock_level)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              item.name,
+              item.generic_name ?? null,
+              categoryId,
+              item.barcode ?? null,
+              item.parent_unit ?? 'Box',
+              item.child_unit ?? 'Strip',
+              item.conversion_factor ?? 1,
+              item.min_stock_level ?? 0,
+            ]
+          );
+
+          // Insert initial batch
+          const cf = item.conversion_factor ?? 1;
+          const costChild = Money.divideToChild(item.cost_per_parent, cf);
+          const sellChild = Money.divideToChild(item.selling_price_parent, cf);
+
+          await this.base.run(
+            `INSERT INTO batches (product_id, batch_number, expiry_date, quantity_base,
+             cost_per_parent, cost_per_child, cost_per_child_override,
+             selling_price_parent, selling_price_child,
+             selling_price_parent_override, selling_price_child_override, version)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+            [
+              prodResult.lastInsertRowid,
+              item.batch_number ?? null,
+              item.expiry_date,
+              item.quantity_base,
+              item.cost_per_parent,
+              costChild,
+              costChild,
+              item.selling_price_parent,
+              sellChild,
+              item.selling_price_parent,
+              sellChild,
+            ]
+          );
+
+          results.push({ success: true, name: item.name });
+        } catch (err) {
+          results.push({ success: false, name: item.name, error: (err as Error).message });
         }
-
-        // Insert product
-        const prodResult = await this.base.run(
-          `INSERT INTO products (name, generic_name, category_id, barcode,
-           parent_unit, child_unit, conversion_factor, min_stock_level)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            item.name,
-            item.generic_name ?? null,
-            categoryId,
-            item.barcode ?? null,
-            item.parent_unit ?? 'Box',
-            item.child_unit ?? 'Strip',
-            item.conversion_factor ?? 1,
-            item.min_stock_level ?? 0,
-          ]
-        );
-
-        // Insert initial batch
-        const cf = item.conversion_factor ?? 1;
-        const costChild = Money.divideToChild(item.cost_per_parent, cf);
-        const sellChild = Money.divideToChild(item.selling_price_parent, cf);
-
-        await this.base.run(
-          `INSERT INTO batches (product_id, batch_number, expiry_date, quantity_base,
-           cost_per_parent, cost_per_child, cost_per_child_override,
-           selling_price_parent, selling_price_child,
-           selling_price_parent_override, selling_price_child_override, version)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-          [
-            prodResult.lastInsertRowid,
-            item.batch_number ?? null,
-            item.expiry_date,
-            item.quantity_base,
-            item.cost_per_parent,
-            costChild,
-            costChild,
-            item.selling_price_parent,
-            sellChild,
-            item.selling_price_parent,
-            sellChild,
-          ]
-        );
-
-        results.push({ success: true, name: item.name });
-      } catch (err) {
-        results.push({ success: false, name: item.name, error: (err as Error).message });
       }
-    }
+    });
 
     this.base.save();
     return results;

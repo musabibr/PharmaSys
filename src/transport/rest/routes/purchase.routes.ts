@@ -89,6 +89,14 @@ export function purchaseRoutes(services: ServiceContainer): Router {
     });
   }));
 
+  router.put('/:id/schedule', requireMicroPerm('purchases.edit'), handle(async (req, res) => {
+    res.json({
+      data: await services.purchase.replaceUnpaidSchedule(
+        Number(req.params.id), req.body.payments, req.user!.id
+      ),
+    });
+  }));
+
   router.post('/payments/:paymentId/pay', requireMicroPerm('purchases.pay'), handle(async (req, res) => {
     const paymentMethod = req.body.payment_method as ExpensePaymentMethod;
     res.json({

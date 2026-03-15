@@ -1,10 +1,12 @@
 import * as crypto from 'crypto';
+import * as fs     from 'fs';
+import * as path   from 'path';
 import type { AuthRepository } from '../repositories/sql/auth.repository';
 import type { UserRepository } from '../repositories/sql/user.repository';
 import type { EventBus }       from '../events/event-bus';
 import type { UserPublic } from '../types/models';
 import { Validate }             from '../common/validation';
-import { ValidationError, NotFoundError, AuthenticationError } from '../types/errors';
+import { ValidationError, NotFoundError, AuthenticationError, PermissionError } from '../types/errors';
 
 const MAX_LOGIN_ATTEMPTS      = 5;
 const LOGIN_LOCKOUT_MINUTES   = 15;
@@ -231,12 +233,33 @@ export class AuthService {
     });
   }
 
-  async emergencyResetAdmin(): Promise<void> {
+  async emergencyResetAdmin(token: string): Promise<void> {
+    Validate.requiredString(token, 'Emergency reset token');
+
+    // The token file must exist in the data/ directory
+    const dataDir = path.join(process.cwd(), 'data');
+    const tokenFilePath = path.join(dataDir, '.emergency-reset-token');
+
+    if (!fs.existsSync(tokenFilePath)) {
+      throw new PermissionError(
+        'Emergency reset not available. No reset token file found.'
+      );
+    }
+
+    const storedToken = fs.readFileSync(tokenFilePath, 'utf-8').trim();
+    if (!storedToken || storedToken !== token.trim()) {
+      throw new PermissionError('Invalid emergency reset token.');
+    }
+
     const admin = await this.repo.findByUsername('admin');
     if (!admin) throw new ValidationError('Admin account not found', 'admin');
     const hash = hashPassword('admin123');
     await this.repo.updatePassword(admin.id, hash, true);
     await this.repo.unlockAccount(admin.id);
+
+    // Delete the token file after successful use (one-time use)
+    try { fs.unlinkSync(tokenFilePath); } catch { /* ignore cleanup errors */ }
+
     this.bus.emit('auth:event', {
       action: 'emergency_reset', userId: admin.id, username: 'admin',
     });

@@ -68,6 +68,10 @@ export function registerPurchaseHandlers(router: IpcRouter, services: ServiceCon
     return await services.purchase.updatePaymentSchedule(purchaseId, payments, user!.id);
   }, { permission: 'purchases.edit' });
 
+  router.handle('purchases:replaceUnpaidSchedule', async (user, purchaseId: number, payments: Array<{ amount: number; due_date: string }>) => {
+    return await services.purchase.replaceUnpaidSchedule(purchaseId, payments, user!.id);
+  }, { permission: 'purchases.edit' });
+
   // ─── Aging & Summary ──────────────────────────────────────────────────────
 
   router.handle('purchases:getAgingPayments', async (_user) => {

@@ -424,6 +424,8 @@ contextBridge.exposeInMainWorld('api', {
 
         updatePaymentSchedule: (purchaseId, payments) =>
             ipcRenderer.invoke('purchases:updateSchedule', purchaseId, payments),
+        replaceUnpaidSchedule: (purchaseId, payments) =>
+            ipcRenderer.invoke('purchases:replaceUnpaidSchedule', purchaseId, payments),
 
         getAgingPayments: () =>
             ipcRenderer.invoke('purchases:getAgingPayments'),

@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import type { ServiceContainer } from '../../../core/services/index';
-import { requireAuth, requireAdmin }     from '../../middleware/auth.middleware';
-import { createSession, destroySession } from '../../middleware/auth.middleware';
+import { requireAuth, requireAdmin, createSession, destroySession, destroySessionsByUserId } from '../../middleware/auth.middleware';
 import { handle }                from '../../middleware/route-helpers';
 
 export function authRoutes(services: ServiceContainer): Router {
@@ -30,7 +29,11 @@ export function authRoutes(services: ServiceContainer): Router {
   // POST /api/v1/auth/change-password
   router.post('/change-password', requireAuth, handle(async (req, res) => {
     const { currentPassword, newPassword } = req.body;
-    await services.auth.changePassword(req.user!.id, currentPassword, newPassword);
+    const userId = req.user!.id;
+    // Keep the current session alive (this device stays logged in); kick all other devices
+    const currentToken = (req.headers.authorization?.slice(7) ?? req.headers['x-session-token']) as string;
+    await services.auth.changePassword(userId, currentPassword, newPassword);
+    destroySessionsByUserId(userId, currentToken);
     res.json({ data: { ok: true } });
   }));
 
@@ -38,6 +41,8 @@ export function authRoutes(services: ServiceContainer): Router {
   router.post('/admin-reset-password', requireAdmin, handle(async (req, res) => {
     const { targetUserId, newPassword, mustChange } = req.body;
     await services.auth.adminResetPassword(targetUserId, newPassword, req.user!.id, mustChange ?? true);
+    // Invalidate the target user's sessions
+    destroySessionsByUserId(Number(targetUserId));
     res.json({ data: { ok: true } });
   }));
 

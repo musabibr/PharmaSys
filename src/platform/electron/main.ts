@@ -249,7 +249,7 @@ function createWindow(): void {
       nodeIntegration: false,
       contextIsolation: true,
       preload: preloadPath,
-      sandbox: !isClient,  // REST preload needs process.argv access
+      sandbox: true,
       additionalArguments,
       devTools: isDev,
     },
@@ -568,6 +568,14 @@ app.whenReady().then(async () => {
     ipcMain.handle('backup:saveAs', async (_event, sourcePath: string) => {
       const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
       if (!win) return { success: false, error: 'No window available' };
+
+      // Validate that sourcePath is within the expected backup directory
+      const backupDir = path.resolve(path.join(dataPath, 'backups'));
+      const resolvedSource = path.resolve(sourcePath);
+      if (!resolvedSource.startsWith(backupDir + path.sep) && resolvedSource !== backupDir) {
+        return { success: false, error: 'Invalid backup source path' };
+      }
+
       const defaultName = path.basename(sourcePath);
       const { filePath, canceled } = await dialog.showSaveDialog(win, {
         title: 'Save Backup As',

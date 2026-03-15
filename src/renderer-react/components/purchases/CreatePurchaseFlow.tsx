@@ -130,6 +130,21 @@ function isValidDate(dateStr: string): boolean {
   return !isNaN(d.getTime());
 }
 
+function isoToDisplay(iso: string): string {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  if (!y || !m || !d) return iso;
+  return `${d}/${m}/${y.slice(-2)}`;
+}
+
+function displayToIso(display: string): string {
+  const match = display.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (!match) return '';
+  const [, d, m, y] = match;
+  const fullYear = y.length === 2 ? `20${y}` : y;
+  return `${fullYear}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+}
+
 function getItemErrors(item: ImportItem, t: (k: string) => string): string[] {
   const errors: string[] = [];
   if (!item.name.trim()) errors.push(t('Name is required'));
@@ -216,7 +231,9 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [allCategories, setAllCategories] = useState<Category[]>([]);
   const [matchLoading, setMatchLoading] = useState(false);
-  const [productSearch, setProductSearch] = useState<{ key: string; query: string } | null>(null);
+  const [searchDialogKey, setSearchDialogKey] = useState<string | null>(null);
+  const [searchDialogQuery, setSearchDialogQuery] = useState('');
+  const [selectedMatchKeys, setSelectedMatchKeys] = useState<Set<string>>(new Set());
   const [bulkCategory, setBulkCategory] = useState('');
   const [newCategoryName, setNewCategoryName] = useState('');
   const [creatingCategoryForKey, setCreatingCategoryForKey] = useState<string | null>(null);
@@ -228,7 +245,9 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
   const [supplierId, setSupplierId] = useState<number | null>(null);
   const [invoiceRef, setInvoiceRef] = useState('');
   const [purchaseDate, setPurchaseDate] = useState(new Date().toISOString().slice(0, 10));
+  const [dateDisplay, setDateDisplay] = useState(isoToDisplay(new Date().toISOString().slice(0, 10)));
   const [totalAmount, setTotalAmount] = useState<number>(0);
+  const [totalOverride, setTotalOverride] = useState<number | null>(null);
   const [alertDays, setAlertDays] = useState<number>(7);
   const [notes, setNotes] = useState('');
   const [paymentType, setPaymentType] = useState<'full' | 'installments'>('installments');
@@ -238,6 +257,7 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
     { _key: 'inst-1', dueDate: '', amount: 0 },
   ]);
   const [initialPayment, setInitialPayment] = useState<number>(0);
+  const [deferInstallments, setDeferInstallments] = useState(false);
   const [initialPayMethod, setInitialPayMethod] = useState<ExpensePaymentMethod>('cash');
   const [initialPayRef, setInitialPayRef] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -267,12 +287,15 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
     if (startManual) {
       setImportItems([]);
       setMatchedItems([]);
-      setManualMode('items');
+      setManualMode('total');
       setManualItems([]);
       setSupplierId(null);
       setInvoiceRef('');
-      setPurchaseDate(new Date().toISOString().slice(0, 10));
+      const todayIso = new Date().toISOString().slice(0, 10);
+      setPurchaseDate(todayIso);
+      setDateDisplay(isoToDisplay(todayIso));
       setTotalAmount(0);
+      setTotalOverride(null);
       setAlertDays(7);
       setNotes('');
       setPaymentType('installments');
@@ -280,6 +303,7 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
       setBankReference('');
       setInstallments([{ _key: crypto.randomUUID(), dueDate: '', amount: 0 }]);
       setInitialPayment(0);
+      setDeferInstallments(false);
       setInitialPayMethod('cash');
       setInitialPayRef('');
       setStep('details');
@@ -374,7 +398,7 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
   function handleSkipToManual() {
     setImportItems([]);
     setMatchedItems([]);
-    setManualMode('items');
+    setManualMode('total');
     setStep('details');
     // Load products for manual item search
     api.products.getAll().then(p => setAllProducts(p)).catch(() => {});
@@ -635,17 +659,19 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
 
   function applyBulkCategory(catName: string) {
     setMatchedItems(prev => prev.map(item =>
-      item.matchType === 'new' ? { ...item, categoryName: catName } : item
+      item.matchType === 'new' && selectedMatchKeys.has(item._key)
+        ? { ...item, categoryName: catName }
+        : item
     ));
   }
 
-  // Filtered product search results for inline picker
-  const searchResults = productSearch
-    ? allProducts.filter(p =>
-        normalizeForMatch(p.name).includes(normalizeForMatch(productSearch.query)) ||
-        (p.generic_name && normalizeForMatch(p.generic_name).includes(normalizeForMatch(productSearch.query)))
-      ).slice(0, 10)
-    : [];
+  function toggleMatchSelection(key: string) {
+    setSelectedMatchKeys(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  }
 
   const existingCount = matchedItems.filter(m => m.matchType === 'existing').length;
   const newCount = matchedItems.filter(m => m.matchType === 'new').length;
@@ -671,9 +697,10 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
     ));
   }, []);
 
-  const invoiceTotal = hasItems
+  const computedTotal = hasItems
     ? matchedItems.reduce((sum, item) => sum + (item.costPerParent * item.quantity), 0)
     : hasManualItems ? manualItemsTotal : totalAmount;
+  const invoiceTotal = totalOverride ?? computedTotal;
 
   const installmentTotal = installments.reduce((sum, i) => sum + (i.amount || 0), 0);
   const installmentDiff = invoiceTotal - installmentTotal - (initialPayment || 0);
@@ -713,33 +740,46 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
     }
 
     if (paymentType === 'installments') {
-      if (installments.length === 0 && !initialPayment) {
-        toast.error(t('At least one installment is required'));
-        return;
-      }
-      for (let i = 0; i < installments.length; i++) {
-        if (!installments[i].dueDate) {
-          toast.error(t('Installment {{n}} is missing a due date', { n: i + 1 }));
-          return;
-        }
-        if (!installments[i].amount || installments[i].amount <= 0) {
-          toast.error(t('Installment {{n}} amount must be greater than 0', { n: i + 1 }));
-          return;
-        }
-      }
       if (initialPayment > 0 && initialPayMethod === 'bank_transfer' && !initialPayRef.trim()) {
         toast.error(t('Reference number is required for bank transfers'));
         return;
       }
-      if (Math.abs(installmentDiff) > 0) {
-        toast.error(t('Installment amounts must equal the invoice total'));
-        return;
+      if (!deferInstallments) {
+        if (installments.length === 0 && !initialPayment) {
+          toast.error(t('At least one installment is required'));
+          return;
+        }
+        for (let i = 0; i < installments.length; i++) {
+          if (!installments[i].dueDate) {
+            toast.error(t('Installment {{n}} is missing a due date', { n: i + 1 }));
+            return;
+          }
+          if (!installments[i].amount || installments[i].amount <= 0) {
+            toast.error(t('Installment {{n}} amount must be greater than 0', { n: i + 1 }));
+            return;
+          }
+        }
+        if (installmentDiff > 0) {
+          toast.error(t('Installment amounts do not cover the invoice total'));
+          return;
+        }
       }
     }
 
     if (paymentType === 'full' && paymentMethod === 'bank_transfer' && !bankReference.trim()) {
       toast.error(t('Reference number is required for bank transfers'));
       return;
+    }
+
+    // Warn if overpaying
+    if (paymentType === 'installments' && invoiceTotal > 0) {
+      const totalPaid = (initialPayment || 0) + installmentTotal;
+      if (!deferInstallments && totalPaid > invoiceTotal) {
+        const overpay = totalPaid - invoiceTotal;
+        if (!window.confirm(t('You are overpaying by {{amount}}. Continue?', { amount: formatCurrency(overpay) }))) {
+          return;
+        }
+      }
     }
 
     setSubmitting(true);
@@ -812,12 +852,22 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
       }
 
       // Build installment plan — prepend initial payment if specified
-      const allInstallments = paymentType === 'installments'
-        ? [
+      let allInstallments: { due_date: string; amount: number }[] | undefined;
+      if (paymentType === 'installments') {
+        if (deferInstallments) {
+          // Placeholder: single installment for the remaining amount
+          const remaining = invoiceTotal - (initialPayment || 0);
+          allInstallments = [
+            ...(initialPayment > 0 ? [{ due_date: purchaseDate, amount: initialPayment }] : []),
+            ...(remaining > 0 ? [{ due_date: purchaseDate, amount: remaining }] : []),
+          ];
+        } else {
+          allInstallments = [
             ...(initialPayment > 0 ? [{ due_date: purchaseDate, amount: initialPayment }] : []),
             ...installments.map(i => ({ due_date: i.dueDate, amount: i.amount })),
-          ]
-        : undefined;
+          ];
+        }
+      }
 
       throwIfError(await api.purchases.create({
         supplier_id: supplierId ?? undefined,
@@ -850,7 +900,7 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
   }, [
     supplierId, invoiceRef, purchaseDate, invoiceTotal, alertDays, notes,
     paymentType, paymentMethod, bankReference, installments, installmentDiff,
-    initialPayment, initialPayMethod, initialPayRef,
+    initialPayment, initialPayMethod, initialPayRef, deferInstallments,
     hasItems, hasManualItems, matchedItems, manualItems, manualMode, onComplete, t, totalAmount,
   ]);
 
@@ -1267,12 +1317,18 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
                   {t('The system checked each product against the database.')}
                 </p>
 
-                {/* Bulk category for new items */}
+                {/* Bulk category for selected items */}
                 {newCount > 0 && (
-                  <div className="flex items-center gap-2 rounded-lg border bg-muted/50 px-3 py-2">
-                    <Label className="text-xs whitespace-nowrap">{t('Set category for all new items')}:</Label>
+                  <div className="flex items-center gap-2 rounded-lg border bg-muted/50 px-3 py-2 flex-wrap">
+                    <Label className="text-xs whitespace-nowrap">
+                      {t('Set category for selected items')}
+                      {selectedMatchKeys.size > 0 && (
+                        <Badge variant="secondary" className="ms-1 text-[10px] px-1.5 py-0">{selectedMatchKeys.size} {t('selected')}</Badge>
+                      )}:
+                    </Label>
                     <Select
                       value={bulkCategory}
+                      disabled={selectedMatchKeys.size === 0}
                       onValueChange={(val) => {
                         if (val === '__new__') {
                           return; // handled by inline input
@@ -1303,7 +1359,7 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
                       <Button
                         variant="outline" size="sm"
                         className="h-8"
-                        disabled={!newCategoryName.trim()}
+                        disabled={!newCategoryName.trim() || selectedMatchKeys.size === 0}
                         onClick={() => {
                           const name = newCategoryName.trim();
                           if (!name) return;
@@ -1340,6 +1396,25 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
                   <Table className="sticky-col">
                     <TableHeader>
                       <TableRow className="bg-muted/50">
+                        <TableHead className="w-8">
+                          <input
+                            type="checkbox"
+                            className="h-3.5 w-3.5 rounded border-input accent-primary"
+                            checked={matchedItems.filter(m => m.matchType === 'new').length > 0 && matchedItems.filter(m => m.matchType === 'new').every(m => selectedMatchKeys.has(m._key))}
+                            onChange={(e) => {
+                              const newItems = matchedItems.filter(m => m.matchType === 'new');
+                              if (e.target.checked) {
+                                setSelectedMatchKeys(prev => {
+                                  const next = new Set(prev);
+                                  newItems.forEach(m => next.add(m._key));
+                                  return next;
+                                });
+                              } else {
+                                setSelectedMatchKeys(new Set());
+                              }
+                            }}
+                          />
+                        </TableHead>
                         <TableHead className="w-10">#</TableHead>
                         <TableHead>{t('Invoice Name')}</TableHead>
                         <TableHead>{t('Status')}</TableHead>
@@ -1353,6 +1428,18 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
                         const globalIdx = matchPage * PAGE_SIZE + pageIdx;
                         return (
                           <TableRow key={item._key}>
+                            <TableCell>
+                              {item.matchType === 'new' ? (
+                                <input
+                                  type="checkbox"
+                                  className="h-3.5 w-3.5 rounded border-input accent-primary"
+                                  checked={selectedMatchKeys.has(item._key)}
+                                  onChange={() => toggleMatchSelection(item._key)}
+                                />
+                              ) : (
+                                <span className="block h-3.5 w-3.5" />
+                              )}
+                            </TableCell>
                             <TableCell className="text-muted-foreground text-xs">
                               {globalIdx + 1}
                             </TableCell>
@@ -1377,48 +1464,7 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
                             </TableCell>
                             <TableCell>
                               {item.matchType === 'existing' ? (
-                                <div>
-                                  <span className="text-sm">{item.matchedProductName}</span>
-                                  {/* Inline search to change match */}
-                                  {productSearch?.key === item._key ? (
-                                    <div className="mt-1 space-y-1">
-                                      <Input
-                                        value={productSearch.query}
-                                        onChange={e => setProductSearch({ key: item._key, query: e.target.value })}
-                                        className="h-7 text-xs"
-                                        placeholder={t('Search products...')}
-                                        autoFocus
-                                        onKeyDown={e => { if (e.key === 'Escape') setProductSearch(null); }}
-                                      />
-                                      {searchResults.length > 0 && (
-                                        <div className="max-h-32 overflow-y-auto rounded border bg-popover text-xs">
-                                          {searchResults.map(p => (
-                                            <button
-                                              key={p.id}
-                                              className="w-full text-start px-2 py-1 hover:bg-accent"
-                                              onClick={() => {
-                                                setMatchType(item._key, 'existing', p.id, p.name, p.category_name || '');
-                                                setProductSearch(null);
-                                              }}
-                                            >
-                                              {p.name}
-                                              {p.category_name && <span className="text-muted-foreground"> — {p.category_name}</span>}
-                                            </button>
-                                          ))}
-                                        </div>
-                                      )}
-                                      <button
-                                        className="text-xs text-primary hover:underline"
-                                        onClick={() => {
-                                          setMatchType(item._key, 'new');
-                                          setProductSearch(null);
-                                        }}
-                                      >
-                                        {t('Switch to new product')}
-                                      </button>
-                                    </div>
-                                  ) : null}
-                                </div>
+                                <span className="text-sm">{item.matchedProductName}</span>
                               ) : (
                                 <span className="text-xs text-muted-foreground">—</span>
                               )}
@@ -1445,59 +1491,17 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
                               )}
                             </TableCell>
                             <TableCell>
-                              {item.matchType === 'existing' ? (
-                                <Button
-                                  variant="ghost" size="icon"
-                                  className="h-7 w-7"
-                                  title={t('Search existing product')}
-                                  onClick={() => setProductSearch({ key: item._key, query: '' })}
-                                >
-                                  <Search className="h-3.5 w-3.5" />
-                                </Button>
-                              ) : (
-                                <Button
-                                  variant="ghost" size="icon"
-                                  className="h-7 w-7"
-                                  title={t('Search existing product')}
-                                  onClick={() => setProductSearch({ key: item._key, query: item.name })}
-                                >
-                                  <Search className="h-3.5 w-3.5" />
-                                </Button>
-                              )}
-                              {/* Show inline search for "new" items */}
-                              {item.matchType === 'new' && productSearch?.key === item._key && (
-                                <div className="absolute mt-1 z-10 w-64 space-y-1 bg-popover border rounded-md p-2 shadow-md">
-                                  <Input
-                                    value={productSearch.query}
-                                    onChange={e => setProductSearch({ key: item._key, query: e.target.value })}
-                                    className="h-7 text-xs"
-                                    placeholder={t('Search products...')}
-                                    autoFocus
-                                    onKeyDown={e => { if (e.key === 'Escape') setProductSearch(null); }}
-                                  />
-                                  {searchResults.length > 0 && (
-                                    <div className="max-h-32 overflow-y-auto text-xs">
-                                      {searchResults.map(p => (
-                                        <button
-                                          key={p.id}
-                                          className="w-full text-start px-2 py-1 hover:bg-accent rounded"
-                                          onClick={() => {
-                                            setMatchType(item._key, 'existing', p.id, p.name, p.category_name || '');
-                                            setProductSearch(null);
-                                          }}
-                                        >
-                                          {p.name}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  )}
-                                  {searchResults.length === 0 && productSearch.query && (
-                                    <p className="text-xs text-muted-foreground px-2 py-1">
-                                      {t('No match found — will create new product')}
-                                    </p>
-                                  )}
-                                </div>
-                              )}
+                              <Button
+                                variant="ghost" size="icon"
+                                className="h-7 w-7"
+                                title={t('Search Product')}
+                                onClick={() => {
+                                  setSearchDialogKey(item._key);
+                                  setSearchDialogQuery(item.matchType === 'new' ? item.name : '');
+                                }}
+                              >
+                                <Search className="h-3.5 w-3.5" />
+                              </Button>
                             </TableCell>
                           </TableRow>
                         );
@@ -1540,6 +1544,71 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
             )}
           </CardContent>
         </Card>
+
+        {/* Product Search Dialog */}
+        <Dialog open={!!searchDialogKey} onOpenChange={(open) => { if (!open) setSearchDialogKey(null); }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>{t('Search Product')}</DialogTitle>
+              <DialogDescription>{t('Search for an existing product or create as new')}</DialogDescription>
+            </DialogHeader>
+            <Input
+              value={searchDialogQuery}
+              onChange={e => setSearchDialogQuery(e.target.value)}
+              placeholder={t('Search products...')}
+              autoFocus
+              className="h-9"
+            />
+            <div className="max-h-64 overflow-y-auto space-y-0.5">
+              {allProducts
+                .filter(p =>
+                  searchDialogQuery
+                    ? normalizeForMatch(p.name).includes(normalizeForMatch(searchDialogQuery)) ||
+                      (p.generic_name && normalizeForMatch(p.generic_name).includes(normalizeForMatch(searchDialogQuery)))
+                    : true
+                )
+                .slice(0, 15)
+                .map(p => (
+                  <button
+                    key={p.id}
+                    className="w-full text-start px-3 py-2 hover:bg-accent rounded-md text-sm flex items-center justify-between"
+                    onClick={() => {
+                      if (searchDialogKey) {
+                        setMatchType(searchDialogKey, 'existing', p.id, p.name, p.category_name || '');
+                      }
+                      setSearchDialogKey(null);
+                    }}
+                  >
+                    <span>{p.name}</span>
+                    {p.category_name && <span className="text-xs text-muted-foreground">{p.category_name}</span>}
+                  </button>
+                ))
+              }
+              {searchDialogQuery && allProducts.filter(p =>
+                normalizeForMatch(p.name).includes(normalizeForMatch(searchDialogQuery)) ||
+                (p.generic_name && normalizeForMatch(p.generic_name).includes(normalizeForMatch(searchDialogQuery)))
+              ).length === 0 && (
+                <p className="text-sm text-muted-foreground text-center py-3">
+                  {t('No match found — will create new product')}
+                </p>
+              )}
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  if (searchDialogKey) {
+                    setMatchType(searchDialogKey, 'new');
+                  }
+                  setSearchDialogKey(null);
+                }}
+              >
+                {t('Create as new product')}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         </>
       )}
 
@@ -1559,9 +1628,17 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
                 <div className="space-y-1.5">
                   <Label>{t('Purchase Date')}</Label>
                   <Input
-                    type="date"
-                    value={purchaseDate}
-                    onChange={e => setPurchaseDate(e.target.value)}
+                    type="text"
+                    value={dateDisplay}
+                    onChange={e => setDateDisplay(e.target.value)}
+                    onBlur={() => {
+                      const iso = displayToIso(dateDisplay);
+                      if (iso && isValidDate(iso)) {
+                        setPurchaseDate(iso);
+                        setDateDisplay(isoToDisplay(iso));
+                      }
+                    }}
+                    placeholder="dd/mm/yy"
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -1787,18 +1864,25 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
                     )}
                   </>
                 ) : (
-                  /* Total Only mode */
-                  <div className="space-y-1.5">
-                    <Label>{t('Invoice Total')} (SDG)</Label>
-                    <Input
-                      type="number"
-                      step="1"
-                      min="1"
-                      value={totalAmount || ''}
-                      onChange={e => setTotalAmount(Math.round(Number(e.target.value) || 0))}
-                      placeholder="0"
-                      autoFocus
-                    />
+                  /* Total Only mode — enter total directly here */
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="items-total-input">
+                        {t('Invoice Total')} (SDG) <span className="text-destructive">*</span>
+                      </Label>
+                      <Input
+                        id="items-total-input"
+                        type="number"
+                        step="1"
+                        min="1"
+                        value={totalAmount || ''}
+                        onChange={e => setTotalAmount(Math.round(Number(e.target.value) || 0))}
+                        placeholder="0"
+                        autoFocus
+                        className="text-base"
+                      />
+                      <p className="text-xs text-muted-foreground">{t('or switch to "Add Items" to enter line items')}</p>
+                    </div>
                   </div>
                 )}
               </CardContent>
@@ -1809,17 +1893,43 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
           <Card>
             <CardContent className="pt-5 space-y-4">
               <div className="grid grid-cols-2 gap-4">
-                {/* Invoice total (read-only when computed from items, or editable in total-only mode) */}
-                {(hasItems || manualMode === 'items') && (
-                  <div className="space-y-1.5">
-                    <Label>{t('Invoice Total')} (SDG)</Label>
+                {/* Invoice total — shown for PDF/items mode; hidden for 'total' mode (shown in Items card) */}
+                {(hasItems || hasManualItems || (!hasItems && !hasManualItems && manualMode === 'items')) && (
+                <div className="space-y-1.5">
+                  <Label>{t('Invoice Total')} (SDG) <span className="text-destructive">*</span></Label>
+                  {(hasItems || hasManualItems) ? (
+                    <>
+                      <Input
+                        type="number"
+                        step="1"
+                        min="0"
+                        value={(totalOverride ?? computedTotal) || ''}
+                        onChange={e => {
+                          const val = Math.round(Number(e.target.value) || 0);
+                          setTotalOverride(val === computedTotal ? null : val);
+                        }}
+                        className={totalOverride !== null ? '' : 'bg-muted/50'}
+                      />
+                      {totalOverride !== null && totalOverride !== computedTotal && (
+                        <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                          {t('Computed total is {{total}}', { total: formatCurrency(computedTotal) })}
+                          <button type="button" className="text-primary underline ms-1" onClick={() => setTotalOverride(null)}>
+                            {t('Reset')}
+                          </button>
+                        </p>
+                      )}
+                    </>
+                  ) : (
                     <Input
-                      type="text"
-                      value={formatCurrency(invoiceTotal)}
-                      readOnly
-                      className="bg-muted"
+                      type="number"
+                      step="1"
+                      min="1"
+                      value={totalAmount || ''}
+                      onChange={e => setTotalAmount(Math.round(Number(e.target.value) || 0))}
+                      placeholder="0"
                     />
-                  </div>
+                  )}
+                </div>
                 )}
                 <div className="space-y-1.5">
                   <Label>{t('Alert Days Before Due')}</Label>
@@ -1957,19 +2067,44 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
                       />
                     )}
                     {invoiceTotal > 0 && initialPayment > 0 && (
-                      <div className="flex items-center gap-3 text-xs pt-1 border-t">
+                      <div className="flex items-center gap-3 text-xs pt-1 border-t flex-wrap">
                         <span>{t('Total')}: <strong>{formatCurrency(invoiceTotal)}</strong></span>
                         <span>{t('Already Paid')}: <strong className="text-emerald-600 dark:text-emerald-400">{formatCurrency(initialPayment)}</strong></span>
-                        <span>{t('Remaining for installments')}: <strong>{formatCurrency(Math.max(0, invoiceTotal - initialPayment))}</strong></span>
+                        {initialPayment > invoiceTotal ? (
+                          <span className="text-amber-600 dark:text-amber-400 font-medium">
+                            {t('Overpaying by {{amount}}', { amount: formatCurrency(initialPayment - invoiceTotal) })}
+                          </span>
+                        ) : (
+                          <span>{t('Remaining for installments')}: <strong>{formatCurrency(invoiceTotal - initialPayment)}</strong></span>
+                        )}
                       </div>
                     )}
                   </div>
 
                   {/* Remaining installments */}
-                  <div className="flex items-center gap-2">
-                    <Clock className="h-4 w-4 text-muted-foreground" />
-                    <Label className="font-semibold text-sm">{t('Remaining Installments')}</Label>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Clock className="h-4 w-4 text-muted-foreground" />
+                      <Label className="font-semibold text-sm">{t('Remaining Installments')}</Label>
+                    </div>
+                    <label htmlFor="defer-installments" className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        id="defer-installments"
+                        type="checkbox"
+                        checked={deferInstallments}
+                        onChange={e => setDeferInstallments(e.target.checked)}
+                        className="h-4 w-4 rounded border-input accent-primary"
+                      />
+                      <span className="text-xs text-muted-foreground">{t('Set installments later')}</span>
+                    </label>
                   </div>
+
+                  {deferInstallments ? (
+                    <div className="rounded-md border bg-muted/30 p-4 text-center text-sm text-muted-foreground">
+                      {t('Installment schedule will be set after purchase creation')}
+                    </div>
+                  ) : (
+                  <>
                   <div className="rounded-md border">
                     <Table>
                       <TableHeader>
@@ -2046,12 +2181,17 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
                         <span className="font-medium">{formatCurrency(installmentTotal)}</span>
                       </div>
                       {invoiceTotal > 0 && installmentDiff !== 0 && (
-                        <div className="text-destructive font-medium">
-                          ({installmentDiff > 0 ? '-' : '+'}{formatCurrency(Math.abs(installmentDiff))} {t('remaining')})
+                        <div className={installmentDiff < 0 ? 'text-amber-600 dark:text-amber-400 font-medium' : 'text-destructive font-medium'}>
+                          {installmentDiff < 0
+                            ? t('Overpaying by {{amount}}', { amount: formatCurrency(Math.abs(installmentDiff)) })
+                            : `(-${formatCurrency(installmentDiff)} ${t('remaining')})`
+                          }
                         </div>
                       )}
                     </div>
                   </div>
+                  </>
+                  )}
                 </div>
               )}
             </CardContent>
@@ -2211,11 +2351,13 @@ function EditItemDialog({ item, onClose, onSave, categories, onCreateCategory, d
   const { t } = useTranslation();
   const [draft, setDraft] = useState<ImportItem | null>(null);
   const [markup, setMarkup] = useState(defaultMarkup);
+  const [syncChildToParent, setSyncChildToParent] = useState(false);
 
   // Sync draft when item changes
   useEffect(() => {
     if (item) {
       setDraft({ ...item });
+      setSyncChildToParent(false);
       // Compute effective markup from cost/sell
       if (item.costPerParent > 0 && item.sellPrice > 0) {
         setMarkup(Math.round(((item.sellPrice - item.costPerParent) / item.costPerParent) * 100));
@@ -2256,8 +2398,8 @@ function EditItemDialog({ item, onClose, onSave, categories, onCreateCategory, d
         const sell = Number(value) || 0;
         setMarkup(Math.round(((sell - updated.costPerParent) / updated.costPerParent) * 100));
       }
-      // Reverse-calculate parent sell price from child sell price
-      if (field === 'sellPriceChild' && updated.childUnit && updated.convFactor > 1) {
+      // Reverse-calculate parent sell price from child sell price (only when sync is enabled)
+      if (field === 'sellPriceChild' && syncChildToParent && updated.childUnit && updated.convFactor > 1) {
         const childSell = Number(value) || 0;
         if (childSell > 0) {
           updated.sellPrice = childSell * updated.convFactor;
@@ -2466,18 +2608,7 @@ function EditItemDialog({ item, onClose, onSave, categories, onCreateCategory, d
                   onChange={e => update('costPerParent', Math.round(Number(e.target.value) || 0))}
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="ei-markup">{t('Markup %')}</Label>
-                <Input
-                  id="ei-markup"
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={markup || ''}
-                  onChange={e => applyMarkup(Math.round(Number(e.target.value) || 0))}
-                  disabled={!draft.costPerParent}
-                />
-              </div>
+              {/* Selling prices grouped together */}
               <div className="space-y-1.5">
                 <Label htmlFor="ei-sell">{t('Sell/Base')}</Label>
                 <Input
@@ -2499,6 +2630,31 @@ function EditItemDialog({ item, onClose, onSave, categories, onCreateCategory, d
                   value={draft.childUnit ? (draft.sellPriceChild || '') : ''}
                   onChange={e => update('sellPriceChild', Math.round(Number(e.target.value) || 0))}
                   disabled={!draft.childUnit}
+                />
+              </div>
+              {draft.childUnit && (
+                <label htmlFor="sync-child-parent" className="flex items-center gap-2 col-span-2 cursor-pointer select-none">
+                  <input
+                    id="sync-child-parent"
+                    type="checkbox"
+                    checked={syncChildToParent}
+                    onChange={e => setSyncChildToParent(e.target.checked)}
+                    className="h-4 w-4 rounded border-input accent-primary"
+                  />
+                  <span className="text-xs text-muted-foreground">{t('Changing small price updates base price')}</span>
+                </label>
+              )}
+              {/* Markup below selling prices */}
+              <div className="space-y-1.5">
+                <Label htmlFor="ei-markup">{t('Markup %')}</Label>
+                <Input
+                  id="ei-markup"
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={markup || ''}
+                  onChange={e => applyMarkup(Math.round(Number(e.target.value) || 0))}
+                  disabled={!draft.costPerParent}
                 />
               </div>
             </div>

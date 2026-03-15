@@ -33,8 +33,11 @@ export function toIpcError(err: unknown): IpcErrorResponse {
   if (err instanceof AppError) {
     return { success: false, error: err.message, code: err.code, statusCode: err.statusCode };
   }
-  const msg = err instanceof Error ? err.message : 'An unexpected error occurred';
-  return { success: false, error: msg, code: 'INTERNAL_ERROR', statusCode: 500 };
+  if (process.env.NODE_ENV !== 'production') {
+    const msg = err instanceof Error ? err.message : 'An unexpected error occurred';
+    return { success: false, error: msg, code: 'INTERNAL_ERROR', statusCode: 500 };
+  }
+  return { success: false, error: 'An unexpected error occurred', code: 'INTERNAL_ERROR', statusCode: 500 };
 }
 
 /**
@@ -83,7 +86,9 @@ export function expressErrorHandler(
     res.status(err.statusCode).json({ error: err.message, code: err.code });
     return;
   }
-  const msg = err instanceof Error ? err.message : 'An unexpected error occurred';
   console.error('[REST Error]', err);
+  const msg = process.env.NODE_ENV !== 'production' && err instanceof Error
+    ? err.message
+    : 'An unexpected error occurred';
   res.status(500).json({ error: msg, code: 'INTERNAL_ERROR' });
 }

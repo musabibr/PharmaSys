@@ -50,6 +50,13 @@ export function getSessionUser(token: string): UserPublic | null {
   return session.user;
 }
 
+/** Destroys all sessions for a given user, optionally keeping one token alive (e.g., current device after password change). */
+export function destroySessionsByUserId(userId: number, excludeToken?: string): void {
+  for (const [token, session] of sessions) {
+    if (session.user.id === userId && token !== excludeToken) sessions.delete(token);
+  }
+}
+
 /** Garbage-collect expired sessions (call periodically). */
 export function pruneExpiredSessions(): void {
   const cutoff = Date.now() - SESSION_TTL_MS;

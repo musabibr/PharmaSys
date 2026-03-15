@@ -637,6 +637,7 @@ export interface PharmaSysApi {
     addItems(purchaseId: number, data: { items: CreatePurchaseItemInput[] }): Promise<Purchase>;
     markPaymentPaid(paymentId: number, paymentMethod: ExpensePaymentMethod, referenceNumber?: string, paidAmount?: number, adjustmentStrategy?: PaymentAdjustmentStrategy): Promise<PurchasePayment>;
     updatePaymentSchedule(purchaseId: number, payments: Array<{ id: number; amount: number; due_date: string }>): Promise<Purchase>;
+    replaceUnpaidSchedule(purchaseId: number, payments: Array<{ amount: number; due_date: string }>): Promise<Purchase>;
     getAgingPayments(): Promise<AgingPayment[]>;
     getOverdueSummary(): Promise<{ count: number; total: number }>;
     getUpcomingPayments(): Promise<UpcomingPayment[]>;

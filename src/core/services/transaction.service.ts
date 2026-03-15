@@ -463,6 +463,17 @@ export class TransactionService {
     const subtotal   = lines.reduce((s, l) => s + l.lineTotal, 0);
     const discount   = Math.round(data.discount_amount ?? 0);
     const tax        = Math.round(data.tax_amount ?? 0);
+
+    if (subtotal <= 0 && data.transaction_type === 'sale') {
+      throw new ValidationError('Subtotal must be positive', 'subtotal');
+    }
+    if (discount < 0) {
+      throw new ValidationError('Discount cannot be negative', 'discount_amount');
+    }
+    if (tax < 0) {
+      throw new ValidationError('Tax cannot be negative', 'tax_amount');
+    }
+
     const total      = subtotal - discount + tax;
 
     const cashTendered =

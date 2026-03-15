@@ -5,6 +5,7 @@
 
 import express, { type Application } from 'express';
 import cors                          from 'cors';
+import rateLimit                     from 'express-rate-limit';
 import type { ServiceContainer }     from '../../core/services/index';
 import { expressErrorHandler }       from '../middleware/error-handler';
 import { pruneExpiredSessions }      from '../middleware/auth.middleware';
@@ -56,6 +57,26 @@ export function createApp(services: ServiceContainer): Application {
     next();
   });
 
+  // Rate limiting — stricter on auth endpoints, general limit elsewhere
+  // Disabled in test environment to prevent test interference
+  const isTest = process.env.NODE_ENV === 'test';
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: isTest ? 0 : 10,     // 0 = disabled
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: () => isTest,
+    message: { error: 'Too many requests. Please try again later.', code: 'RATE_LIMIT_EXCEEDED' },
+  });
+  const generalLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: isTest ? 0 : 100,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: () => isTest,
+    message: { error: 'Too many requests. Please try again later.', code: 'RATE_LIMIT_EXCEEDED' },
+  });
+
   // Prune expired sessions periodically
   setInterval(pruneExpiredSessions, 5 * 60 * 1000);
 
@@ -67,7 +88,7 @@ export function createApp(services: ServiceContainer): Application {
   // ─── API Routes ──────────────────────────────────────────────────────────────
   const api = express.Router();
 
-  api.use('/auth',         authRoutes(services));
+  api.use('/auth',         authLimiter, authRoutes(services));
   api.use('/users',        userRoutes(services));
   api.use('/categories',   categoryRoutes(services));
   api.use('/products',     productRoutes(services));
@@ -83,7 +104,7 @@ export function createApp(services: ServiceContainer): Application {
   api.use('/purchases',    purchaseRoutes(services));
   api.use('/app',          appInfoRoutes(services));
 
-  app.use('/api/v1', api);
+  app.use('/api/v1', generalLimiter, api);
 
   // 404 handler
   app.use((_req, res) => {

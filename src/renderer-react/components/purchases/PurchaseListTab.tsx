@@ -50,6 +50,21 @@ interface PurchaseListTabProps {
   excludePaid?: boolean;
 }
 
+function isoToDisplay(iso: string): string {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  if (!y || !m || !d) return iso;
+  return `${d}/${m}/${y.slice(-2)}`;
+}
+
+function displayToIso(display: string): string {
+  const match = display.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (!match) return '';
+  const [, d, m, y] = match;
+  const fullYear = y.length === 2 ? `20${y}` : y;
+  return `${fullYear}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+}
+
 function createDefaultFilters(supplierId?: number | null, status?: string) {
   const end = new Date();
   const start = new Date();
@@ -69,6 +84,8 @@ export function PurchaseListTab({ onSelect, initialSupplierId, initialStatus, hi
   const canCreate = usePermission('purchases.manage');
   const [addItemsTarget, setAddItemsTarget] = useState<Purchase | null>(null);
   const [filters, setFilters] = useState(() => createDefaultFilters(initialSupplierId, initialStatus));
+  const [startDateDisplay, setStartDateDisplay] = useState(() => isoToDisplay(createDefaultFilters(initialSupplierId, initialStatus).startDate));
+  const [endDateDisplay, setEndDateDisplay] = useState(() => isoToDisplay(createDefaultFilters(initialSupplierId, initialStatus).endDate));
   const { data: suppliers } = useApiCall(() => api.suppliers.getAll(), []);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [page, setPage] = useState(1);
@@ -179,18 +196,34 @@ export function PurchaseListTab({ onSelect, initialSupplierId, initialStatus, hi
           <div className="flex flex-col gap-1">
             <span className="text-xs text-muted-foreground">{t('From')}</span>
             <Input
-              type="date"
-              value={filters.startDate}
-              onChange={e => updateFilter('startDate', e.target.value)}
+              type="text"
+              value={startDateDisplay}
+              onChange={e => setStartDateDisplay(e.target.value)}
+              onBlur={() => {
+                const iso = displayToIso(startDateDisplay);
+                if (iso) {
+                  updateFilter('startDate', iso);
+                  setStartDateDisplay(isoToDisplay(iso));
+                }
+              }}
+              placeholder="dd/mm/yy"
               className="h-9 w-36"
             />
           </div>
           <div className="flex flex-col gap-1">
             <span className="text-xs text-muted-foreground">{t('To')}</span>
             <Input
-              type="date"
-              value={filters.endDate}
-              onChange={e => updateFilter('endDate', e.target.value)}
+              type="text"
+              value={endDateDisplay}
+              onChange={e => setEndDateDisplay(e.target.value)}
+              onBlur={() => {
+                const iso = displayToIso(endDateDisplay);
+                if (iso) {
+                  updateFilter('endDate', iso);
+                  setEndDateDisplay(isoToDisplay(iso));
+                }
+              }}
+              placeholder="dd/mm/yy"
               className="h-9 w-36"
             />
           </div>

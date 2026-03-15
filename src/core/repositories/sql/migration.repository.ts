@@ -336,6 +336,10 @@ export class MigrationRepository {
       'CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase ON purchase_items(purchase_id)',
       'CREATE INDEX IF NOT EXISTS idx_purchase_payments_purchase ON purchase_payments(purchase_id)',
       'CREATE INDEX IF NOT EXISTS idx_purchase_payments_due ON purchase_payments(due_date)',
+      'CREATE INDEX IF NOT EXISTS idx_purchase_payments_paid_due ON purchase_payments(is_paid, due_date)',
+      'CREATE INDEX IF NOT EXISTS idx_purchase_payments_purchase_paid ON purchase_payments(purchase_id, is_paid)',
+      'CREATE INDEX IF NOT EXISTS idx_purchases_created ON purchases(created_at)',
+      'CREATE INDEX IF NOT EXISTS idx_products_active_name ON products(is_active, name)',
       // Report performance indexes
       'CREATE INDEX IF NOT EXISTS idx_expenses_date_method ON expenses(expense_date, payment_method)',
       'CREATE INDEX IF NOT EXISTS idx_batches_product_status_expiry ON batches(product_id, status, expiry_date)',

@@ -11,7 +11,6 @@ import { useSettingsStore } from '@/stores/settings.store';
 import { formatCurrency, cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
@@ -66,6 +65,7 @@ interface MatchedItem extends ImportItem {
   matchType: 'new' | 'existing';
   matchedProductId: number | null;
   matchedProductName: string;
+  categoryName: string;
 }
 
 interface AddItemsDialogProps {
@@ -78,10 +78,6 @@ interface AddItemsDialogProps {
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-function isValidDate(s: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(Date.parse(s));
-}
-
 function normalizeForMatch(s: string): string {
   return s.toLowerCase().trim().replace(/\s+/g, ' ');
 }
@@ -89,12 +85,16 @@ function normalizeForMatch(s: string): string {
 function fuzzyMatch(itemName: string, productName: string): boolean {
   const a = normalizeForMatch(itemName);
   const b = normalizeForMatch(productName);
-  if (a === b) return true;
-  if (a.includes(b) || b.includes(a)) return true;
-  const wordsA = a.split(' ');
-  const wordsB = b.split(' ');
-  const common = wordsA.filter(w => wordsB.some(wb => wb.includes(w) || w.includes(wb)));
-  return common.length >= Math.min(wordsA.length, wordsB.length) * 0.6;
+  if (!a || !b) return false;
+  return a === b || b.includes(a) || a.includes(b);
+}
+
+function isValidDate(dateStr: string): boolean {
+  if (!/^\d{4}-\d{2}(-\d{2})?$/.test(dateStr)) return false;
+  const d = dateStr.length === 7
+    ? new Date(dateStr + '-01T00:00:00')
+    : new Date(dateStr + 'T00:00:00');
+  return !isNaN(d.getTime());
 }
 
 function getItemErrors(item: ImportItem, t: (k: string) => string): string[] {
@@ -120,26 +120,25 @@ export function AddItemsDialog({ purchaseId, purchaseNumber, open, onOpenChange,
   const [dragOver, setDragOver] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  // Items
+  // Step 2: Review state
   const [importItems, setImportItems] = useState<ImportItem[]>([]);
+  const [reviewPage, setReviewPage] = useState(0);
+  const [editingItem, setEditingItem] = useState<ImportItem | null>(null);
+  const [editedKeys, setEditedKeys] = useState<Set<string>>(new Set());
+  const [creatingCategoryForKey, setCreatingCategoryForKey] = useState<string | null>(null);
+
+  // Step 3: Match state
   const [matchedItems, setMatchedItems] = useState<MatchedItem[]>([]);
+  const [matchPage, setMatchPage] = useState(0);
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [allCategories, setAllCategories] = useState<Category[]>([]);
-  const [editedKeys, setEditedKeys] = useState<Set<string>>(new Set());
-
-  // Pagination
-  const [reviewPage, setReviewPage] = useState(0);
-  const [matchPage, setMatchPage] = useState(0);
   const [matchLoading, setMatchLoading] = useState(false);
-
-  // Edit dialog
-  const [editingItem, setEditingItem] = useState<ImportItem | null>(null);
-
-  // Match search
-  const [matchSearches, setMatchSearches] = useState<Record<string, string>>({});
-
-  // Create product dialog
-  const [showCreateProduct, setShowCreateProduct] = useState(false);
+  const [searchDialogKey, setSearchDialogKey] = useState<string | null>(null);
+  const [searchDialogQuery, setSearchDialogQuery] = useState('');
+  const [selectedMatchKeys, setSelectedMatchKeys] = useState<Set<string>>(new Set());
+  const [bulkCategory, setBulkCategory] = useState('');
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [showProductForm, setShowProductForm] = useState(false);
 
   // Reset on open
   useEffect(() => {
@@ -151,17 +150,23 @@ export function AddItemsDialog({ purchaseId, purchaseNumber, open, onOpenChange,
       setReviewPage(0);
       setMatchPage(0);
       setEditingItem(null);
+      setSelectedMatchKeys(new Set());
+      setBulkCategory('');
+      setNewCategoryName('');
+      setSearchDialogKey(null);
+      setSearchDialogQuery('');
+      setCreatingCategoryForKey(null);
     }
   }, [open]);
 
-  // Load categories
+  // Load categories on open
   useEffect(() => {
     if (open) {
       api.categories.getAll().then(cats => setAllCategories(cats)).catch(() => {});
     }
   }, [open]);
 
-  // ─── Import handlers ────────────────────────────────────────────────────
+  // ─── Step 1: Import handlers ──────────────────────────────────────────────
 
   async function handlePdfFile(file: File) {
     setParsing(true);
@@ -177,21 +182,21 @@ export function AddItemsDialog({ purchaseId, purchaseNumber, open, onOpenChange,
         return;
       }
 
-      const items: ImportItem[] = pdfRows.map((row: Record<string, unknown>) => ({
-        _key: `item-${(row.row_number as number) || 0}-${Date.now()}`,
-        name: (row.name as string) || '',
-        genericName: (row.generic_name as string) || '',
-        expiryDate: (row.expiry_date as string) || '',
-        parentUnit: (row.parent_unit as string) || 'Unit',
-        childUnit: (row.child_unit as string) || '',
-        convFactor: (row.conversion_factor as number) || 1,
-        quantity: (row.quantity as number) || 0,
-        costPerParent: (row.cost_per_parent as number) || 0,
-        sellPrice: (row.cost_per_parent as number) > 0
-          ? Math.round((row.cost_per_parent as number) * (1 + defaultMarkup / 100))
+      const items: ImportItem[] = pdfRows.map((row) => ({
+        _key: `item-${row.row_number}-${Date.now()}`,
+        name: row.name || '',
+        genericName: row.generic_name || '',
+        expiryDate: row.expiry_date || '',
+        parentUnit: row.parent_unit || 'Unit',
+        childUnit: row.child_unit || '',
+        convFactor: row.conversion_factor || 1,
+        quantity: row.quantity || 0,
+        costPerParent: row.cost_per_parent || 0,
+        sellPrice: row.cost_per_parent > 0
+          ? Math.round(row.cost_per_parent * (1 + defaultMarkup / 100))
           : 0,
-        sellPriceChild: (row.cost_per_parent as number) > 0 && (row.child_unit as string) && ((row.conversion_factor as number) || 1) > 1
-          ? Math.floor(Math.round((row.cost_per_parent as number) * (1 + defaultMarkup / 100)) / ((row.conversion_factor as number) || 1))
+        sellPriceChild: row.cost_per_parent > 0 && row.child_unit && (row.conversion_factor || 1) > 1
+          ? Math.floor(Math.round(row.cost_per_parent * (1 + defaultMarkup / 100)) / (row.conversion_factor || 1))
           : 0,
         batchNumber: generateBatchNumber(),
         barcode: '',
@@ -216,27 +221,40 @@ export function AddItemsDialog({ purchaseId, purchaseNumber, open, onOpenChange,
     if (file) handlePdfFile(file);
   }
 
-  function addEmptyItem() {
-    setImportItems(prev => [...prev, {
-      _key: `item-new-${Date.now()}`,
-      name: '', genericName: '', expiryDate: '',
-      parentUnit: 'Unit', childUnit: '', convFactor: 1,
-      quantity: 0, costPerParent: 0, sellPrice: 0, sellPriceChild: 0,
-      batchNumber: generateBatchNumber(),
-      barcode: '', categoryName: '', usageInstructions: '',
-    }]);
-    if (step === 'import') setStep('review');
-    const newTotal = importItems.length + 1;
-    const lastPage = Math.max(0, Math.ceil(newTotal / PAGE_SIZE) - 1);
-    setReviewPage(lastPage);
+  function handleDragOver(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(true);
   }
 
-  // ─── Review handlers ───────────────────────────────────────────────────
+  function handleDragLeave(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      const ext = file.name.toLowerCase().split('.').pop();
+      if (ext === 'pdf') {
+        handlePdfFile(file);
+      } else {
+        toast.error(t('Please upload a PDF file'));
+      }
+    }
+  }
+
+  // ─── Step 2: Review handlers ──────────────────────────────────────────────
 
   function updateItem(key: string, field: keyof ImportItem, value: string | number) {
     setImportItems(prev => prev.map(item => {
       if (item._key !== key) return item;
       const updated = { ...item, [field]: value };
+      // Auto-calculate child sell price when childUnit, convFactor, or sellPrice changes
       if (field === 'childUnit' || field === 'convFactor' || field === 'sellPrice') {
         if (updated.childUnit && updated.convFactor >= 1 && updated.sellPrice > 0) {
           updated.sellPriceChild = Math.floor(updated.sellPrice / updated.convFactor);
@@ -248,16 +266,31 @@ export function AddItemsDialog({ purchaseId, purchaseNumber, open, onOpenChange,
     }));
   }
 
-  function removeItem(key: string) {
-    setImportItems(prev => prev.filter(item => item._key !== key));
-  }
-
   function saveEditingItem(updated: ImportItem) {
     setImportItems(prev => prev.map(item => item._key === updated._key ? updated : item));
     setEditedKeys(prev => new Set(prev).add(updated._key));
     setEditingItem(null);
   }
 
+  function removeItem(key: string) {
+    setImportItems(prev => prev.filter(item => item._key !== key));
+  }
+
+  function addEmptyItem() {
+    setImportItems(prev => [...prev, {
+      _key: `item-new-${Date.now()}`,
+      name: '', genericName: '', expiryDate: '',
+      parentUnit: 'Unit', childUnit: '', convFactor: 1,
+      quantity: 0, costPerParent: 0, sellPrice: 0, sellPriceChild: 0, batchNumber: generateBatchNumber(),
+      barcode: '', categoryName: '', usageInstructions: '',
+    }]);
+    if (step === 'import') setStep('review');
+    const newTotal = importItems.length + 1;
+    const lastPage = Math.max(0, Math.ceil(newTotal / PAGE_SIZE) - 1);
+    setReviewPage(lastPage);
+  }
+
+  // Computed review stats
   const reviewErrors = importItems.filter(item => getItemErrors(item, t).length > 0).length;
   const reviewValid = importItems.length - reviewErrors;
   const reviewTotal = importItems.reduce((sum, item) => sum + (item.costPerParent * item.quantity), 0);
@@ -268,7 +301,7 @@ export function AddItemsDialog({ purchaseId, purchaseNumber, open, onOpenChange,
     return importItems.length > 0 && reviewErrors === 0;
   }
 
-  // ─── Match handlers ────────────────────────────────────────────────────
+  // ─── Step 3: Match handlers ───────────────────────────────────────────────
 
   async function enterMatchStep() {
     setStep('match');
@@ -281,6 +314,7 @@ export function AddItemsDialog({ purchaseId, purchaseNumber, open, onOpenChange,
       setAllProducts(products);
       setAllCategories(categories);
 
+      // Auto-match each item
       const matched: MatchedItem[] = importItems.map(item => {
         const found = products.find(p => fuzzyMatch(item.name, p.name));
         if (found) {
@@ -297,6 +331,7 @@ export function AddItemsDialog({ purchaseId, purchaseNumber, open, onOpenChange,
           matchType: 'new' as const,
           matchedProductId: null,
           matchedProductName: '',
+          // Preserve category chosen in review step, or empty
           categoryName: item.categoryName || '',
         };
       });
@@ -310,22 +345,11 @@ export function AddItemsDialog({ purchaseId, purchaseNumber, open, onOpenChange,
     }
   }
 
-  function setMatchType(key: string, type: 'new' | 'existing', productId?: number, productName?: string, catName?: string) {
-    setMatchedItems(prev => prev.map(item =>
-      item._key === key ? {
-        ...item,
-        matchType: type,
-        matchedProductId: type === 'existing' ? (productId ?? null) : null,
-        matchedProductName: type === 'existing' ? (productName ?? '') : '',
-        categoryName: type === 'existing' ? (catName ?? '') : item.categoryName,
-      } : item
-    ));
-  }
-
   async function handleProductCreated() {
     try {
       const products = await api.products.getAll();
       setAllProducts(products);
+      // Re-match: update any "new" items that now match an existing product
       setMatchedItems(prev => prev.map(item => {
         if (item.matchType !== 'new') return item;
         const found = products.find(p => fuzzyMatch(item.name, p.name));
@@ -341,16 +365,50 @@ export function AddItemsDialog({ purchaseId, purchaseNumber, open, onOpenChange,
         return item;
       }));
     } catch {
-      // Non-critical
+      // Non-critical — user can still manually match
     }
   }
 
+  function setMatchType(key: string, type: 'new' | 'existing', productId?: number, productName?: string, catName?: string) {
+    setMatchedItems(prev => prev.map(item =>
+      item._key === key ? {
+        ...item,
+        matchType: type,
+        matchedProductId: type === 'existing' ? (productId ?? null) : null,
+        matchedProductName: type === 'existing' ? (productName ?? '') : '',
+        categoryName: type === 'existing' ? (catName ?? '') : item.categoryName,
+      } : item
+    ));
+  }
+
+  function setItemCategory(key: string, catName: string) {
+    setMatchedItems(prev => prev.map(item =>
+      item._key === key ? { ...item, categoryName: catName } : item
+    ));
+  }
+
+  function applyBulkCategory(catName: string) {
+    setMatchedItems(prev => prev.map(item =>
+      item.matchType === 'new' && selectedMatchKeys.has(item._key)
+        ? { ...item, categoryName: catName }
+        : item
+    ));
+  }
+
+  function toggleMatchSelection(key: string) {
+    setSelectedMatchKeys(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  }
+
+  const existingCount = matchedItems.filter(m => m.matchType === 'existing').length;
+  const newCount = matchedItems.filter(m => m.matchType === 'new').length;
   const matchTotalPages = Math.max(1, Math.ceil(matchedItems.length / PAGE_SIZE));
   const matchPageItems = matchedItems.slice(matchPage * PAGE_SIZE, (matchPage + 1) * PAGE_SIZE);
-  const matchedCount = matchedItems.filter(i => i.matchType === 'existing').length;
-  const newCount = matchedItems.filter(i => i.matchType === 'new').length;
 
-  // ─── Submit ────────────────────────────────────────────────────────────
+  // ─── Submit ─────────────────────────────────────────────────────────────
 
   const handleSubmit = useCallback(async () => {
     if (matchedItems.length === 0) return;
@@ -401,60 +459,113 @@ export function AddItemsDialog({ purchaseId, purchaseNumber, open, onOpenChange,
     }
   }, [matchedItems, purchaseId, onSuccess, onOpenChange, t]);
 
-  // ─── Render ────────────────────────────────────────────────────────────
+  // ─── Render ─────────────────────────────────────────────────────────────
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{t('Add Items to Purchase')} — {purchaseNumber}</DialogTitle>
-          <DialogDescription>
-            {step === 'import' && t('Import items from a PDF invoice or add them manually.')}
-            {step === 'review' && t('Review and edit the imported items before matching.')}
-            {step === 'match' && t('Match imported items to existing products or create new ones.')}
-          </DialogDescription>
-        </DialogHeader>
+      <DialogContent className="max-w-6xl max-h-[90vh] flex flex-col p-0">
+        <div className="shrink-0 px-6 pt-6">
+          <DialogHeader>
+            <DialogTitle>{t('Add Items to Purchase')} — {purchaseNumber}</DialogTitle>
+            <DialogDescription>
+              {step === 'import' && t('Import items from a PDF invoice or add them manually.')}
+              {step === 'review' && t('Review and edit the imported items before matching.')}
+              {step === 'match' && t('Match imported items to existing products or create new ones.')}
+            </DialogDescription>
+          </DialogHeader>
 
-        {/* Step indicator */}
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Badge variant={step === 'import' ? 'default' : 'secondary'}>1. {t('Import')}</Badge>
-          <ChevronRight className="h-3 w-3" />
-          <Badge variant={step === 'review' ? 'default' : 'secondary'}>2. {t('Review')}</Badge>
-          <ChevronRight className="h-3 w-3" />
-          <Badge variant={step === 'match' ? 'default' : 'secondary'}>3. {t('Match')}</Badge>
+          {/* Step indicator */}
+          <div className="flex items-center gap-1 mt-4">
+            {(['import', 'review', 'match'] as Step[]).map((s, idx) => {
+              const stepLabels: Record<Step, string> = {
+                import: t('Import'),
+                review: t('Review'),
+                match: t('Match'),
+              };
+              const currentIdx = ['import', 'review', 'match'].indexOf(step);
+              const isCompleted = idx < currentIdx;
+              const isCurrent = idx === currentIdx;
+              return (
+                <div key={s} className="flex items-center gap-1 flex-1">
+                  <div className={`flex items-center gap-1.5 ${
+                    isCurrent ? 'text-primary font-semibold' :
+                    isCompleted ? 'text-primary/70' : 'text-muted-foreground'
+                  }`}>
+                    <div className={`flex h-6 w-6 items-center justify-center rounded-full text-xs ${
+                      isCompleted ? 'bg-primary text-primary-foreground' :
+                      isCurrent ? 'bg-primary text-primary-foreground' :
+                      'bg-muted text-muted-foreground'
+                    }`}>
+                      {isCompleted ? <CheckCircle2 className="h-3.5 w-3.5" /> : idx + 1}
+                    </div>
+                    <span className="text-xs whitespace-nowrap">{stepLabels[s]}</span>
+                  </div>
+                  {idx < 2 && (
+                    <div className={`flex-1 h-px mx-1 ${
+                      idx < currentIdx ? 'bg-primary' : 'bg-border'
+                    }`} />
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
 
-        {/* ─── Step 1: Import ─────────────────────────────────────────── */}
+        {/* Scrollable content area */}
+        <div className="flex-1 overflow-y-auto min-h-0 px-6 py-4 space-y-4">
+
+        {/* ════════════════════════════════════════════════════════════════════ */}
+        {/* Step 1: Import                                                      */}
+        {/* ════════════════════════════════════════════════════════════════════ */}
         {step === 'import' && (
           <div className="space-y-4">
+            {/* Drop zone */}
             <div
-              className={cn(
-                'flex flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed p-8 transition-colors',
-                dragOver ? 'border-primary bg-primary/5' : 'border-muted-foreground/25',
-              )}
-              onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-              onDragLeave={e => { e.preventDefault(); setDragOver(false); }}
-              onDrop={e => {
-                e.preventDefault();
-                setDragOver(false);
-                const file = e.dataTransfer.files?.[0];
-                if (file && file.name.toLowerCase().endsWith('.pdf')) handlePdfFile(file);
-                else toast.error(t('Please upload a PDF file'));
-              }}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              onClick={() => !parsing && fileInputRef.current?.click()}
+              className={`flex min-h-[200px] cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed transition-colors ${
+                parsing ? 'pointer-events-none opacity-60' :
+                dragOver
+                  ? 'border-primary bg-primary/5'
+                  : 'border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/50'
+              }`}
             >
-              <Upload className="h-8 w-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">{t('Drag & drop a PDF invoice or click to browse')}</p>
-              <input ref={fileInputRef} type="file" accept=".pdf" className="hidden" onChange={handleFileChange} />
-              <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={parsing}>
-                {parsing ? <Loader2 className="me-1 h-4 w-4 animate-spin" /> : <FileText className="me-1 h-4 w-4" />}
-                {t('Choose PDF')}
-              </Button>
+              {parsing ? (
+                <>
+                  <Loader2 className="h-10 w-10 animate-spin text-primary" />
+                  <p className="text-sm font-medium">{t('Parsing invoice...')}</p>
+                </>
+              ) : (
+                <>
+                  <Upload className={`h-10 w-10 ${dragOver ? 'text-primary' : 'text-muted-foreground/40'}`} />
+                  <div className="text-center">
+                    <p className="text-sm font-medium">
+                      {t('Drop PDF invoice here or click to browse')}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t('Supported formats')}: .pdf
+                    </p>
+                  </div>
+                </>
+              )}
             </div>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf"
+              onChange={handleFileChange}
+              className="hidden"
+            />
+
             <div className="flex items-center gap-3">
               <div className="flex-1 border-t" />
               <span className="text-xs text-muted-foreground">{t('or')}</span>
               <div className="flex-1 border-t" />
             </div>
+
             <Button variant="outline" onClick={addEmptyItem} className="w-full gap-1.5">
               <Plus className="h-4 w-4" />
               {t('Add Item Manually')}
@@ -462,100 +573,257 @@ export function AddItemsDialog({ purchaseId, purchaseNumber, open, onOpenChange,
           </div>
         )}
 
-        {/* ─── Step 2: Review ─────────────────────────────────────────── */}
+        {/* ════════════════════════════════════════════════════════════════════ */}
+        {/* Step 2: Review & Edit                                               */}
+        {/* ════════════════════════════════════════════════════════════════════ */}
         {step === 'review' && (
           <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={addEmptyItem} className="gap-1">
-                <Plus className="h-3.5 w-3.5" />
-                {t('Add Row')}
-              </Button>
-              <div className="flex-1" />
-              <Badge variant="default">{reviewValid} {t('valid')}</Badge>
-              {reviewErrors > 0 && <Badge variant="destructive">{reviewErrors} {t('errors')}</Badge>}
-            </div>
+            <p className="text-sm text-muted-foreground">
+              {t('Review and fix the imported data. Fill any missing required fields.')}
+            </p>
 
-            <div className="overflow-auto rounded-md border max-h-[45vh]">
-              <Table>
+            {/* Editable table */}
+            <div className="rounded-md border overflow-x-auto">
+              <Table className="w-max min-w-full sticky-col">
                 <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-10">#</TableHead>
-                    <TableHead>{t('Name')}</TableHead>
-                    <TableHead className="w-20">{t('Qty')}</TableHead>
-                    <TableHead className="w-24">{t('Cost')}</TableHead>
-                    <TableHead className="w-24">{t('Sell')}</TableHead>
-                    <TableHead className="w-28">{t('Expiry')}</TableHead>
-                    <TableHead className="w-16"></TableHead>
+                  <TableRow className="bg-muted/50">
+                    <TableHead className="w-8 whitespace-nowrap">#</TableHead>
+                    <TableHead className="max-w-[15rem] whitespace-nowrap">{t('Name')}*</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Barcode')}</TableHead>
+                    <TableHead className="max-w-[15rem] whitespace-nowrap">{t('Generic Name')}</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Category')}</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Usage Instructions')}</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Expiry Date')}</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Base Unit')}</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Small Unit')}</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Conv')}</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Qty')}*</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Cost')}*</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Sell/Base')}*</TableHead>
+                    <TableHead className="whitespace-nowrap">{t('Sell/Small')}</TableHead>
+                    <TableHead className="w-8"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {reviewPageItems.map((item, idx) => {
+                  {reviewPageItems.map((item, pageIdx) => {
+                    const globalIdx = reviewPage * PAGE_SIZE + pageIdx;
                     const errors = getItemErrors(item, t);
-                    const globalIdx = reviewPage * PAGE_SIZE + idx + 1;
+                    const hasError = errors.length > 0;
                     return (
-                      <TableRow key={item._key} className={cn(errors.length > 0 && 'bg-destructive/5')}>
-                        <TableCell className={cn(
-                          'text-xs font-mono',
-                          editedKeys.has(item._key) && 'text-emerald-600 font-bold',
-                        )}>
-                          {editedKeys.has(item._key) && <CheckCircle2 className="inline h-3 w-3 me-0.5" />}
-                          {globalIdx}
+                      <TableRow
+                        key={item._key}
+                        className={hasError ? 'bg-destructive/5 border-s-2 border-s-destructive' : ''}
+                      >
+                        <TableCell className="text-muted-foreground text-xs">
+                          <button
+                            type="button"
+                            className={cn(
+                              "inline-flex items-center gap-1 hover:text-primary",
+                              editedKeys.has(item._key) && "text-emerald-600 font-semibold"
+                            )}
+                            onClick={() => setEditingItem(item)}
+                            title={t('Edit item details')}
+                          >
+                            {editedKeys.has(item._key) && <CheckCircle2 className="h-3 w-3" />}
+                            {globalIdx + 1}
+                            <Pencil className="h-3 w-3 opacity-40 hover:opacity-100" />
+                          </button>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="max-w-[15rem]">
                           <Input
                             value={item.name}
                             onChange={e => updateItem(item._key, 'name', e.target.value)}
-                            className="h-7 text-xs"
-                            placeholder={t('Product name')}
+                            className={`h-8 text-xs min-w-[8rem] ${!item.name.trim() ? 'ring-1 ring-destructive' : ''}`}
+                            placeholder={t('Product Name')}
+                            maxLength={60}
                           />
-                          {errors.length > 0 && (
-                            <div className="flex items-center gap-1 mt-0.5">
-                              <XCircle className="h-3 w-3 text-destructive shrink-0" />
-                              <span className="text-[10px] text-destructive">{errors.join(', ')}</span>
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          <Input
+                            value={item.barcode}
+                            onChange={e => updateItem(item._key, 'barcode', e.target.value)}
+                            className="h-8 text-xs w-32"
+                            placeholder={t('e.g. 6001234567890')}
+                          />
+                        </TableCell>
+                        <TableCell className="max-w-[15rem]">
+                          <Input
+                            value={item.genericName}
+                            onChange={e => updateItem(item._key, 'genericName', e.target.value)}
+                            className="h-8 text-xs min-w-[6rem]"
+                            placeholder={t('Generic')}
+                            maxLength={60}
+                          />
+                        </TableCell>
+                        <TableCell className="">
+                          {creatingCategoryForKey === item._key ? (
+                            <Input
+                              className="h-8 text-xs"
+                              placeholder={t('New category name')}
+                              autoFocus
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') {
+                                  const name = (e.target as HTMLInputElement).value.trim();
+                                  if (name) {
+                                    if (!allCategories.find(c => c.name === name)) {
+                                      setAllCategories(prev => [...prev, { id: -Date.now(), name }]);
+                                    }
+                                    updateItem(item._key, 'categoryName', name);
+                                  }
+                                  setCreatingCategoryForKey(null);
+                                }
+                                if (e.key === 'Escape') setCreatingCategoryForKey(null);
+                              }}
+                              onBlur={e => {
+                                const name = e.target.value.trim();
+                                if (name) {
+                                  if (!allCategories.find(c => c.name === name)) {
+                                    setAllCategories(prev => [...prev, { id: -Date.now(), name }]);
+                                  }
+                                  updateItem(item._key, 'categoryName', name);
+                                }
+                                setCreatingCategoryForKey(null);
+                              }}
+                            />
+                          ) : (
+                            <div className="flex items-center gap-1">
+                              <Select
+                                value={item.categoryName || ''}
+                                onValueChange={(val) => updateItem(item._key, 'categoryName', val)}
+                              >
+                                <SelectTrigger className="h-8 text-xs flex-1">
+                                  <SelectValue placeholder={t('Category')} />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {allCategories.map(cat => (
+                                    <SelectItem key={cat.id} value={cat.name}>
+                                      {cat.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <Button
+                                variant="ghost" size="icon"
+                                className="h-7 w-7 shrink-0"
+                                onClick={() => setCreatingCategoryForKey(item._key)}
+                                title={t('Create new category')}
+                              >
+                                <Plus className="h-3 w-3" />
+                              </Button>
                             </div>
                           )}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="">
                           <Input
-                            type="number" min={0}
-                            value={item.quantity || ''}
-                            onChange={e => updateItem(item._key, 'quantity', Number(e.target.value) || 0)}
-                            className="h-7 text-xs w-16"
+                            value={item.usageInstructions}
+                            onChange={e => updateItem(item._key, 'usageInstructions', e.target.value)}
+                            className="h-8 text-xs"
+                            placeholder={t('e.g. 3 times daily')}
                           />
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="whitespace-nowrap">
                           <Input
-                            type="number" min={0}
-                            value={item.costPerParent || ''}
-                            onChange={e => updateItem(item._key, 'costPerParent', Number(e.target.value) || 0)}
-                            className="h-7 text-xs w-20"
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Input
-                            type="number" min={0}
-                            value={item.sellPrice || ''}
-                            onChange={e => updateItem(item._key, 'sellPrice', Number(e.target.value) || 0)}
-                            className="h-7 text-xs w-20"
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Input
-                            type="date"
+                            type="text"
                             value={item.expiryDate}
                             onChange={e => updateItem(item._key, 'expiryDate', e.target.value)}
-                            className="h-7 text-xs"
+                            className={`h-8 text-xs w-28 ${item.expiryDate && !isValidDate(item.expiryDate) ? 'ring-1 ring-destructive' : ''}`}
+                            placeholder="YYYY-MM-DD"
+                          />
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          <Input
+                            value={item.parentUnit}
+                            onChange={e => updateItem(item._key, 'parentUnit', e.target.value)}
+                            className="h-8 text-xs w-20"
+                            placeholder={t('Box')}
+                          />
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          <Input
+                            value={item.childUnit}
+                            onChange={e => updateItem(item._key, 'childUnit', e.target.value)}
+                            className="h-8 text-xs w-20"
+                            placeholder={t('Optional')}
+                          />
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          <Input
+                            type="number"
+                            step="1"
+                            min="1"
+                            value={item.childUnit ? (item.convFactor || '') : ''}
+                            onChange={e => updateItem(item._key, 'convFactor', Math.max(1, Math.round(Number(e.target.value) || 1)))}
+                            className="h-8 text-xs w-14"
+                            placeholder="1"
+                            disabled={!item.childUnit}
+                            title={!item.childUnit ? t('Set small unit first') : ''}
+                          />
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          <Input
+                            type="number"
+                            step="1"
+                            min="0"
+                            value={item.quantity || ''}
+                            onChange={e => updateItem(item._key, 'quantity', Math.round(Number(e.target.value) || 0))}
+                            className={`h-8 text-xs w-16 ${item.quantity <= 0 ? 'ring-1 ring-destructive' : ''}`}
+                            placeholder="0"
+                          />
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          <Input
+                            type="number"
+                            step="1"
+                            min="0"
+                            value={item.costPerParent || ''}
+                            onChange={e => {
+                              const cost = Math.round(Number(e.target.value) || 0);
+                              updateItem(item._key, 'costPerParent', cost);
+                              // Auto-fill sell price if empty
+                              if (cost > 0 && !item.sellPrice) {
+                                const sell = Math.round(cost * (1 + defaultMarkup / 100));
+                                updateItem(item._key, 'sellPrice', sell);
+                              }
+                            }}
+                            className={`h-8 text-xs w-20 ${item.costPerParent <= 0 ? 'ring-1 ring-destructive' : ''}`}
+                            placeholder="0"
+                          />
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          <Input
+                            type="number"
+                            step="1"
+                            min="0"
+                            value={item.sellPrice || ''}
+                            onChange={e => {
+                              const sell = Math.round(Number(e.target.value) || 0);
+                              updateItem(item._key, 'sellPrice', sell);
+                            }}
+                            className="h-8 text-xs w-20"
+                            placeholder={item.costPerParent > 0 ? String(Math.round(item.costPerParent * (1 + defaultMarkup / 100))) : '0'}
+                          />
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          <Input
+                            type="number"
+                            step="1"
+                            min="0"
+                            value={item.childUnit ? (item.sellPriceChild || '') : ''}
+                            disabled={!item.childUnit}
+                            onChange={e => updateItem(item._key, 'sellPriceChild', Math.round(Number(e.target.value) || 0))}
+                            className="h-8 text-xs w-20"
+                            placeholder={!item.childUnit ? '—' : (item.sellPrice > 0 ? String(Math.floor(item.sellPrice / item.convFactor)) : '0')}
                           />
                         </TableCell>
                         <TableCell>
-                          <div className="flex gap-0.5">
-                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setEditingItem(item)}>
-                              <Pencil className="h-3 w-3" />
-                            </Button>
-                            <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => removeItem(item._key)}>
-                              <Trash2 className="h-3 w-3" />
-                            </Button>
-                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                            onClick={() => removeItem(item._key)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
                         </TableCell>
                       </TableRow>
                     );
@@ -564,111 +832,239 @@ export function AddItemsDialog({ purchaseId, purchaseNumber, open, onOpenChange,
               </Table>
             </div>
 
-            {/* Review pagination */}
-            {reviewTotalPages > 1 && (
-              <div className="flex items-center justify-end gap-2">
-                <span className="text-xs text-muted-foreground">{reviewPage + 1} / {reviewTotalPages}</span>
-                <Button variant="outline" size="icon" className="h-7 w-7" disabled={reviewPage <= 0} onClick={() => setReviewPage(p => p - 1)}>
-                  <ChevronLeft className="h-3.5 w-3.5" />
-                </Button>
-                <Button variant="outline" size="icon" className="h-7 w-7" disabled={reviewPage >= reviewTotalPages - 1} onClick={() => setReviewPage(p => p + 1)}>
-                  <ChevronRight className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            )}
+            {/* Add row + pagination */}
+            <div className="flex items-center justify-between">
+              <Button variant="outline" size="sm" onClick={addEmptyItem} className="gap-1">
+                <Plus className="h-3.5 w-3.5" />
+                {t('Add Row')}
+              </Button>
 
-            <p className="text-xs text-muted-foreground">
-              {t('Total')}: {formatCurrency(reviewTotal)} — {importItems.length} {t('items')}
-            </p>
+              {reviewTotalPages > 1 && (
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline" size="sm"
+                    onClick={() => setReviewPage(p => Math.max(0, p - 1))}
+                    disabled={reviewPage === 0}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    {t('Page {{page}} of {{total}}', { page: reviewPage + 1, total: reviewTotalPages })}
+                  </span>
+                  <Button
+                    variant="outline" size="sm"
+                    onClick={() => setReviewPage(p => Math.min(reviewTotalPages - 1, p + 1))}
+                    disabled={reviewPage >= reviewTotalPages - 1}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
-        {/* ─── Step 3: Match ──────────────────────────────────────────── */}
+        {/* ════════════════════════════════════════════════════════════════════ */}
+        {/* Step 3: Product Matching                                            */}
+        {/* ════════════════════════════════════════════════════════════════════ */}
         {step === 'match' && (
-          <div className="space-y-3">
+          <div className="space-y-4">
             {matchLoading ? (
-              <div className="flex items-center justify-center py-10">
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              <div className="flex items-center justify-center py-12 gap-2">
+                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                <span className="text-sm text-muted-foreground">{t('Checking products...')}</span>
               </div>
             ) : (
               <>
+                <p className="text-sm text-muted-foreground">
+                  {t('The system checked each product against the database.')}
+                </p>
+
+                {/* Bulk category for selected items */}
+                {newCount > 0 && (
+                  <div className="flex items-center gap-2 rounded-lg border bg-muted/50 px-3 py-2 flex-wrap">
+                    <Label className="text-xs whitespace-nowrap">
+                      {t('Set category for selected items')}
+                      {selectedMatchKeys.size > 0 && (
+                        <Badge variant="secondary" className="ms-1 text-[10px] px-1.5 py-0">{selectedMatchKeys.size} {t('selected')}</Badge>
+                      )}:
+                    </Label>
+                    <Select
+                      value={bulkCategory}
+                      disabled={selectedMatchKeys.size === 0}
+                      onValueChange={(val) => {
+                        if (val === '__new__') {
+                          return; // handled by inline input
+                        }
+                        setBulkCategory(val);
+                        applyBulkCategory(val);
+                      }}
+                    >
+                      <SelectTrigger className="h-8 w-[200px] text-xs">
+                        <SelectValue placeholder={t('Select category')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {allCategories.map(cat => (
+                          <SelectItem key={cat.id} value={cat.name}>
+                            {cat.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {/* New category inline */}
+                    <div className="flex items-center gap-1">
+                      <Input
+                        value={newCategoryName}
+                        onChange={e => setNewCategoryName(e.target.value)}
+                        placeholder={t('New category')}
+                        className="h-8 w-[150px] text-xs"
+                      />
+                      <Button
+                        variant="outline" size="sm"
+                        className="h-8"
+                        disabled={!newCategoryName.trim() || selectedMatchKeys.size === 0}
+                        onClick={() => {
+                          const name = newCategoryName.trim();
+                          if (!name) return;
+                          // Add to local categories list
+                          if (!allCategories.find(c => c.name === name)) {
+                            setAllCategories(prev => [...prev, { id: -Date.now(), name }]);
+                          }
+                          setBulkCategory(name);
+                          applyBulkCategory(name);
+                          setNewCategoryName('');
+                        }}
+                      >
+                        <Plus className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Add new product button */}
                 <div className="flex items-center gap-2">
-                  <Badge variant="default">{matchedCount} {t('matched')}</Badge>
-                  <Badge variant="secondary">{newCount} {t('new')}</Badge>
-                  <div className="flex-1" />
-                  <Button variant="outline" size="sm" onClick={() => setShowCreateProduct(true)} className="gap-1">
+                  <Button variant="outline" size="sm" onClick={() => setShowProductForm(true)} className="gap-1">
                     <Plus className="h-3.5 w-3.5" />
-                    {t('Create Product')}
+                    {t('Add New Product')}
                   </Button>
+                  {newCount > 0 && (
+                    <span className="text-xs text-muted-foreground">
+                      {t('{{count}} new products will be created', { count: newCount })}
+                    </span>
+                  )}
                 </div>
 
-                <div className="overflow-auto rounded-md border max-h-[45vh]">
-                  <Table>
+                {/* Match table */}
+                <div className="rounded-md border overflow-x-auto">
+                  <Table className="sticky-col">
                     <TableHeader>
-                      <TableRow>
+                      <TableRow className="bg-muted/50">
+                        <TableHead className="w-8">
+                          <input
+                            type="checkbox"
+                            className="h-3.5 w-3.5 rounded border-input accent-primary"
+                            checked={matchedItems.filter(m => m.matchType === 'new').length > 0 && matchedItems.filter(m => m.matchType === 'new').every(m => selectedMatchKeys.has(m._key))}
+                            onChange={(e) => {
+                              const newItems = matchedItems.filter(m => m.matchType === 'new');
+                              if (e.target.checked) {
+                                setSelectedMatchKeys(prev => {
+                                  const next = new Set(prev);
+                                  newItems.forEach(m => next.add(m._key));
+                                  return next;
+                                });
+                              } else {
+                                setSelectedMatchKeys(new Set());
+                              }
+                            }}
+                          />
+                        </TableHead>
                         <TableHead className="w-10">#</TableHead>
-                        <TableHead>{t('Imported Name')}</TableHead>
-                        <TableHead>{t('Match')}</TableHead>
-                        <TableHead className="w-32">{t('Type')}</TableHead>
+                        <TableHead>{t('Invoice Name')}</TableHead>
+                        <TableHead>{t('Status')}</TableHead>
+                        <TableHead>{t('Matched Product')}</TableHead>
+                        <TableHead className="">{t('Category')}</TableHead>
+                        <TableHead className="w-16">{t('Actions')}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {matchPageItems.map((item, idx) => {
-                        const globalIdx = matchPage * PAGE_SIZE + idx + 1;
-                        const searchVal = matchSearches[item._key] ?? '';
-                        const filteredProducts = searchVal
-                          ? allProducts.filter(p => p.name.toLowerCase().includes(searchVal.toLowerCase()))
-                          : allProducts;
+                      {matchPageItems.map((item, pageIdx) => {
+                        const globalIdx = matchPage * PAGE_SIZE + pageIdx;
                         return (
                           <TableRow key={item._key}>
-                            <TableCell className="text-xs font-mono">{globalIdx}</TableCell>
-                            <TableCell className="text-sm">{item.name}</TableCell>
+                            <TableCell>
+                              {item.matchType === 'new' ? (
+                                <input
+                                  type="checkbox"
+                                  className="h-3.5 w-3.5 rounded border-input accent-primary"
+                                  checked={selectedMatchKeys.has(item._key)}
+                                  onChange={() => toggleMatchSelection(item._key)}
+                                />
+                              ) : (
+                                <span className="block h-3.5 w-3.5" />
+                              )}
+                            </TableCell>
+                            <TableCell className="text-muted-foreground text-xs">
+                              {globalIdx + 1}
+                            </TableCell>
+                            <TableCell>
+                              <div>
+                                <span className="font-medium text-sm">{item.name}</span>
+                                {item.genericName && (
+                                  <span className="text-xs text-muted-foreground block">{item.genericName}</span>
+                                )}
+                              </div>
+                            </TableCell>
                             <TableCell>
                               {item.matchType === 'existing' ? (
-                                <div className="flex items-center gap-1.5">
-                                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
-                                  <span className="text-xs">{item.matchedProductName}</span>
-                                  <Button
-                                    variant="ghost" size="icon" className="h-5 w-5 ms-1"
-                                    onClick={() => setMatchType(item._key, 'new')}
-                                  >
-                                    <XCircle className="h-3 w-3" />
-                                  </Button>
-                                </div>
+                                <Badge variant="default" className="text-xs">
+                                  {t('Existing')}
+                                </Badge>
                               ) : (
-                                <div className="space-y-1">
-                                  <div className="relative">
-                                    <Search className="absolute start-1.5 top-1.5 h-3 w-3 text-muted-foreground" />
-                                    <Input
-                                      value={searchVal}
-                                      onChange={e => setMatchSearches(prev => ({ ...prev, [item._key]: e.target.value }))}
-                                      className="h-6 text-xs ps-6"
-                                      placeholder={t('Search products...')}
-                                    />
-                                  </div>
-                                  {searchVal && filteredProducts.length > 0 && (
-                                    <div className="max-h-24 overflow-auto rounded border text-xs">
-                                      {filteredProducts.slice(0, 5).map(p => (
-                                        <button
-                                          key={p.id}
-                                          className="w-full text-start px-2 py-1 hover:bg-muted"
-                                          onClick={() => {
-                                            setMatchType(item._key, 'existing', p.id, p.name, p.category_name || '');
-                                            setMatchSearches(prev => ({ ...prev, [item._key]: '' }));
-                                          }}
-                                        >
-                                          {p.name}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
+                                <Badge variant="success" className="text-xs">
+                                  {t('New')}
+                                </Badge>
                               )}
                             </TableCell>
                             <TableCell>
-                              <Badge variant={item.matchType === 'existing' ? 'default' : 'secondary'}>
-                                {item.matchType === 'existing' ? t('Existing') : t('New')}
-                              </Badge>
+                              {item.matchType === 'existing' ? (
+                                <span className="text-sm">{item.matchedProductName}</span>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="">
+                              {item.matchType === 'existing' ? (
+                                <span className="text-sm text-muted-foreground">{item.categoryName || '—'}</span>
+                              ) : (
+                                <Select
+                                  value={item.categoryName || ''}
+                                  onValueChange={(val) => setItemCategory(item._key, val)}
+                                >
+                                  <SelectTrigger className="h-8 text-xs">
+                                    <SelectValue placeholder={t('Select category')} />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {allCategories.map(cat => (
+                                      <SelectItem key={cat.id} value={cat.name}>
+                                        {cat.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <Button
+                                variant="ghost" size="icon"
+                                className="h-7 w-7"
+                                title={t('Search Product')}
+                                onClick={() => {
+                                  setSearchDialogKey(item._key);
+                                  setSearchDialogQuery(item.matchType === 'new' ? item.name : '');
+                                }}
+                              >
+                                <Search className="h-3.5 w-3.5" />
+                              </Button>
                             </TableCell>
                           </TableRow>
                         );
@@ -677,95 +1073,206 @@ export function AddItemsDialog({ purchaseId, purchaseNumber, open, onOpenChange,
                   </Table>
                 </div>
 
-                {/* Match pagination */}
-                {matchTotalPages > 1 && (
-                  <div className="flex items-center justify-end gap-2">
-                    <span className="text-xs text-muted-foreground">{matchPage + 1} / {matchTotalPages}</span>
-                    <Button variant="outline" size="icon" className="h-7 w-7" disabled={matchPage <= 0} onClick={() => setMatchPage(p => p - 1)}>
-                      <ChevronLeft className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button variant="outline" size="icon" className="h-7 w-7" disabled={matchPage >= matchTotalPages - 1} onClick={() => setMatchPage(p => p + 1)}>
-                      <ChevronRight className="h-3.5 w-3.5" />
-                    </Button>
+                {/* Pagination + summary */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3 text-sm">
+                    <Badge variant="default">{existingCount} {t('Existing — new batch')}</Badge>
+                    <Badge variant="success">{newCount} {t('New — product + batch')}</Badge>
                   </div>
-                )}
+
+                  {matchTotalPages > 1 && (
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline" size="sm"
+                        onClick={() => setMatchPage(p => Math.max(0, p - 1))}
+                        disabled={matchPage === 0}
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <span className="text-xs text-muted-foreground">
+                        {t('Page {{page}} of {{total}}', { page: matchPage + 1, total: matchTotalPages })}
+                      </span>
+                      <Button
+                        variant="outline" size="sm"
+                        onClick={() => setMatchPage(p => Math.min(matchTotalPages - 1, p + 1))}
+                        disabled={matchPage >= matchTotalPages - 1}
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
               </>
             )}
           </div>
         )}
 
-        {/* ─── Footer ─────────────────────────────────────────────────── */}
-        <DialogFooter className="flex-row justify-between sm:justify-between gap-2">
-          <div className="flex gap-2">
-            {step === 'review' && (
-              <Button variant="outline" onClick={() => setStep('import')} className="gap-1">
-                <ChevronLeft className="h-4 w-4" />
+        </div>{/* end scrollable content area */}
+
+        {/* ═══════════════════════════════════════════════════════════════════════ */}
+        {/* Footer — pinned to bottom                                              */}
+        {/* ═══════════════════════════════════════════════════════════════════════ */}
+
+        {/* Step 2: Review footer */}
+        {step === 'review' && (
+          <div className="shrink-0 flex items-center justify-between border-t bg-background/95 backdrop-blur px-6 py-2.5 shadow-[0_-2px_8px_rgba(0,0,0,0.06)]">
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setStep('import')}>
+                <ChevronLeft className="me-1 h-4 w-4" />
                 {t('Back')}
               </Button>
-            )}
-            {step === 'match' && (
-              <Button variant="outline" onClick={() => setStep('review')} className="gap-1">
-                <ChevronLeft className="h-4 w-4" />
-                {t('Back')}
-              </Button>
-            )}
-          </div>
-          <div className="flex gap-2">
-            <Button variant="ghost" onClick={() => onOpenChange(false)}>
-              {t('Cancel')}
-            </Button>
-            {step === 'review' && (
-              <Button onClick={enterMatchStep} disabled={!canProceedFromReview()} className="gap-1">
+              <Button
+                size="sm"
+                onClick={() => enterMatchStep()}
+                disabled={!canProceedFromReview()}
+                title={!canProceedFromReview() ? t('Fix {{n}} errors to continue', { n: reviewErrors }) : ''}
+              >
                 {t('Next')}
-                <ChevronRight className="h-4 w-4" />
+                <ChevronRight className="ms-1 h-4 w-4" />
               </Button>
-            )}
-            {step === 'match' && (
+            </div>
+            <div className="flex items-center gap-3">
+              <Badge variant="success">
+                <CheckCircle2 className="me-1 h-3 w-3" />
+                {reviewValid} {t('valid')}
+              </Badge>
+              {reviewErrors > 0 && (
+                <Badge variant="destructive">
+                  <XCircle className="me-1 h-3 w-3" />
+                  {reviewErrors} {t('errors')}
+                </Badge>
+              )}
+              <span className="text-sm text-muted-foreground">
+                {t('Total')}: <span className="font-medium text-foreground">{formatCurrency(reviewTotal)}</span>
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Step 3: Match footer */}
+        {step === 'match' && !matchLoading && (
+          <div className="shrink-0 flex items-center justify-between border-t bg-background/95 backdrop-blur px-6 py-2.5 shadow-[0_-2px_8px_rgba(0,0,0,0.06)]">
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setStep('review')}>
+                <ChevronLeft className="me-1 h-4 w-4" />
+                {t('Back')}
+              </Button>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" onClick={() => onOpenChange(false)}>
+                {t('Cancel')}
+              </Button>
               <Button onClick={handleSubmit} disabled={submitting || matchedItems.length === 0} className="gap-1.5">
                 {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
                 {t('Add Items')}
               </Button>
-            )}
+            </div>
           </div>
-        </DialogFooter>
-      </DialogContent>
+        )}
 
-      {/* ─── Edit Item Dialog ──────────────────────────────────────────── */}
-      <EditItemDialog
-        item={editingItem}
-        onClose={() => setEditingItem(null)}
-        onSave={saveEditingItem}
-        categories={allCategories}
-        onCreateCategory={async (name: string) => {
-          try {
-            await api.categories.create(name);
-            const cats = await api.categories.getAll();
-            setAllCategories(cats);
-          } catch { /* non-critical */ }
-        }}
-        defaultMarkup={defaultMarkup}
-      />
+        {/* Import step footer — just cancel */}
+        {step === 'import' && (
+          <div className="shrink-0 flex items-center justify-end border-t bg-background/95 backdrop-blur px-6 py-2.5">
+            <Button variant="ghost" onClick={() => onOpenChange(false)}>
+              {t('Cancel')}
+            </Button>
+          </div>
+        )}
 
-      {/* ─── Create Product Dialog ─────────────────────────────────────── */}
-      {showCreateProduct && (
-        <Dialog open={showCreateProduct} onOpenChange={setShowCreateProduct}>
-          <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        {/* Product Search Dialog */}
+        <Dialog open={!!searchDialogKey} onOpenChange={(open) => { if (!open) setSearchDialogKey(null); }}>
+          <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle>{t('Create Product')}</DialogTitle>
-              <DialogDescription>{t('Create a new product in the system.')}</DialogDescription>
+              <DialogTitle>{t('Search Product')}</DialogTitle>
+              <DialogDescription>{t('Search for an existing product or create as new')}</DialogDescription>
             </DialogHeader>
-            <ProductForm
-              onSaved={() => { setShowCreateProduct(false); handleProductCreated(); }}
-              onCancel={() => setShowCreateProduct(false)}
+            <Input
+              value={searchDialogQuery}
+              onChange={e => setSearchDialogQuery(e.target.value)}
+              placeholder={t('Search products...')}
+              autoFocus
+              className="h-9"
             />
+            <div className="max-h-64 overflow-y-auto space-y-0.5">
+              {allProducts
+                .filter(p =>
+                  searchDialogQuery
+                    ? normalizeForMatch(p.name).includes(normalizeForMatch(searchDialogQuery)) ||
+                      (p.generic_name && normalizeForMatch(p.generic_name).includes(normalizeForMatch(searchDialogQuery)))
+                    : true
+                )
+                .slice(0, 15)
+                .map(p => (
+                  <button
+                    key={p.id}
+                    className="w-full text-start px-3 py-2 hover:bg-accent rounded-md text-sm flex items-center justify-between"
+                    onClick={() => {
+                      if (searchDialogKey) {
+                        setMatchType(searchDialogKey, 'existing', p.id, p.name, p.category_name || '');
+                      }
+                      setSearchDialogKey(null);
+                    }}
+                  >
+                    <span>{p.name}</span>
+                    {p.category_name && <span className="text-xs text-muted-foreground">{p.category_name}</span>}
+                  </button>
+                ))
+              }
+              {searchDialogQuery && allProducts.filter(p =>
+                normalizeForMatch(p.name).includes(normalizeForMatch(searchDialogQuery)) ||
+                (p.generic_name && normalizeForMatch(p.generic_name).includes(normalizeForMatch(searchDialogQuery)))
+              ).length === 0 && (
+                <p className="text-sm text-muted-foreground text-center py-3">
+                  {t('No match found — will create new product')}
+                </p>
+              )}
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  if (searchDialogKey) {
+                    setMatchType(searchDialogKey, 'new');
+                  }
+                  setSearchDialogKey(null);
+                }}
+              >
+                {t('Create as new product')}
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
-      )}
+
+        {/* ── Edit Item Dialog ──────────────────────────────────────────── */}
+        <EditItemDialog
+          item={editingItem}
+          onClose={() => setEditingItem(null)}
+          onSave={saveEditingItem}
+          categories={allCategories}
+          onCreateCategory={(name) => {
+            if (!allCategories.find(c => c.name === name)) {
+              setAllCategories(prev => [...prev, { id: -Date.now(), name }]);
+            }
+          }}
+          defaultMarkup={defaultMarkup}
+        />
+
+        {/* ── Create Product Form ──────────────────────────────────────── */}
+        <ProductForm
+          open={showProductForm}
+          onOpenChange={setShowProductForm}
+          product={null}
+          onSaved={handleProductCreated}
+        />
+      </DialogContent>
     </Dialog>
   );
 }
 
-// ─── Edit Item Dialog (matches CreatePurchaseFlow EditItemDialog) ─────────
+// ---------------------------------------------------------------------------
+// EditItemDialog — full-form view of an ImportItem for easier editing
+// ---------------------------------------------------------------------------
 
 interface EditItemDialogProps {
   item: ImportItem | null;
@@ -780,11 +1287,14 @@ function EditItemDialog({ item, onClose, onSave, categories, onCreateCategory, d
   const { t } = useTranslation();
   const [draft, setDraft] = useState<ImportItem | null>(null);
   const [markup, setMarkup] = useState(defaultMarkup);
+  const [syncChildToParent, setSyncChildToParent] = useState(false);
 
   // Sync draft when item changes
   useEffect(() => {
     if (item) {
       setDraft({ ...item });
+      setSyncChildToParent(false);
+      // Compute effective markup from cost/sell
       if (item.costPerParent > 0 && item.sellPrice > 0) {
         setMarkup(Math.round(((item.sellPrice - item.costPerParent) / item.costPerParent) * 100));
       } else {
@@ -824,8 +1334,8 @@ function EditItemDialog({ item, onClose, onSave, categories, onCreateCategory, d
         const sell = Number(value) || 0;
         setMarkup(Math.round(((sell - updated.costPerParent) / updated.costPerParent) * 100));
       }
-      // Reverse-calculate parent sell price from child sell price
-      if (field === 'sellPriceChild' && updated.childUnit && updated.convFactor > 1) {
+      // Reverse-calculate parent sell price from child sell price (only when sync is enabled)
+      if (field === 'sellPriceChild' && syncChildToParent && updated.childUnit && updated.convFactor > 1) {
         const childSell = Number(value) || 0;
         if (childSell > 0) {
           updated.sellPrice = childSell * updated.convFactor;
@@ -1034,18 +1544,7 @@ function EditItemDialog({ item, onClose, onSave, categories, onCreateCategory, d
                   onChange={e => update('costPerParent', Math.round(Number(e.target.value) || 0))}
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="ei-markup">{t('Markup %')}</Label>
-                <Input
-                  id="ei-markup"
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={markup || ''}
-                  onChange={e => applyMarkup(Math.round(Number(e.target.value) || 0))}
-                  disabled={!draft.costPerParent}
-                />
-              </div>
+              {/* Selling prices grouped together */}
               <div className="space-y-1.5">
                 <Label htmlFor="ei-sell">{t('Sell/Base')}</Label>
                 <Input
@@ -1067,6 +1566,31 @@ function EditItemDialog({ item, onClose, onSave, categories, onCreateCategory, d
                   value={draft.childUnit ? (draft.sellPriceChild || '') : ''}
                   onChange={e => update('sellPriceChild', Math.round(Number(e.target.value) || 0))}
                   disabled={!draft.childUnit}
+                />
+              </div>
+              {draft.childUnit && (
+                <label htmlFor="sync-child-parent" className="flex items-center gap-2 col-span-2 cursor-pointer select-none">
+                  <input
+                    id="sync-child-parent"
+                    type="checkbox"
+                    checked={syncChildToParent}
+                    onChange={e => setSyncChildToParent(e.target.checked)}
+                    className="h-4 w-4 rounded border-input accent-primary"
+                  />
+                  <span className="text-xs text-muted-foreground">{t('Changing small price updates base price')}</span>
+                </label>
+              )}
+              {/* Markup below selling prices */}
+              <div className="space-y-1.5">
+                <Label htmlFor="ei-markup">{t('Markup %')}</Label>
+                <Input
+                  id="ei-markup"
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={markup || ''}
+                  onChange={e => applyMarkup(Math.round(Number(e.target.value) || 0))}
+                  disabled={!draft.costPerParent}
                 />
               </div>
             </div>
