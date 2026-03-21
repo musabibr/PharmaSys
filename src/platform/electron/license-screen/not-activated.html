@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline';">
+  <title>PharmaSys — Activation Required</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: #1e1e2e;
+      color: #cdd6f4;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    .card {
+      background: #313244;
+      border-radius: 14px;
+      padding: 36px 32px;
+      width: 100%;
+      max-width: 440px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    }
+
+    .logo {
+      font-size: 2rem;
+      margin-bottom: 4px;
+      text-align: center;
+    }
+
+    h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: #cba6f7;
+      text-align: center;
+      margin-bottom: 6px;
+    }
+
+    .subtitle {
+      font-size: 0.8rem;
+      color: #6c7086;
+      text-align: center;
+      margin-bottom: 24px;
+    }
+
+    .reason-box {
+      background: #45475a;
+      border-left: 3px solid #f38ba8;
+      border-radius: 6px;
+      padding: 10px 14px;
+      margin-bottom: 24px;
+      font-size: 0.85rem;
+      color: #f38ba8;
+      line-height: 1.4;
+      display: none; /* shown by JS only when reason is non-empty */
+    }
+
+    .field-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: #a6adc8;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .machine-id-box {
+      background: #1e1e2e;
+      border: 1px solid #45475a;
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-family: 'Courier New', 'Consolas', monospace;
+      font-size: 1.05rem;
+      letter-spacing: 3px;
+      color: #a6e3a1;
+      margin-bottom: 8px;
+      word-break: break-all;
+      user-select: all;
+    }
+
+    .machine-id-hint {
+      font-size: 0.75rem;
+      color: #6c7086;
+      margin-bottom: 28px;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 12px 16px;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      font-size: 0.95rem;
+      font-weight: 600;
+      transition: background 0.15s;
+    }
+
+    .btn-primary {
+      background: #cba6f7;
+      color: #1e1e2e;
+    }
+
+    .btn-primary:hover { background: #d6bdf7; }
+    .btn-primary:active { background: #b48ae4; }
+    .btn-primary:disabled {
+      background: #45475a;
+      color: #6c7086;
+      cursor: not-allowed;
+    }
+
+    .status-msg {
+      margin-top: 14px;
+      font-size: 0.85rem;
+      text-align: center;
+      min-height: 1.2em;
+    }
+
+    .status-msg.success { color: #a6e3a1; }
+    .status-msg.error   { color: #f38ba8; }
+
+    .divider {
+      border: none;
+      border-top: 1px solid #45475a;
+      margin: 24px 0;
+    }
+
+    .footer {
+      font-size: 0.72rem;
+      color: #45475a;
+      text-align: center;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">💊</div>
+    <h1>PharmaSys</h1>
+    <p class="subtitle">This device has not been activated</p>
+
+    <div class="reason-box" id="reasonBox"></div>
+
+    <div class="field-label">Your Machine ID</div>
+    <div class="machine-id-box" id="machineIdDisplay">—</div>
+    <p class="machine-id-hint">
+      Send this ID to your vendor. They will generate a license file for your device.
+    </p>
+
+    <button class="btn btn-primary" id="importBtn" onclick="importLicense()">
+      📂 Import License File (.pharmalicense)
+    </button>
+
+    <div class="status-msg" id="statusMsg"></div>
+
+    <hr class="divider">
+
+    <p class="footer">
+      PharmaSys is licensed software. Unauthorized use or redistribution is prohibited.<br>
+      For support: contact your vendor.
+    </p>
+  </div>
+
+  <script>
+    // Read values passed via URL query string by main process
+    const params    = new URLSearchParams(window.location.search);
+    const machineId = params.get('machineId') ?? '';
+    const reason    = params.get('reason')    ?? '';
+
+    // Display machine ID
+    document.getElementById('machineIdDisplay').textContent =
+      machineId || 'Unable to read hardware ID — contact support';
+
+    // Display reason (only if provided)
+    if (reason) {
+      const box = document.getElementById('reasonBox');
+      box.textContent = reason;
+      box.style.display = 'block';
+    }
+
+    async function importLicense() {
+      const btn    = document.getElementById('importBtn');
+      const status = document.getElementById('statusMsg');
+
+      btn.disabled   = true;
+      btn.textContent = '⏳ Importing…';
+      status.textContent = '';
+      status.className   = 'status-msg';
+
+      try {
+        const result = await window.licenseApi.importFile();
+
+        if (result && result.success) {
+          btn.textContent        = '✅ Activated!';
+          status.textContent     = 'Activation successful. The application will open now.';
+          status.className       = 'status-msg success';
+          // Main process closes this window and opens the main app
+        } else {
+          btn.disabled    = false;
+          btn.textContent = '📂 Import License File (.pharmalicense)';
+          const msg = (result && result.reason) ? result.reason : 'Activation failed. Please try again.';
+          status.textContent = msg;
+          status.className   = 'status-msg error';
+        }
+      } catch (err) {
+        btn.disabled    = false;
+        btn.textContent = '📂 Import License File (.pharmalicense)';
+        status.textContent = 'Unexpected error. Please restart the application.';
+        status.className   = 'status-msg error';
+      }
+    }
+  </script>
+</body>
+</html>

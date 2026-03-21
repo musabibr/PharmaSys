@@ -1,0 +1,281 @@
+/* ── Noto Kufi Arabic — Premium Arabic font ────────────────────────────────── */
+/* Geometric Kufi sans-serif, used by UAE Government Design System.             */
+/* Variable font (100-900 weights) scoped to Arabic Unicode range only —        */
+/* Latin text continues using Segoe UI, so English rendering is unaffected.     */
+@font-face {
+  font-family: 'Noto Kufi Arabic';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('../assets/fonts/NotoKufiArabic-Variable.woff2') format('woff2');
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-088E, U+0890-0891,
+    U+0897-08E1, U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41,
+    U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC;
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* ── Dark theme (default) ── */
+  :root {
+    --background: 222 47% 8%;
+    --foreground: 210 20% 92%;
+
+    --card: 222 47% 10%;
+    --card-foreground: 210 20% 92%;
+
+    --popover: 222 47% 10%;
+    --popover-foreground: 210 20% 92%;
+
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 215 28% 17%;
+    --secondary-foreground: 210 20% 92%;
+
+    --muted: 215 28% 17%;
+    --muted-foreground: 215 15% 55%;
+
+    --accent: 215 28% 17%;
+    --accent-foreground: 210 20% 92%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 0%;
+
+    --border: 215 28% 17%;
+    --input: 215 28% 17%;
+    --ring: 217 91% 60%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 222 47% 6%;
+    --sidebar-foreground: 215 15% 65%;
+    --sidebar-border: 215 28% 14%;
+    --sidebar-accent: 217 91% 60%;
+    --sidebar-accent-foreground: 0 0% 100%;
+  }
+
+  /* ── Light theme ── */
+  .light {
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 210 40% 96%;
+    --accent-foreground: 222 47% 11%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 0%;
+
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 217 91% 60%;
+
+    --sidebar-background: 210 40% 98%;
+    --sidebar-foreground: 215 16% 47%;
+    --sidebar-border: 214 32% 91%;
+    --sidebar-accent: 217 91% 60%;
+    --sidebar-accent-foreground: 0 0% 100%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    overflow: hidden;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-muted rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/30;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  RTL (Right-to-Left) Layout Rules                                         */
+/*  Applied when <html dir="rtl"> is set (Arabic language)                   */
+/*                                                                            */
+/*  Most directional classes have been replaced with Tailwind 3.4 logical     */
+/*  properties (ms-*, me-*, ps-*, pe-*, start-*, end-*, text-start,           */
+/*  text-end, border-s-*, border-e-*) which auto-flip natively.               */
+/*  The rules below handle cases with NO logical-property equivalent.         */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Fix Radix UI components forcing dir="ltr" ─────────────────────────────── */
+/* Radix's useDirection() defaults to "ltr" when no DirectionProvider exists.  */
+/* Even with our DirectionProvider in App.tsx, this CSS rule provides an       */
+/* immediate, render-independent override for ALL Radix component roots        */
+/* (ScrollArea, Tabs, Select, Menu, RovingFocus) that set dir="ltr".          */
+html[dir="rtl"] [dir="ltr"]:not(input):not(textarea):not(pre):not(code) {
+  direction: rtl !important;
+}
+/* ScrollArea viewport also needs explicit override (no dir attr, inherits)   */
+[dir="rtl"] [data-radix-scroll-area-viewport] > div {
+  direction: rtl !important;
+}
+
+/* ── Ensure table columns flip in RTL (belt-and-suspenders) ────────────────── */
+/* HTML tables inherit direction, but this explicit rule guarantees column      */
+/* order flips even if some ancestor accidentally overrides direction.          */
+[dir="rtl"] table {
+  direction: rtl;
+}
+
+/* ── Ensure tab lists and nav bars respond to RTL ─────────────────────────── */
+[dir="rtl"] [role="tablist"] {
+  direction: rtl;
+}
+
+/* ── Flex spacing (space-x-*) direction flip ─────────────────────────────── */
+/* Tailwind space-x uses --tw-space-x-reverse to flip margin direction.       */
+/* No logical-property alternative exists for space-x-*.                      */
+[dir="rtl"] .space-x-0\.5 > :not([hidden]) ~ :not([hidden]),
+[dir="rtl"] .space-x-1 > :not([hidden]) ~ :not([hidden]),
+[dir="rtl"] .space-x-1\.5 > :not([hidden]) ~ :not([hidden]),
+[dir="rtl"] .space-x-2 > :not([hidden]) ~ :not([hidden]),
+[dir="rtl"] .space-x-3 > :not([hidden]) ~ :not([hidden]),
+[dir="rtl"] .space-x-4 > :not([hidden]) ~ :not([hidden]),
+[dir="rtl"] .space-x-6 > :not([hidden]) ~ :not([hidden]) {
+  --tw-space-x-reverse: 1;
+}
+
+/* Responsive space-x variants (Tailwind generates separate class names) */
+@media (min-width: 640px) {
+  [dir="rtl"] .sm\:space-x-2 > :not([hidden]) ~ :not([hidden]) {
+    --tw-space-x-reverse: 1;
+  }
+}
+
+/* ── Directional icon transforms (chevrons, arrows) ──────────────────────── */
+[dir="rtl"] .lucide-chevron-right,
+[dir="rtl"] .lucide-chevron-left,
+[dir="rtl"] .lucide-arrow-right,
+[dir="rtl"] .lucide-arrow-left,
+[dir="rtl"] .lucide-arrow-down-to-line {
+  transform: scaleX(-1);
+}
+
+/* ── Number / date / code inputs keep LTR direction ──────────────────────── */
+[dir="rtl"] input[type="number"],
+[dir="rtl"] input[type="date"],
+[dir="rtl"] input[type="time"],
+[dir="rtl"] input[type="datetime-local"],
+[dir="rtl"] input[type="tel"],
+[dir="rtl"] pre,
+[dir="rtl"] code,
+[dir="rtl"] .font-mono {
+  direction: ltr;
+  text-align: right;
+}
+
+/* ── Tabular numbers: isolate bidi context but inherit direction ────────── */
+/* Do NOT set direction:ltr here — it breaks text-end/text-start alignment   */
+/* on table cells. The Unicode Bidi Algorithm handles numbers correctly.     */
+[dir="rtl"] .tabular-nums {
+  unicode-bidi: isolate;
+}
+
+/* ── Scroll area thumb positioning ────────────────────────────────────────── */
+[dir="rtl"] ::-webkit-scrollbar {
+  direction: ltr;
+}
+
+/* ── Dialog/Modal close button positioning ─────────────────────────────────── */
+[dir="rtl"] [data-radix-collection-item]:last-child {
+  margin-right: auto;
+  margin-left: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  RTL Animation & Micro-interaction Flips                                   */
+/*  Reverses horizontal slide/translate animations for right-to-left layout   */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Slide animation direction flips (tailwindcss-animate CSS variables) ──── */
+/* Tailwind generates variant-prefixed class names like                         */
+/*   data-[state=open]:slide-in-from-right                                     */
+/* so bare selectors like .slide-in-from-right don't match.                    */
+/* [class*="..."] matches the substring within any class name in the list.     */
+
+/* Full slide (100%) — sheets/drawers */
+[dir="rtl"] [class*="slide-in-from-left"]:not([class*="slide-in-from-left-"]) {
+  --tw-enter-translate-x: 100% !important;
+}
+[dir="rtl"] [class*="slide-in-from-right"]:not([class*="slide-in-from-right-"]) {
+  --tw-enter-translate-x: -100% !important;
+}
+[dir="rtl"] [class*="slide-out-to-left"]:not([class*="slide-out-to-left-"]) {
+  --tw-exit-translate-x: 100% !important;
+}
+[dir="rtl"] [class*="slide-out-to-right"]:not([class*="slide-out-to-right-"]) {
+  --tw-exit-translate-x: -100% !important;
+}
+
+/* Offset slide (0.5rem) — dropdowns/selects/popovers/tooltips */
+[dir="rtl"] [class*="slide-in-from-left-2"] {
+  --tw-enter-translate-x: 0.5rem !important;
+}
+[dir="rtl"] [class*="slide-in-from-right-2"] {
+  --tw-enter-translate-x: -0.5rem !important;
+}
+
+/* ── Switch toggle direction ─────────────────────────────────────────────── */
+/* Switch thumb slides right when checked (translate-x-4 = 1rem).             */
+/* In RTL, it should slide left instead.                                       */
+[dir="rtl"] [role="switch"] > [data-state="checked"] {
+  --tw-translate-x: -1rem;
+}
+[dir="rtl"] [role="switch"] > [data-state="unchecked"] {
+  --tw-translate-x: 0;
+}
+
+/* ── Translate-x utility flips ───────────────────────────────────────────── */
+/* Popper offsets (select, dropdown) + general translate utilities              */
+[dir="rtl"] .translate-x-1     { --tw-translate-x: -0.25rem; }
+[dir="rtl"] .-translate-x-1    { --tw-translate-x:  0.25rem; }
+[dir="rtl"] .translate-x-1\/2  { --tw-translate-x: -50%; }
+[dir="rtl"] .-translate-x-1\/2 { --tw-translate-x:  50%; }

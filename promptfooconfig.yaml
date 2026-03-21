@@ -1,0 +1,48 @@
+# PharmaSys Development Workflow Testing with Promptfoo
+# Run: npx promptfoo eval
+# View: npx promptfoo view
+
+description: PharmaSys Dev Workflow Quality Tests
+
+providers:
+  - id: anthropic:messages:claude-sonnet-4-20250514
+
+prompts:
+  - |
+    You are a pharmacy management system expert. Given the following code context,
+    review it for: security issues, business logic correctness, and adherence to
+    PharmaSys coding conventions (layered architecture, Money integers, EventBus audit).
+
+    Code: {{code}}
+
+    Provide a structured review with: Issues Found, Severity, Recommendations.
+
+tests:
+  # Test: Money values must be integers
+  - description: Detects floating-point money usage
+    vars:
+      code: "const price = 10.50; const total = price * quantity;"
+    assert:
+      - type: contains
+        value: float
+      - type: contains
+        value: integer
+
+  # Test: Identifies missing transaction wrapping
+  - description: Detects multi-write without transaction
+    vars:
+      code: |
+        repo.updateBatch(id, newQty);
+        repo.updateProduct(id, newStock);
+        repo.insertAuditLog(action);
+    assert:
+      - type: contains
+        value: transaction
+
+  # Test: Identifies direct audit logging
+  - description: Detects direct audit repo calls instead of EventBus
+    vars:
+      code: "auditRepo.log({ action: 'CREATE_PRODUCT', userId: 1 });"
+    assert:
+      - type: contains
+        value: EventBus

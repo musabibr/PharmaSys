@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ts/
+dist-renderer/
+
+# Data & backups (user data, never commit)
+data/
+backups/
+*.sqlite
+
+# Encryption keys
+.backup-key
+
+# PharmaSys license signing keys — NEVER commit these
+tools/PRIVATE_KEY.pem
+tools/*.pharmalicense
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage/
+
+# Temp
+*.tmp
