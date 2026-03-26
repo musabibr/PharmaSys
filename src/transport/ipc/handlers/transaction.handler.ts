@@ -40,7 +40,7 @@ export function registerTransactionHandlers(router: IpcRouter, services: Service
 
   // Frontend uses 'transactions:create' (not 'transactions:createSale')
   router.handle('transactions:create', async (user, data: CreateTransactionInput) => {
-    return await services.transaction.createSale(data, user!.id);
+    return await services.transaction.createSale(data, user!.id, user!.role);
   }, { permission: 'pos.sales' });
 
   // Return — return_own users can only return their own transactions
@@ -61,7 +61,7 @@ export function registerTransactionHandlers(router: IpcRouter, services: Service
       }
     }
 
-    return await services.transaction.createReturn(data, user!.id);
+    return await services.transaction.createReturn(data, user!.id, user!.role);
   });
 
   // Frontend sends { id, reason, force }

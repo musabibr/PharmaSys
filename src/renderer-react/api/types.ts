@@ -98,6 +98,8 @@ export interface Transaction {
   void_reason: string | null;
   created_at: string;
   items?: TransactionItem[];
+  returned_amount?: number;
+  returns?: Transaction[];
 }
 
 export interface TransactionItem {
@@ -119,6 +121,8 @@ export interface TransactionItem {
   /** From product join in getItems() query */
   conversion_factor?: number;
   conversion_factor_snapshot?: number;
+  /** 1 = active, 0 = soft-deleted. null/undefined if product row missing. */
+  product_is_active?: number;
 }
 
 export interface Shift {
@@ -134,6 +138,13 @@ export interface Shift {
   status: ShiftStatus;
   opened_at: string;
   closed_at: string | null;
+  // Computed from transactions
+  total_cash_sales?: number;
+  total_cash_returns?: number;
+  total_bank_sales?: number;
+  total_bank_returns?: number;
+  total_sales?: number;
+  total_returns?: number;
 }
 
 export interface Expense {
@@ -282,6 +293,10 @@ export interface ShiftExpectedCash {
   total_cash_expenses: number;
   total_cash_drops: number;
   expected_cash: number;
+  total_bank_sales: number;
+  total_bank_returns: number;
+  total_sales: number;
+  total_returns: number;
 }
 
 export interface AppInfo {
@@ -545,6 +560,8 @@ export interface PharmaSysApi {
     search(query: string): Promise<Product[]>;
     findByBarcode(barcode: string): Promise<Product | null>;
     bulkCreate(items: unknown[]): Promise<{ success: boolean; created: number; errors: unknown[] }>;
+    getDeleteInfo(id: number): Promise<{ has_stock: boolean; batch_count: number; txn_count: number } | undefined>;
+    bulkDelete(ids: number[]): Promise<{ deleted: number[]; errors: Array<{ id: number; reason: string }> }>;
   };
 
   batches: {
@@ -555,6 +572,10 @@ export interface PharmaSysApi {
     update(id: number, data: Partial<Batch>): Promise<Batch>;
     getExpiring(days: number): Promise<(Batch & { product_name: string; parent_unit: string; child_unit: string; conversion_factor: number })[]>;
     getExpired(): Promise<Batch[]>;
+    getActiveBatchesForPriceUpdate(productId: number): Promise<Array<{ id: number; batch_number: string | null; quantity_base: number; expiry_date: string }>>;
+    updatePricesByProduct(data: { productId: number; sellingPriceParent: number; sellingPriceChild?: number }): Promise<number>;
+    getDeleteInfo(id: number): Promise<{ quantity_base: number; txn_count: number; adj_count: number } | undefined>;
+    bulkDelete(ids: number[]): Promise<{ deleted: number[]; errors: Array<{ id: number; reason: string }> }>;
   };
 
   inventory: {
@@ -596,6 +617,7 @@ export interface PharmaSysApi {
     getReport(shiftId: number): Promise<unknown>;
     getAll(filters?: unknown): Promise<PaginatedResult<Shift>>;
     forceClose(shiftId: number, actualCash: number, notes?: string): Promise<Shift & { success: boolean }>;
+    updateOpeningAmount(shiftId: number, openingAmount: number, reason?: string): Promise<Shift>;
   };
 
   held: {
@@ -641,6 +663,7 @@ export interface PharmaSysApi {
     getById(id: number): Promise<Supplier>;
     create(data: Partial<Supplier>): Promise<Supplier>;
     update(id: number, data: Partial<Supplier>): Promise<Supplier>;
+    delete(id: number): Promise<{ ok: boolean }>;
   };
 
   purchases: {
@@ -695,6 +718,7 @@ export interface PharmaSysApi {
   discovery: {
     scan(): Promise<DiscoveredServer[]>;
   };
+
 }
 
 export interface DiscoveredServer {
@@ -734,6 +758,8 @@ export interface PaginatedResult<T> {
   page: number;
   limit: number;
   totalPages: number;
+  agg_sales?: number;
+  agg_returns?: number;
 }
 
 // ─── Global declaration ─────────────────────────────────────────────────────

@@ -112,6 +112,7 @@ export interface IProductRepository {
   update(id: number, data: UpdateProductInput): Promise<void>;
   softDelete(id: number): Promise<void>;
   hasActiveBatches(id: number): Promise<boolean>;
+  getDeleteInfo(id: number): Promise<{ has_stock: boolean; batch_count: number; txn_count: number }>;
   bulkCreate(items: BulkCreateProductInput[]): Promise<Array<{ success: boolean; name: string; error?: string }>>;
 }
 
@@ -158,6 +159,16 @@ export interface IBatchRepository {
     user_id: number;
   }): Promise<RunResult>;
   getAdjustments(filters?: AdjustmentFilters): Promise<InventoryAdjustment[]>;
+  restoreDeletedBatch(data: {
+    product_id: number;
+    batch_number: string;
+    expiry_date: string;
+    quantity_base: number;
+    cost_per_parent: number;
+    cost_per_child: number;
+    selling_price_parent: number;
+    selling_price_child: number;
+  }): Promise<number>;
 }
 
 // ─── Transaction ───
@@ -180,6 +191,7 @@ export interface ITransactionInsertData {
   customer_phone: string | null;
   notes: string | null;
   parent_transaction_id: number | null;
+  created_at?: string | null;
 }
 
 export interface ITransactionItemInsertData {
@@ -225,6 +237,7 @@ export interface IShiftRepository {
   getReport(shiftId: number): Promise<ShiftReport | undefined>;
   getLastClosedCash(userId: number): Promise<number>;
   findOpenByUser(userId: number): Promise<Shift | undefined>;
+  updateOpeningAmount(id: number, newAmount: number): Promise<void>;
 }
 
 // ─── Expense ───
@@ -306,6 +319,8 @@ export interface ISupplierRepository {
   getById(id: number): Promise<Supplier | undefined>;
   create(data: CreateSupplierInput): Promise<RunResult>;
   update(id: number, data: UpdateSupplierInput): Promise<void>;
+  hasPurchases(id: number): Promise<boolean>;
+  delete(id: number): Promise<void>;
 }
 
 // ─── Purchase ───

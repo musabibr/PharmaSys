@@ -11,6 +11,7 @@ interface ShiftState {
   loadCurrentShift: () => Promise<void>;
   openShift: (openingAmount: number) => Promise<Shift>;
   closeShift: (shiftId: number, actualCash: number, notes?: string) => Promise<Shift>;
+  updateOpeningAmount: (shiftId: number, openingAmount: number) => Promise<Shift>;
   reset: () => void;
 }
 
@@ -47,6 +48,12 @@ export const useShiftStore = create<ShiftState>((set) => ({
     const result = await api.shifts.close(shiftId, actualCash, notes);
     set({ currentShift: null });
     return result;
+  },
+
+  updateOpeningAmount: async (shiftId, openingAmount) => {
+    const updated = await api.shifts.updateOpeningAmount(shiftId, openingAmount);
+    set({ currentShift: updated });
+    return updated;
   },
 
   reset: () => set({ currentShift: null }),

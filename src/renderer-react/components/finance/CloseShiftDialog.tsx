@@ -27,6 +27,8 @@ import {
   TrendingDown,
   TrendingUp,
   CheckCircle,
+  Landmark,
+  BarChart3,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -157,7 +159,9 @@ export function CloseShiftDialog({ open, onOpenChange, onComplete }: CloseShiftD
   const parsedActual = parseInt(actualCash, 10);
   const actualValid = !isNaN(parsedActual) && parsedActual >= 0;
   const variance = actualValid && expected ? parsedActual - expected.expected_cash : 0;
+  const hasVariance = variance !== 0;
   const varianceInfo = varianceLabel(variance, t);
+  const notesRequired = hasVariance && actualValid;
 
   // ---- Submit handler ----
   async function handleSubmit(e: React.FormEvent) {
@@ -187,7 +191,7 @@ export function CloseShiftDialog({ open, onOpenChange, onComplete }: CloseShiftD
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Lock className="h-5 w-5" />
@@ -261,6 +265,64 @@ export function CloseShiftDialog({ open, onOpenChange, onComplete }: CloseShiftD
               </div>
             </div>
 
+            {/* Bank Summary — always shown so user can verify cash/bank split */}
+            {(
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                  <Landmark className="h-3.5 w-3.5" />
+                  {t('Bank Summary')}
+                </p>
+                <div className="rounded-lg border p-3 space-y-0.5">
+                  <BreakdownRow
+                    label={t('Bank Sales')}
+                    amount={expected.total_bank_sales}
+                    sign="+"
+                  />
+                  <BreakdownRow
+                    label={t('Bank Returns')}
+                    amount={expected.total_bank_returns}
+                    sign="-"
+                  />
+                  <Separator className="my-1.5" />
+                  <BreakdownRow
+                    label={t('Net Bank')}
+                    amount={expected.total_bank_sales - expected.total_bank_returns}
+                    sign="="
+                    bold
+                    highlight
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Shift Totals */}
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                <BarChart3 className="h-3.5 w-3.5" />
+                {t('Shift Totals')}
+              </p>
+              <div className="rounded-lg border p-3 space-y-0.5">
+                <BreakdownRow
+                  label={t('Total Sales')}
+                  amount={expected.total_sales}
+                  sign="+"
+                />
+                <BreakdownRow
+                  label={t('Total Returns')}
+                  amount={expected.total_returns}
+                  sign="-"
+                />
+                <Separator className="my-1.5" />
+                <BreakdownRow
+                  label={t('Net Revenue')}
+                  amount={expected.total_sales - expected.total_returns}
+                  sign="="
+                  bold
+                  highlight
+                />
+              </div>
+            </div>
+
             {/* Actual Cash Input */}
             <div className="space-y-2">
               <Label htmlFor="actual-cash">{t('Actual Cash in Drawer')} (SDG)</Label>
@@ -294,19 +356,34 @@ export function CloseShiftDialog({ open, onOpenChange, onComplete }: CloseShiftD
               )}
             </div>
 
-            {/* Notes */}
+            {/* Notes — required when there's a variance */}
             <div className="space-y-2">
               <Label htmlFor="close-shift-notes">
-                {t('Notes')} <span className="text-muted-foreground">({t('Optional')})</span>
+                {t('Reason / Notes')}{' '}
+                {notesRequired ? (
+                  <span className="text-destructive">*</span>
+                ) : (
+                  <span className="text-muted-foreground">({t('Optional')})</span>
+                )}
               </Label>
               <Textarea
                 id="close-shift-notes"
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                placeholder={t('Add notes about the shift...')}
+                placeholder={
+                  notesRequired
+                    ? t('Please explain the reason for the cash difference...')
+                    : t('Add notes about the shift...')
+                }
                 disabled={loading}
                 rows={2}
+                className={cn(notesRequired && !notes.trim() && 'border-destructive')}
               />
+              {notesRequired && !notes.trim() && (
+                <p className="text-xs text-destructive">
+                  {t('A reason is required when actual cash differs from expected.')}
+                </p>
+              )}
             </div>
 
             {error && expected && (
@@ -322,7 +399,10 @@ export function CloseShiftDialog({ open, onOpenChange, onComplete }: CloseShiftD
               >
                 {t('Cancel')}
               </Button>
-              <Button type="submit" disabled={loading || !actualValid || expected === null || fetching}>
+              <Button
+                type="submit"
+                disabled={loading || !actualValid || expected === null || fetching || (notesRequired && !notes.trim())}
+              >
                 {loading ? t('Closing...') : t('Close Shift')}
               </Button>
             </DialogFooter>

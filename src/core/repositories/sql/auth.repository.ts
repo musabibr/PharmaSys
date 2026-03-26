@@ -38,7 +38,7 @@ export class AuthRepository implements IAuthRepository {
   async resetFailedAttempts(userId: number): Promise<void> {
     await this.base.rawRun(
       `UPDATE users SET failed_login_attempts = 0, locked_until = NULL,
-       updated_at = datetime('now') WHERE id = ?`,
+       updated_at = datetime('now', 'localtime') WHERE id = ?`,
       [userId]
     );
     this.base.save();
@@ -47,9 +47,10 @@ export class AuthRepository implements IAuthRepository {
   async updatePassword(userId: number, hash: string, mustChange = false): Promise<void> {
     await this.base.runImmediate(
       `UPDATE users SET password_hash = ?, must_change_password = ?,
-       updated_at = datetime('now') WHERE id = ?`,
+       updated_at = datetime('now', 'localtime') WHERE id = ?`,
       [hash, mustChange ? 1 : 0, userId]
     );
+    this.base.save();
   }
 
   async isFirstLaunch(): Promise<boolean> {
@@ -93,9 +94,10 @@ export class AuthRepository implements IAuthRepository {
     await this.base.runImmediate(
       `UPDATE users SET security_question = ?, security_answer_hash = ?,
        security_answer_failed_attempts = 0, security_answer_locked_until = NULL,
-       updated_at = datetime('now') WHERE id = ?`,
+       updated_at = datetime('now', 'localtime') WHERE id = ?`,
       [question, answerHash, userId]
     );
+    this.base.save();
   }
 
   async clearSecurityAnswerLock(userId: number): Promise<void> {
@@ -110,8 +112,9 @@ export class AuthRepository implements IAuthRepository {
   async unlockAccount(userId: number): Promise<void> {
     await this.base.runImmediate(
       `UPDATE users SET locked_until = NULL, failed_login_attempts = 0,
-       updated_at = datetime('now') WHERE id = ?`,
+       updated_at = datetime('now', 'localtime') WHERE id = ?`,
       [userId]
     );
+    this.base.save();
   }
 }

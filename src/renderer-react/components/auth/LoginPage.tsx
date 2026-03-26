@@ -250,7 +250,7 @@ export function LoginPage() {
     setLoading(true);
     try {
       const user = await login(username.trim(), password);
-      if (user.must_change_password === 1) {
+      if (user.must_change_password === 1 || (isFirstLaunch && user.role === 'admin')) {
         setShowPasswordChange(true);
         setPwChange({ ...initialPasswordChangeState });
       }

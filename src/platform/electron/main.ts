@@ -24,9 +24,6 @@ import { registerAllHandlers }  from '../../transport/ipc/register';
 import { startRestServer, getLanIp, getAllLanIps } from '../../transport/rest/index';
 import { startDiscoveryResponder, discoverServers } from '../../transport/discovery';
 import type { UserPublic }      from '../../core/types/models';
-import { validateLicense }      from '../../license/license-validator';
-import { loadLicense, saveLicense } from '../../license/license-store';
-import { getMachineId, setMachineIdCachePath } from '../../license/machine-id';
 
 // ─── Device Mode Types ───────────────────────────────────────────────────────
 
@@ -53,9 +50,6 @@ const dataPath = isDev
   ? path.join(projectRoot, 'data')
   : path.join(app.getPath('userData'), 'data');
 
-// Set machine-ID cache directory so WMI failures don't break license checks
-setMachineIdCachePath(dataPath);
-
 // ─── Fresh Install Detection ─────────────────────────────────────────────────
 // The NSIS installer writes a `fresh_install` marker to $INSTDIR.
 // On first launch after install, detect it and clear user data ourselves.
@@ -74,10 +68,18 @@ const freshProcessedPath = path.join(dataPath, '.fresh_install_processed');
 if (fs.existsSync(freshMarkerPath) && !fs.existsSync(freshProcessedPath)) {
   console.log('[Startup] Fresh install marker detected — clearing previous data');
   try {
-    // Clear the data directory (database, device-config, backups, tmp)
+    // Clear the data directory SELECTIVELY — preserve backups/ and .backup-key
+    // so old backups remain restorable after reinstall
     if (fs.existsSync(dataPath)) {
-      fs.rmSync(dataPath, { recursive: true, force: true });
-      console.log('[Startup] Cleared data directory:', dataPath);
+      const preserveSet = new Set(['backups', '.backup-key']);
+      for (const entry of fs.readdirSync(dataPath)) {
+        if (!preserveSet.has(entry)) {
+          try {
+            fs.rmSync(path.join(dataPath, entry), { recursive: true, force: true });
+          } catch { /* locked file — best effort */ }
+        }
+      }
+      console.log('[Startup] Cleared data directory (preserved backups/):', dataPath);
     }
 
     // Clear Electron caches and session storage in userData
@@ -256,6 +258,11 @@ async function initDatabase(): Promise<ServiceContainer> {
   const migration = new MigrationRepository(repos.base, dataPath);
   await migration.initialise(isDev);
 
+  // Convert any old encrypted backups (.enc) to raw SQLite (.bak) while key exists
+  try { repos.backup.migrateEncryptedBackups(); } catch (err) {
+    console.warn('[Startup] Backup migration warning:', (err as Error).message);
+  }
+
   const bus      = new EventBus();
   const svc      = new ServiceContainer(repos, bus);
 
@@ -340,85 +347,6 @@ function createWindow(): void {
     currentUser = null;
   });
   mainWindow.webContents.on('will-navigate', (e) => e.preventDefault());
-}
-
-// ─── License Activation Window ────────────────────────────────────────────────
-
-/**
- * Show a minimal "not activated" window when no valid license is present.
- * The user sees their Machine ID and a button to import a .pharmalicense file.
- * On successful activation the window closes and the main app opens.
- */
-function showNotActivatedWindow(reason: string): void {
-  const win = new BrowserWindow({
-    width:     500,
-    height:    480,
-    resizable: false,
-    center:    true,
-    title:     'PharmaSys — Activation Required',
-    webPreferences: {
-      nodeIntegration:  false,
-      contextIsolation: true,
-      sandbox:          true,
-      // Minimal preload — only exposes licenseApi
-      preload: path.join(__dirname, 'license-preload.js'),
-    },
-  });
-
-  win.setMenuBarVisibility(false);
-
-  // Pass machine ID and reason as URL query params
-  const machineId = getMachineId();
-  win.loadFile(
-    path.join(__dirname, 'license-screen/not-activated.html'),
-    { query: { machineId, reason } },
-  );
-
-  // Handle the "Import License File" button click
-  ipcMain.handle('license:importFile', async () => {
-    const { filePaths, canceled } = await dialog.showOpenDialog(win, {
-      title:   'Select License File',
-      filters: [{ name: 'PharmaSys License', extensions: ['pharmalicense'] }],
-      properties: ['openFile'],
-    });
-
-    if (canceled || filePaths.length === 0) {
-      return { success: false, reason: 'No file selected.' };
-    }
-
-    let licenseJson: string;
-    try {
-      licenseJson = fs.readFileSync(filePaths[0], 'utf-8');
-    } catch {
-      return { success: false, reason: 'Could not read the selected file.' };
-    }
-
-    const result = validateLicense(licenseJson);
-    if (!result.valid) {
-      return { success: false, reason: result.reason };
-    }
-
-    saveLicense(licenseJson);
-
-    // Remove this handler so it is not double-registered if user re-activates
-    ipcMain.removeHandler('license:importFile');
-
-    // Close activation screen and open main app
-    win.close();
-    if (services) {
-      registerAllAppHandlers();
-      createWindow();
-    }
-
-    return { success: true };
-  });
-
-  win.on('closed', () => {
-    // If user closes the activation window without activating, quit the app
-    if (BrowserWindow.getAllWindows().length === 0) {
-      app.quit();
-    }
-  });
 }
 
 // ─── PDF Python Parser IPC ────────────────────────────────────────────────────
@@ -597,30 +525,9 @@ app.whenReady().then(async () => {
       console.warn('[Startup] Failed to auto-close stale shifts:', (err as Error).message);
     }
 
-    // ── LICENSE GATE (DISABLED) ──────────────────────────────────────────────
-    // License check disabled — app always proceeds to main window.
-    // if (!isDev) {
-    //   const licenseJson = loadLicense();
-    //   const licenseResult = licenseJson ? validateLicense(licenseJson) : null;
-    //
-    //   if (!licenseResult?.valid) {
-    //     const reason = licenseResult?.reason ?? 'No license found on this device.';
-    //     console.warn(`[License] Validation failed — ${reason}`);
-    //     showNotActivatedWindow(reason);
-    //     return;
-    //   }
-    //
-    //   console.log(`[License] Valid — Client: ${licenseResult.payload?.clientName}`);
-    // }
-    // ───────────────────────────────────────────────────────────────────────
-
     registerAllAppHandlers();
 
-    // Portable backup magic header: "PSBK" + version byte
-    const PORTABLE_MAGIC = Buffer.from('PSBK');
-    const PORTABLE_VERSION = 1;
-
-    // Backup save-as dialog: produces a portable file with embedded encryption key
+    // Backup save-as dialog: copies backup file to user-chosen location
     ipcMain.handle('backup:saveAs', async (_event, sourcePath: string) => {
       const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
       if (!win) return { success: false, error: 'No window available' };
@@ -633,29 +540,15 @@ app.whenReady().then(async () => {
       }
 
       const defaultName = path.basename(sourcePath);
+      const ext = path.extname(defaultName).replace('.', '') || 'bak';
       const { filePath, canceled } = await dialog.showSaveDialog(win, {
         title: 'Save Backup As',
         defaultPath: defaultName,
-        filters: [{ name: 'PharmaSys Backup', extensions: ['enc'] }],
+        filters: [{ name: 'PharmaSys Backup', extensions: [ext] }],
       });
       if (canceled || !filePath) return { success: false };
       try {
-        // Read the encrypted backup and the encryption key
-        const encData = fs.readFileSync(sourcePath);
-        const keyPath = path.join(dataPath, '.backup-key');
-        const key = fs.existsSync(keyPath) ? fs.readFileSync(keyPath) : null;
-
-        if (key && key.length === 32) {
-          // Bundle key into a portable format: MAGIC(4) + VERSION(1) + KEY(32) + encrypted data
-          const header = Buffer.alloc(5);
-          PORTABLE_MAGIC.copy(header, 0);
-          header.writeUInt8(PORTABLE_VERSION, 4);
-          const portable = Buffer.concat([header, key, encData]);
-          fs.writeFileSync(filePath, portable);
-        } else {
-          // No key available — just copy the raw file
-          fs.copyFileSync(sourcePath, filePath);
-        }
+        fs.copyFileSync(sourcePath, filePath);
         return { success: true, savedPath: filePath };
       } catch (err) {
         return { success: false, error: `Failed to save backup: ${(err as Error).message}` };
@@ -663,56 +556,27 @@ app.whenReady().then(async () => {
     });
 
     // Restore backup from external file (device migration scenario)
+    // All format detection (raw SQLite, PSBK portable, legacy encrypted) is
+    // handled by BackupRepository.restore() — no branching needed here.
     ipcMain.handle('backup:restoreFromFile', async (_event) => {
       const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
       if (!win) return { success: false, error: 'No window available' };
 
       const { filePaths, canceled } = await dialog.showOpenDialog(win, {
         title: 'Select Backup File',
-        filters: [{ name: 'PharmaSys Backup', extensions: ['enc'] }],
+        filters: [{ name: 'PharmaSys Backup', extensions: ['bak', 'enc', 'sqlite'] }],
         properties: ['openFile'],
       });
       if (canceled || filePaths.length === 0) return { success: false };
 
       const selectedFile = filePaths[0];
-      fs.mkdirSync(dataPath, { recursive: true });
-      const localKeyPath = path.join(dataPath, '.backup-key');
-
-      // Read the file and check for portable format (embedded key)
-      let fileData = fs.readFileSync(selectedFile);
-      const hasPortableHeader = fileData.length > 37
-        && fileData.slice(0, 4).toString() === 'PSBK';
-
-      if (hasPortableHeader) {
-        // Extract embedded key and strip header
-        const version = fileData.readUInt8(4);
-        if (version !== PORTABLE_VERSION) {
-          return { success: false, error: `Unsupported backup format version: ${version}` };
-        }
-        const embeddedKey = fileData.slice(5, 37); // 32-byte key
-        fileData = fileData.slice(37);              // rest is the encrypted backup
-        fs.writeFileSync(localKeyPath, embeddedKey);
-        console.log('[Restore] Extracted encryption key from portable backup');
-      } else {
-        // Legacy format — check for companion .key file
-        const companionKey = selectedFile.replace(/\.enc$/, '.key');
-        if (fs.existsSync(companionKey)) {
-          fs.copyFileSync(companionKey, localKeyPath);
-          console.log('[Restore] Imported encryption key from companion file');
-        } else if (!fs.existsSync(localKeyPath)) {
-          return {
-            success: false,
-            error: 'This backup file uses an older format. Please place the .key file next to the .enc file.',
-          };
-        }
-      }
-
-      // Copy the (possibly stripped) backup file to the local backup directory
       const backupDir = path.join(dataPath, 'backups');
       if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+
+      // Copy file to local backup directory, then let repository handle format detection
       const filename = path.basename(selectedFile);
       const destPath = path.join(backupDir, filename);
-      fs.writeFileSync(destPath, fileData);
+      fs.copyFileSync(selectedFile, destPath);
 
       try {
         console.log('[Restore] Starting restore of:', filename);

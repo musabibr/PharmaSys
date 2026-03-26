@@ -77,6 +77,26 @@ export class PurchaseService {
     return await this.getSupplierById(id);
   }
 
+  async deleteSupplier(id: number, userId: number): Promise<void> {
+    Validate.id(id);
+    const existing = await this.supplierRepo.getById(id);
+    if (!existing) throw new NotFoundError('Supplier', id);
+
+    if (await this.supplierRepo.hasPurchases(id)) {
+      throw new BusinessRuleError(
+        'Cannot delete supplier with purchase history. Deactivate it instead.'
+      );
+    }
+
+    await this.supplierRepo.delete(id);
+
+    this.bus.emit('entity:mutated', {
+      action: 'DELETE_SUPPLIER', table: 'suppliers',
+      recordId: id, userId,
+      oldValues: { name: existing.name },
+    });
+  }
+
   // ─── Purchase Queries ────────────────────────────────────────────────────────
 
   async getAll(filters: PurchaseFilters): Promise<PaginatedResult<Purchase>> {
@@ -1166,7 +1186,7 @@ export class PurchaseService {
       }
       if (Object.keys(batchUpdate).length > 0) {
         await this.base.run(
-          `UPDATE batches SET ${Object.keys(batchUpdate).map(k => `${k} = ?`).join(', ')}, updated_at = datetime('now') WHERE id = ?`,
+          `UPDATE batches SET ${Object.keys(batchUpdate).map(k => `${k} = ?`).join(', ')}, updated_at = datetime('now', 'localtime') WHERE id = ?`,
           [...Object.values(batchUpdate), item.batch_id]
         );
       }
@@ -1222,7 +1242,7 @@ export class PurchaseService {
       } else {
         // Soft-delete: zero out stock, mark sold_out
         await this.base.run(
-          `UPDATE batches SET quantity_base = 0, status = 'sold_out', updated_at = datetime('now') WHERE id = ?`,
+          `UPDATE batches SET quantity_base = 0, status = 'sold_out', updated_at = datetime('now', 'localtime') WHERE id = ?`,
           [batchId]
         );
       }

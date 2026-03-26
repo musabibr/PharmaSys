@@ -29,6 +29,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Separator } from '@/components/ui/separator';
+import { Switch } from '@/components/ui/switch';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -771,27 +772,19 @@ export function SettingsPage() {
                   </div>
 
                   <div className="flex items-center justify-between rounded-lg border p-3">
-                    <div>
-                      <p className="text-sm font-medium">{t('Require Shifts')}</p>
-                      <p className="text-xs text-muted-foreground">
+                    <div className="flex-1 me-4">
+                      <Label htmlFor="shifts-toggle" className="text-sm font-medium cursor-pointer">
+                        {t('Require Shifts')}
+                      </Label>
+                      <p className="text-xs text-muted-foreground mt-0.5">
                         {t('When disabled, sales and returns work without opening a shift. Useful for single-pharmacist pharmacies.')}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={shiftsEnabled}
-                      onClick={() => setShiftsEnabled(!shiftsEnabled)}
-                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                        shiftsEnabled ? 'bg-primary' : 'bg-input'
-                      }`}
-                    >
-                      <span
-                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
-                          shiftsEnabled ? 'translate-x-4' : 'translate-x-0.5'
-                        }`}
-                      />
-                    </button>
+                    <Switch
+                      id="shifts-toggle"
+                      checked={shiftsEnabled}
+                      onCheckedChange={setShiftsEnabled}
+                    />
                   </div>
 
                   <div className="space-y-1.5">
@@ -1328,7 +1321,9 @@ export function SettingsPage() {
             </section>
           </div>
         </TabsContent>
+
       </Tabs>
     </div>
   );
 }
+

@@ -5,7 +5,7 @@ import { resolvePermissions, hasPermission, hasAnyPermission } from '@/lib/permi
 import { api } from '@/api';
 import { useCartStore } from './cart.store';
 import { useShiftStore } from './shift.store';
-import { useSettingsStore } from './settings.store';
+
 
 interface AuthState {
   currentUser: User | null;
@@ -61,7 +61,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     await api.auth.logout();
     useCartStore.getState().clear();
     useShiftStore.getState().reset();
-    useSettingsStore.getState().reset();
+    // Settings are global (not per-user) — don't reset on logout.
+    // Resetting causes language/direction change → re-render cascade → focus loss.
     set({ currentUser: null, isAuthenticated: false });
   },
 

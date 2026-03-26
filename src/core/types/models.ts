@@ -167,6 +167,10 @@ export interface Transaction {
   // Joined fields
   username?: string;
   items?: TransactionItem[];
+  // Computed: sum of non-voided child return totals
+  returned_amount?: number;
+  // Populated by getById for sale transactions
+  returns?: Transaction[];
 }
 
 export interface TransactionItem {
@@ -186,6 +190,7 @@ export interface TransactionItem {
   // Joined fields
   product_name?: string;
   batch_number?: string;
+  product_is_active?: number;
 }
 
 // ─── Shift ───
@@ -204,6 +209,13 @@ export interface Shift {
   status: ShiftStatus;
   // Joined fields
   username?: string;
+  // Computed from transactions
+  total_cash_sales?: number;
+  total_cash_returns?: number;
+  total_bank_sales?: number;
+  total_bank_returns?: number;
+  total_sales?: number;
+  total_returns?: number;
 }
 
 // ─── Expense ───
@@ -620,6 +632,12 @@ export interface ShiftExpectedCash {
   total_cash_expenses: number;
   total_cash_drops: number;
   expected_cash: number;
+  // Bank summary
+  total_bank_sales: number;
+  total_bank_returns: number;
+  // Combined totals
+  total_sales: number;
+  total_returns: number;
 }
 
 export interface ShiftReport {
@@ -885,6 +903,8 @@ export interface PaginatedResult<T> {
   page: number;
   limit: number;
   totalPages: number;
+  agg_sales?: number;
+  agg_returns?: number;
 }
 
 // ─── App Info ───

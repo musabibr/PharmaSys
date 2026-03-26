@@ -62,6 +62,8 @@ import {
   Minus,
   Equal,
   Printer,
+  Landmark,
+  Pencil,
 } from 'lucide-react';
 import { CloseShiftDialog } from './CloseShiftDialog';
 import { CashDropDialog } from './CashDropDialog';
@@ -450,6 +452,28 @@ function ShiftReportSheet({ open, onOpenChange, shift }: ShiftReportSheetProps) 
               </div>
             )}
 
+            {/* Bank Summary */}
+            {!loading && expected && (expected.total_bank_sales > 0 || expected.total_bank_returns > 0) && (
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5">
+                  <Landmark className="h-3.5 w-3.5" />
+                  {t('Bank Summary')}
+                </h3>
+                <div className="rounded-lg border p-3 space-y-1">
+                  <ReportRow label={t('Bank Sales')} amount={expected.total_bank_sales} sign="+" />
+                  <ReportRow label={t('Bank Returns')} amount={expected.total_bank_returns} sign="-" />
+                  <Separator className="my-1.5" />
+                  <ReportRow
+                    label={t('Net Bank')}
+                    amount={expected.total_bank_sales - expected.total_bank_returns}
+                    sign="="
+                    bold
+                    highlight
+                  />
+                </div>
+              </div>
+            )}
+
             {/* Actual / Variance (closed shifts only) */}
             {shift.status === 'closed' && shift.actual_cash !== null && (
               <div className="space-y-3">
@@ -501,6 +525,11 @@ function ShiftReportSheet({ open, onOpenChange, shift }: ShiftReportSheetProps) 
                 { label: `- ${t('Cash Withdrawals')}`, value: formatCurrency(expected.total_cash_drops) },
                 { label: t('Expected Cash'), value: formatCurrency(expected.expected_cash) },
               ] : [];
+              const bankRows = expected && (expected.total_bank_sales > 0 || expected.total_bank_returns > 0) ? [
+                { label: `+ ${t('Bank Sales')}`, value: formatCurrency(expected.total_bank_sales) },
+                { label: `- ${t('Bank Returns')}`, value: formatCurrency(expected.total_bank_returns) },
+                { label: t('Net Bank'), value: formatCurrency(expected.total_bank_sales - expected.total_bank_returns) },
+              ] : [];
               const closingRows = shift.status === 'closed' && shift.actual_cash !== null ? [
                 { label: t('Actual Cash'), value: formatCurrency(shift.actual_cash) },
                 { label: t('Variance'), value: shift.variance_type === 'shortage'
@@ -521,6 +550,12 @@ function ShiftReportSheet({ open, onOpenChange, shift }: ShiftReportSheetProps) 
                   <h3>${t('Cash Breakdown')}</h3>
                   <table>
                     ${cashRows.map(r => `<tr><td>${r.label}</td><td class="num">${r.value}</td></tr>`).join('')}
+                  </table>
+                ` : ''}
+                ${bankRows.length > 0 ? `
+                  <h3>${t('Bank Summary')}</h3>
+                  <table>
+                    ${bankRows.map(r => `<tr><td>${r.label}</td><td class="num">${r.value}</td></tr>`).join('')}
                   </table>
                 ` : ''}
                 ${closingRows.length > 0 ? `
@@ -600,6 +635,11 @@ function CurrentShiftCard({ onOpenShift, onCloseShift, onCashDrop }: CurrentShif
   const canClose = usePermission('finance.shifts.close');
   const canCashDrop = usePermission('finance.cash_drops.manage');
 
+  // Edit opening amount dialog state
+  const [editOpening, setEditOpening] = useState(false);
+  const [editAmount, setEditAmount] = useState('');
+  const [editLoading, setEditLoading] = useState(false);
+
   if (isLoading) {
     return (
       <Card>
@@ -667,8 +707,18 @@ function CurrentShiftCard({ onOpenShift, onCloseShift, onCashDrop }: CurrentShif
           </div>
           <div>
             <p className="text-xs text-muted-foreground">{t('Opening Amount')}</p>
-            <p className="mt-0.5 text-sm font-medium tabular-nums">
+            <p className="mt-0.5 flex items-center gap-1.5 text-sm font-medium tabular-nums">
               {formatCurrency(currentShift.opening_amount)}
+              {canOpen && (
+                <button
+                  type="button"
+                  onClick={() => setEditOpening(true)}
+                  className="rounded p-1 text-primary/60 hover:text-primary hover:bg-primary/10"
+                  title={t('Edit Opening Amount')}
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
+              )}
             </p>
           </div>
           <div>
@@ -695,6 +745,64 @@ function CurrentShiftCard({ onOpenShift, onCloseShift, onCashDrop }: CurrentShif
           </div>
         )}
       </CardContent>
+
+      {/* Edit Opening Amount Dialog */}
+      <Dialog
+        open={editOpening}
+        onOpenChange={(v) => {
+          setEditOpening(v);
+          if (v && currentShift) setEditAmount(String(currentShift.opening_amount));
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="h-4 w-4" />
+              {t('Edit Opening Amount')}
+            </DialogTitle>
+          </DialogHeader>
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const parsed = parseInt(editAmount, 10);
+              if (isNaN(parsed) || parsed < 0 || !currentShift) return;
+              setEditLoading(true);
+              try {
+                await useShiftStore.getState().updateOpeningAmount(currentShift.id, parsed);
+                toast.success(t('Opening amount updated successfully'));
+                setEditOpening(false);
+              } catch (err: unknown) {
+                toast.error(err instanceof Error ? err.message : t('Failed to update opening amount'));
+              } finally {
+                setEditLoading(false);
+              }
+            }}
+            className="space-y-4"
+          >
+            <div className="space-y-2">
+              <Label htmlFor="edit-opening-amount">{t('New Opening Amount')} (SDG)</Label>
+              <Input
+                id="edit-opening-amount"
+                type="number"
+                step="1"
+                min="0"
+                value={editAmount}
+                onChange={(e) => setEditAmount(e.target.value)}
+                disabled={editLoading}
+                autoFocus
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setEditOpening(false)} disabled={editLoading}>
+                {t('Cancel')}
+              </Button>
+              <Button type="submit" disabled={editLoading || !editAmount || parseInt(editAmount, 10) < 0}>
+                {editLoading ? t('Saving...') : t('Save')}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
@@ -946,12 +1054,24 @@ interface ShiftHistorySectionProps {
 
 function ShiftHistorySection({ onSelectShift, refreshKey }: ShiftHistorySectionProps) {
   const { t } = useTranslation();
-  const currentUser = useAuthStore((s) => s.user);
+  const currentUser = useAuthStore((s) => s.currentUser);
   const isAdmin = currentUser?.role === 'admin';
 
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [loading, setLoading] = useState(true);
   const [forceCloseShift, setForceCloseShift] = useState<Shift | null>(null);
+
+  // Edit opening amount on shifts (admin=any, non-admin=own today)
+  const [editShift, setEditShift] = useState<Shift | null>(null);
+  const [editAmount, setEditAmount] = useState('');
+  const [editReason, setEditReason] = useState('');
+  const [editLoading, setEditLoading] = useState(false);
+
+  const canEditShift = (shift: Shift) => {
+    if (isAdmin) return true;
+    const today = new Date().toISOString().slice(0, 10);
+    return shift.user_id === currentUser?.id && shift.opened_at?.startsWith(today);
+  };
 
   // Filter state
   const [startDate, setStartDate] = useState(defaultStartDate);
@@ -1025,7 +1145,9 @@ function ShiftHistorySection({ onSelectShift, refreshKey }: ShiftHistorySectionP
         <td>${formatDateTime(s.closed_at)}</td>
         <td>${duration}</td>
         <td class="num">${formatCurrency(s.opening_amount)}</td>
-        <td class="num">${s.actual_cash !== null ? formatCurrency(s.actual_cash) : '\u2014'}</td>
+        <td class="num">${formatCurrency((s.total_cash_sales ?? 0) - (s.total_cash_returns ?? 0))}</td>
+        <td class="num">${formatCurrency((s.total_bank_sales ?? 0) - (s.total_bank_returns ?? 0))}</td>
+        <td class="num">${formatCurrency(s.opening_amount + (s.total_sales ?? 0) - (s.total_returns ?? 0))}</td>
         <td class="num">${variance}</td>
         <td>${s.status === 'open' ? t('Open') : t('Closed')}</td>
       </tr>`;
@@ -1047,7 +1169,9 @@ function ShiftHistorySection({ onSelectShift, refreshKey }: ShiftHistorySectionP
             <th>${t('Closed At')}</th>
             <th>${t('Duration')}</th>
             <th>${t('Opening')}</th>
-            <th>${t('Closing')}</th>
+            <th>${t('Cash')}</th>
+            <th>${t('Bank')}</th>
+            <th>${t('Total')}</th>
             <th>${t('Variance')}</th>
             <th>${t('Status')}</th>
           </tr>
@@ -1158,7 +1282,9 @@ function ShiftHistorySection({ onSelectShift, refreshKey }: ShiftHistorySectionP
                   <TableHead className="hidden lg:table-cell">{t('Closed At')}</TableHead>
                   <TableHead>{t('Duration')}</TableHead>
                   <TableHead className="text-end">{t('Opening')}</TableHead>
-                  <TableHead className="text-end">{t('Closing')}</TableHead>
+                  <TableHead className="text-end">{t('Cash')}</TableHead>
+                  <TableHead className="text-end hidden md:table-cell">{t('Bank')}</TableHead>
+                  <TableHead className="text-end">{t('Total')}</TableHead>
                   <TableHead className="text-end">{t('Variance')}</TableHead>
                   <TableHead>{t('Status')}</TableHead>
                   {isAdmin && <TableHead />}
@@ -1183,12 +1309,33 @@ function ShiftHistorySection({ onSelectShift, refreshKey }: ShiftHistorySectionP
                       {calcDuration(shift.opened_at, shift.closed_at, t)}
                     </TableCell>
                     <TableCell className="text-end tabular-nums">
-                      {formatCurrency(shift.opening_amount)}
+                      <span className="inline-flex items-center gap-1">
+                        {formatCurrency(shift.opening_amount)}
+                        {canEditShift(shift) && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditShift(shift);
+                              setEditAmount(String(shift.opening_amount));
+                              setEditReason('');
+                            }}
+                            className="rounded p-1 text-primary/60 hover:text-primary hover:bg-primary/10"
+                            title={t('Edit Opening Amount')}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                        )}
+                      </span>
                     </TableCell>
                     <TableCell className="text-end tabular-nums">
-                      {shift.actual_cash !== null
-                        ? formatCurrency(shift.actual_cash)
-                        : '\u2014'}
+                      {formatCurrency((shift.total_cash_sales ?? 0) - (shift.total_cash_returns ?? 0))}
+                    </TableCell>
+                    <TableCell className="text-end tabular-nums hidden md:table-cell">
+                      {formatCurrency((shift.total_bank_sales ?? 0) - (shift.total_bank_returns ?? 0))}
+                    </TableCell>
+                    <TableCell className="text-end tabular-nums font-medium">
+                      {formatCurrency(shift.opening_amount + (shift.total_sales ?? 0) - (shift.total_returns ?? 0))}
                     </TableCell>
                     <TableCell className="text-end">
                       {varianceBadge(shift.variance_type, shift.variance, t)}
@@ -1244,6 +1391,77 @@ function ShiftHistorySection({ onSelectShift, refreshKey }: ShiftHistorySectionP
           }}
         />
       )}
+
+      {/* Edit Opening Amount Dialog */}
+      <Dialog
+        open={!!editShift}
+        onOpenChange={(v) => { if (!v) setEditShift(null); }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="h-4 w-4" />
+              {t('Edit Opening Amount')}
+            </DialogTitle>
+          </DialogHeader>
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const parsed = parseInt(editAmount, 10);
+              if (isNaN(parsed) || parsed < 0 || !editShift) return;
+              if (!isAdmin && !editReason.trim()) return;
+              setEditLoading(true);
+              try {
+                await api.shifts.updateOpeningAmount(editShift.id, parsed, editReason.trim() || undefined);
+                toast.success(t('Opening amount updated successfully'));
+                setEditShift(null);
+                fetchShifts();
+              } catch (err: unknown) {
+                toast.error(err instanceof Error ? err.message : t('Failed to update opening amount'));
+              } finally {
+                setEditLoading(false);
+              }
+            }}
+            className="space-y-4"
+          >
+            <div className="space-y-2">
+              <Label htmlFor="edit-hist-opening">{t('New Opening Amount')} (SDG)</Label>
+              <Input
+                id="edit-hist-opening"
+                type="number"
+                step="1"
+                min="0"
+                value={editAmount}
+                onChange={(e) => setEditAmount(e.target.value)}
+                disabled={editLoading}
+                autoFocus
+              />
+            </div>
+            {!isAdmin && (
+              <div className="space-y-2">
+                <Label htmlFor="edit-reason">{t('Reason')} *</Label>
+                <textarea
+                  id="edit-reason"
+                  className="flex min-h-[60px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  value={editReason}
+                  onChange={(e) => setEditReason(e.target.value)}
+                  disabled={editLoading}
+                  placeholder={t('Why are you changing the opening amount?')}
+                  required
+                />
+              </div>
+            )}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setEditShift(null)} disabled={editLoading}>
+                {t('Cancel')}
+              </Button>
+              <Button type="submit" disabled={editLoading || !editAmount || parseInt(editAmount, 10) < 0 || (!isAdmin && !editReason.trim())}>
+                {editLoading ? t('Saving...') : t('Save')}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
@@ -1271,8 +1489,8 @@ export function ShiftsPage() {
     loadCurrentShift();
   }, [loadCurrentShift]);
 
-  function handleShiftAction() {
-    loadCurrentShift();
+  async function handleShiftAction() {
+    await loadCurrentShift();
     setRefreshKey((k) => k + 1);
   }
 

@@ -232,8 +232,10 @@ export function TransactionDetailSheet({
   const items = transaction?.items ?? [];
   const isSale = transaction?.transaction_type === 'sale';
   const isVoided = transaction?.is_voided === 1;
+  const returnedAmount = transaction?.returned_amount ?? 0;
+  const isFullyReturned = returnedAmount > 0 && returnedAmount >= (transaction?.total_amount ?? 0);
   const canVoid = isSale && !isVoided && onVoid != null;
-  const canReturn = isSale && !isVoided && onReturn != null;
+  const canReturn = isSale && !isVoided && !isFullyReturned && onReturn != null;
   const isReturnTxn = transaction?.transaction_type === 'return';
   const hasParent = transaction?.parent_transaction_id != null;
 
@@ -263,6 +265,12 @@ export function TransactionDetailSheet({
                   <Badge variant="destructive">{t('Voided')}</Badge>
                 ) : (
                   <Badge variant="success">{t('Completed')}</Badge>
+                )}
+                {!isVoided && isFullyReturned && (
+                  <Badge variant="destructive">{t('Fully Returned')}</Badge>
+                )}
+                {!isVoided && !isFullyReturned && returnedAmount > 0 && (
+                  <Badge variant="warning">{t('Partial Return')}</Badge>
                 )}
               </span>
             ) : (
@@ -477,6 +485,23 @@ export function TransactionDetailSheet({
                   <span>{t('Total')}</span>
                   <span className="tabular-nums">{formatCurrency(transaction.total_amount)}</span>
                 </div>
+                {returnedAmount > 0 && (
+                  <>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">{t('Returned')}</span>
+                      <span className="tabular-nums text-warning">
+                        -{formatCurrency(returnedAmount)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-base font-bold">
+                      <span>{t('Net After Returns')}</span>
+                      <span className="tabular-nums">
+                        {formatCurrency(transaction.total_amount - returnedAmount)}
+                      </span>
+                    </div>
+                    <Separator />
+                  </>
+                )}
                 {transaction.cash_tendered > 0 && (
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-muted-foreground">{t('Cash Tendered')}</span>
@@ -494,6 +519,37 @@ export function TransactionDetailSheet({
                   </div>
                 )}
               </div>
+
+              {/* ---- Return History ---- */}
+              {isSale && (transaction.returns?.length ?? 0) > 0 && (
+                <>
+                  <Separator />
+                  <div>
+                    <p className="mb-2 text-sm font-semibold flex items-center gap-1.5">
+                      <Undo2 className="h-3.5 w-3.5" />
+                      {t('Return History')} ({transaction.returns!.length})
+                    </p>
+                    <div className="space-y-1.5">
+                      {transaction.returns!.map((ret) => (
+                        <div
+                          key={ret.id}
+                          className="flex items-center justify-between rounded-md border px-3 py-2 text-sm"
+                        >
+                          <div>
+                            <p className="font-medium">{ret.transaction_number}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {formatDateTime(ret.created_at)}
+                            </p>
+                          </div>
+                          <span className="font-semibold tabular-nums text-warning">
+                            -{formatCurrency(ret.total_amount)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </ScrollArea>
         )}

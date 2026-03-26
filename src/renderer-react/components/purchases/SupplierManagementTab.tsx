@@ -2,8 +2,9 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import {
-  Plus, Search, Pencil, Power, PowerOff, Loader2, Building2,
+  Plus, Search, Pencil, Power, PowerOff, Loader2, Building2, Trash2,
 } from 'lucide-react';
+import { useAuthStore } from '@/stores/auth.store';
 import { api } from '@/api';
 import type { Supplier } from '@/api/types';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -170,6 +171,12 @@ export function SupplierManagementTab() {
   const [confirmTarget, setConfirmTarget] = useState<Supplier | null>(null);
   const [toggling, setToggling] = useState(false);
 
+  // Delete confirmation
+  const [deleteTarget, setDeleteTarget] = useState<Supplier | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const isAdmin = useAuthStore((s) => s.currentUser?.role === 'admin');
+
   const fetchSuppliers = useCallback(async () => {
     setLoading(true);
     try {
@@ -202,6 +209,21 @@ export function SupplierManagementTab() {
   const handleAdd = () => {
     setEditingSupplier(null);
     setFormOpen(true);
+  };
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await api.suppliers.delete(deleteTarget.id);
+      toast.success(t('Supplier deleted'));
+      fetchSuppliers();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('Failed to delete supplier'));
+    } finally {
+      setDeleting(false);
+      setDeleteTarget(null);
+    }
   };
 
   const handleToggleActive = async () => {
@@ -301,6 +323,15 @@ export function SupplierManagementTab() {
                           : <Power className="h-3.5 w-3.5 text-emerald-600" />
                         }
                       </Button>
+                      {isAdmin && (
+                        <Button
+                          variant="ghost" size="icon" className="h-7 w-7"
+                          onClick={() => setDeleteTarget(s)}
+                          title={t('Delete Supplier')}
+                        >
+                          <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -322,6 +353,30 @@ export function SupplierManagementTab() {
         supplier={editingSupplier}
         onSaved={fetchSuppliers}
       />
+
+      {/* Delete Confirmation */}
+      <Dialog open={!!deleteTarget} onOpenChange={(o) => { if (!o) setDeleteTarget(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t('Delete Supplier')}</DialogTitle>
+            <DialogDescription>
+              {t('Permanently delete this supplier? This cannot be undone.')}
+              {deleteTarget && (
+                <span className="mt-1 block font-medium text-foreground">{deleteTarget.name}</span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>
+              {t('Cancel')}
+            </Button>
+            <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
+              {deleting && <Loader2 className="me-1 h-4 w-4 animate-spin" />}
+              {t('Delete')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Deactivate/Activate Confirmation */}
       <Dialog open={!!confirmTarget} onOpenChange={(o) => { if (!o) setConfirmTarget(null); }}>

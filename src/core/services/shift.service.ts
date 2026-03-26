@@ -54,6 +54,46 @@ export class ShiftService {
     return shift;
   }
 
+  async updateOpeningAmount(shiftId: number, newAmount: number, userId: number, userRole?: string, reason?: string): Promise<Shift> {
+    Validate.id(shiftId);
+    const shift = await this.repo.getById(shiftId);
+    if (!shift) throw new NotFoundError('Shift', shiftId);
+
+    if (userRole !== 'admin') {
+      // Non-admin: own shift only, today only, reason required
+      if (shift.user_id !== userId) {
+        throw new ValidationError('You can only edit your own shift', 'shift');
+      }
+      const n = new Date();
+      const today = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+      const shiftDate = shift.opened_at?.slice(0, 10);
+      if (shiftDate !== today) {
+        throw new ValidationError("You can only edit today's shift", 'shift');
+      }
+      if (!reason || reason.trim().length === 0) {
+        throw new ValidationError('A reason is required when editing shift opening amount', 'reason');
+      }
+    }
+
+    const amount = Money.round(Validate.nonNegativeNumber(newAmount, 'Opening amount'));
+    const oldAmount = shift.opening_amount;
+
+    await this.repo.updateOpeningAmount(shiftId, amount);
+
+    this.bus.emit('entity:mutated', {
+      action: 'UPDATE_OPENING_AMOUNT',
+      table: 'shifts',
+      recordId: shiftId,
+      userId,
+      oldValues: { opening_amount: oldAmount },
+      newValues: { opening_amount: amount, reason: reason ?? null },
+    });
+
+    const updated = await this.repo.getById(shiftId);
+    if (!updated) throw new InternalError('Failed to retrieve updated shift');
+    return updated;
+  }
+
   async close(
     shiftId: number,
     actualCash: number,

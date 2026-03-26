@@ -351,17 +351,17 @@ describe('TransactionService', () => {
     it('throws when returning more than remaining qty', async () => {
       const deps = createService();
       setupReturnScenario(deps);
-      // Already returned all 20 base units
-      deps.txnRepo.getReturnedQuantities.mockResolvedValue({ '1_parent': 20 });
+      // Already returned all 20 base units (key is batch_id only)
+      deps.txnRepo.getReturnedQuantities.mockResolvedValue({ '1': 20 });
       await expect(deps.svc.createReturn(returnInput, 1)).rejects.toThrow(ValidationError);
     });
 
-    it('uses compound key batchId_unitType for returned quantities', async () => {
+    it('uses batch_id key for returned quantities (cross-unit safe)', async () => {
       const deps = createService();
       setupReturnScenario(deps);
-      // 10 base units already returned under key '1_parent'; original was 1 parent = 20 base
+      // 10 base units already returned under key '1'; original was 1 parent = 20 base
       // remaining = 20 - 10 = 10 base; returning 1 parent = 20 base > 10 base → should throw
-      deps.txnRepo.getReturnedQuantities.mockResolvedValue({ '1_parent': 10 });
+      deps.txnRepo.getReturnedQuantities.mockResolvedValue({ '1': 10 });
       await expect(deps.svc.createReturn({
         ...returnInput,
         items: [{ batch_id: 1, unit_type: 'parent', quantity: 1 }],

@@ -27,6 +27,18 @@ export class SupplierRepository implements ISupplierRepository {
     );
   }
 
+  async hasPurchases(id: number): Promise<boolean> {
+    const row = await this.base.getOne<{ cnt: number }>(
+      'SELECT COUNT(*) as cnt FROM purchases WHERE supplier_id = ?',
+      [id]
+    );
+    return (row?.cnt ?? 0) > 0;
+  }
+
+  async delete(id: number): Promise<void> {
+    await this.base.runImmediate('DELETE FROM suppliers WHERE id = ?', [id]);
+  }
+
   async update(id: number, data: UpdateSupplierInput): Promise<void> {
     const fields: string[] = [];
     const params: unknown[] = [];
@@ -39,7 +51,7 @@ export class SupplierRepository implements ISupplierRepository {
 
     if (fields.length === 0) return;
 
-    fields.push("updated_at = datetime('now')");
+    fields.push("updated_at = datetime('now', 'localtime')");
     params.push(id);
 
     await this.base.runImmediate(

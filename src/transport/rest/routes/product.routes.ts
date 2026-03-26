@@ -53,5 +53,13 @@ export function productRoutes(services: ServiceContainer): Router {
     res.status(201).json({ data: await services.product.bulkCreate(req.body, req.user!.id) });
   }));
 
+  router.get('/:id/delete-info', requireMicroPerm('inventory.products.delete'), handle(async (req, res) => {
+    res.json({ data: await services.product.getDeleteInfo(Number(req.params.id)) });
+  }));
+
+  router.post('/bulk-delete', requireMicroPerm('inventory.products.delete'), handle(async (req, res) => {
+    res.json({ data: await services.product.bulkDelete(req.body.ids, req.user!.id) });
+  }));
+
   return router;
 }

@@ -49,6 +49,9 @@ export function registerAuthHandlers(
     newPassword: string;
   }) => {
     await services.auth.changePassword(user!.id, payload.currentPassword, payload.newPassword);
+    // Refresh in-memory currentUser so getCurrentUser returns updated must_change_password
+    const updated = await services.user.getById(user!.id);
+    setCurrentUser(updated);
     return { success: true };
   });
 
@@ -76,6 +79,9 @@ export function registerAuthHandlers(
     answer: string;
   }) => {
     await services.auth.setSecurityQuestion(user!.id, payload.question, payload.answer);
+    // Refresh in-memory currentUser
+    const updated = await services.user.getById(user!.id);
+    setCurrentUser(updated);
     return { success: true };
   });
 

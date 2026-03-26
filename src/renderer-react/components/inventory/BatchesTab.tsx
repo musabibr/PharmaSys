@@ -5,6 +5,7 @@ import { api } from '@/api';
 import type { Batch, Product, Category } from '@/api/types';
 import { useDebounce } from '@/hooks/useDebounce';
 import { usePermission } from '@/hooks/usePermission';
+import { useAuthStore } from '@/stores/auth.store';
 import { formatCurrency, formatQuantity } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -41,7 +42,16 @@ import {
   Printer,
   X,
   Info,
+  Trash2,
 } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
 import { printHtml } from '@/lib/print';
 import { BatchForm } from './BatchForm';
 import { DamageReportForm } from './DamageReportForm';
@@ -114,6 +124,7 @@ export function BatchesTab() {
   const { t } = useTranslation();
   const canEditInventory = usePermission('inventory.batches.manage');
   const canViewCosts = usePermission('inventory.view_costs');
+  const isAdmin = useAuthStore((s) => s.currentUser?.role === 'admin');
 
   // ---- All products + categories (loaded once) ----
   const [allProducts, setAllProducts] = useState<Product[]>([]);
@@ -144,6 +155,12 @@ export function BatchesTab() {
   const [editingBatch, setEditingBatch] = useState<Batch | null>(null);
   const [damageFormOpen, setDamageFormOpen] = useState(false);
   const [damageBatch, setDamageBatch] = useState<Batch | null>(null);
+
+  // ---- Bulk delete state (admin only) ----
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [deleteInfoMap, setDeleteInfoMap] = useState<Map<number, { quantity_base: number; txn_count: number; adj_count: number }>>(new Map());
+  const [deletingBulk, setDeletingBulk] = useState(false);
 
   // ---- Load ALL products + categories on mount ----
   useEffect(() => {
@@ -185,6 +202,11 @@ export function BatchesTab() {
     setSearchResults(matches);
     setShowSearchResults(true);
   }, [debouncedSearch, allProducts, dropdownProducts, categoryFilter]);
+
+  // ---- Reset selection when product changes ----
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [selectedProduct]);
 
   // ---- Load batches for selected product ----
   const loadBatches = useCallback(() => {
@@ -303,6 +325,61 @@ export function BatchesTab() {
     setExpiryFilter('all');
     setStockFilter('all');
     setSortOption('expiry_asc');
+  }
+
+  // ---- Bulk delete: open dialog and fetch impact info ----
+  async function handleBulkDeleteOpen() {
+    const infoMap = new Map<number, { quantity_base: number; txn_count: number; adj_count: number }>();
+    for (const id of selectedIds) {
+      try {
+        const info = await api.batches.getDeleteInfo(id);
+        if (info) infoMap.set(id, info);
+      } catch { /* skip */ }
+    }
+    setDeleteInfoMap(infoMap);
+    setBulkDeleteOpen(true);
+  }
+
+  // ---- Bulk delete: confirm ----
+  async function handleBulkDeleteConfirm() {
+    setDeletingBulk(true);
+    try {
+      const result = await api.batches.bulkDelete(Array.from(selectedIds));
+      if (result.deleted.length > 0) {
+        toast.success(t('{{count}} batch(es) deleted', { count: result.deleted.length }));
+      }
+      if (result.errors && result.errors.length > 0) {
+        toast.error(t('{{count}} batch(es) could not be deleted', { count: result.errors.length }));
+      }
+      setSelectedIds(new Set());
+      setBulkDeleteOpen(false);
+      loadBatches();
+      api.products.getAll().then((prods: Product[]) => {
+        setAllProducts(Array.isArray(prods) ? prods : []);
+      }).catch(() => {});
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('Failed to delete batches'));
+    } finally {
+      setDeletingBulk(false);
+    }
+  }
+
+  // ---- Bulk delete: toggle individual row ----
+  function handleToggleSelect(id: number) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  // ---- Bulk delete: select / deselect all visible ----
+  function handleSelectAll(checked: boolean) {
+    if (checked) {
+      setSelectedIds(new Set(filteredBatches.map((b) => b.id)));
+    } else {
+      setSelectedIds(new Set());
+    }
   }
 
   // ---- Print stock report ----
@@ -460,6 +537,19 @@ export function BatchesTab() {
 
             {/* Spacer */}
             <div className="flex-1" />
+
+            {/* Delete Selected */}
+            {isAdmin && selectedIds.size > 0 && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleBulkDeleteOpen}
+                className="shrink-0"
+              >
+                <Trash2 className="me-1.5 h-4 w-4" />
+                {t('Delete Selected ({{count}})', { count: selectedIds.size })}
+              </Button>
+            )}
 
             {/* Add Batch */}
             {canEditInventory && (
@@ -713,6 +803,17 @@ export function BatchesTab() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    {isAdmin && (
+                      <TableHead className="w-10 text-center">
+                        <input
+                          type="checkbox"
+                          checked={filteredBatches.length > 0 && filteredBatches.every((b) => selectedIds.has(b.id))}
+                          onChange={(e) => handleSelectAll(e.target.checked)}
+                          className="h-4 w-4 rounded border-gray-300 accent-primary"
+                          title={t('Select All')}
+                        />
+                      </TableHead>
+                    )}
                     <TableHead className="w-12 text-center">#</TableHead>
                     <TableHead>{t('Batch #')}</TableHead>
                     <TableHead>{t('Expiry Date')}</TableHead>
@@ -749,8 +850,18 @@ export function BatchesTab() {
                     return (
                       <TableRow
                         key={batch.id}
-                        className={isExpired ? 'opacity-50' : ''}
+                        className={`${isExpired ? 'opacity-50' : ''} ${selectedIds.has(batch.id) ? 'bg-muted/40' : ''}`}
                       >
+                        {isAdmin && (
+                          <TableCell className="text-center">
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(batch.id)}
+                              onChange={() => handleToggleSelect(batch.id)}
+                              className="h-4 w-4 rounded border-gray-300 accent-primary"
+                            />
+                          </TableCell>
+                        )}
                         <TableCell className="text-center text-muted-foreground">{idx + 1}</TableCell>
                         <TableCell className="font-medium">
                           {batch.batch_number || '—'}
@@ -876,7 +987,7 @@ export function BatchesTab() {
           onSaved={() => {
             loadBatches();
             // Also refresh product list to update stock counts
-            api.products.getAll().then((prods) => {
+            api.products.getAll().then((prods: Product[]) => {
               setAllProducts(Array.isArray(prods) ? prods : []);
             }).catch(() => {});
           }}
@@ -895,12 +1006,90 @@ export function BatchesTab() {
           conversionFactor={selectedProduct.conversion_factor}
           onSaved={() => {
             loadBatches();
-            api.products.getAll().then((prods) => {
+            api.products.getAll().then((prods: Product[]) => {
               setAllProducts(Array.isArray(prods) ? prods : []);
             }).catch(() => {});
           }}
         />
       )}
+
+      {/* ---- Bulk Delete Confirmation Dialog ---- */}
+      <Dialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="h-5 w-5" />
+              {t('Delete {{count}} Batch(es)', { count: selectedIds.size })}
+            </DialogTitle>
+            <DialogDescription>
+              {t('This action cannot be undone. Review the impact below before confirming.')}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2 max-h-72 overflow-y-auto">
+            {Array.from(selectedIds).map((id) => {
+              const batch = batches.find((b) => b.id === id);
+              const info = deleteInfoMap.get(id);
+              const hasStock = (info?.quantity_base ?? 0) > 0;
+              const hasTxn = (info?.txn_count ?? 0) > 0;
+              const hasAdj = (info?.adj_count ?? 0) > 0;
+              const hasWarning = hasStock || hasTxn || hasAdj;
+
+              return (
+                <div
+                  key={id}
+                  className={`rounded-md border p-3 space-y-1 ${hasWarning ? 'border-yellow-400 bg-yellow-50 dark:bg-yellow-950/20' : 'border-muted'}`}
+                >
+                  <p className="text-sm font-medium">
+                    {batch?.batch_number || `ID ${id}`}
+                    {batch?.expiry_date && (
+                      <span className="ms-2 text-xs text-muted-foreground">({batch.expiry_date})</span>
+                    )}
+                  </p>
+                  {hasWarning && (
+                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-yellow-700 dark:text-yellow-400">
+                      {hasStock && (
+                        <span className="flex items-center gap-1">
+                          <AlertTriangle className="h-3 w-3" />
+                          {t('{{qty}} units in stock', { qty: info!.quantity_base })}
+                        </span>
+                      )}
+                      {hasTxn && (
+                        <span className="flex items-center gap-1">
+                          <AlertTriangle className="h-3 w-3" />
+                          {t('{{n}} transaction(s) reference this batch', { n: info!.txn_count })}
+                        </span>
+                      )}
+                      {hasAdj && (
+                        <span className="flex items-center gap-1">
+                          <AlertTriangle className="h-3 w-3" />
+                          {t('{{n}} adjustment(s) reference this batch', { n: info!.adj_count })}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {!hasWarning && (
+                    <p className="text-xs text-muted-foreground">{t('No stock or history — safe to delete')}</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkDeleteOpen(false)} disabled={deletingBulk}>
+              {t('Cancel')}
+            </Button>
+            <Button variant="destructive" onClick={handleBulkDeleteConfirm} disabled={deletingBulk}>
+              {deletingBulk ? (
+                <>{t('Deleting...')}</>
+              ) : (
+                <>{t('Delete {{count}} Batch(es)', { count: selectedIds.size })}</>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

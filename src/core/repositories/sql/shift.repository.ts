@@ -49,7 +49,13 @@ export class ShiftRepository implements IShiftRepository {
     const total = countRow?.total ?? 0;
 
     const data = await this.base.getAll<Shift>(
-      `SELECT s.*, u.username
+      `SELECT s.*, u.username,
+         COALESCE((SELECT SUM(cash_tendered) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'sale'), 0) as total_cash_sales,
+         COALESCE((SELECT SUM(cash_tendered) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'return'), 0) as total_cash_returns,
+         COALESCE((SELECT SUM(total_amount - cash_tendered) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'sale'), 0) as total_bank_sales,
+         COALESCE((SELECT SUM(total_amount - cash_tendered) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'return'), 0) as total_bank_returns,
+         COALESCE((SELECT SUM(total_amount) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'sale'), 0) as total_sales,
+         COALESCE((SELECT SUM(total_amount) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'return'), 0) as total_returns
        FROM shifts s JOIN users u ON s.user_id = u.id
        ${where}
        ORDER BY s.opened_at DESC
@@ -63,9 +69,17 @@ export class ShiftRepository implements IShiftRepository {
   async open(userId: number, openingAmount: number) {
     return await this.base.runImmediate(
       `INSERT INTO shifts (user_id, opened_at, opening_amount, status)
-       VALUES (?, datetime('now'), ?, 'open')`,
+       VALUES (?, datetime('now', 'localtime'), ?, 'open')`,
       [userId, openingAmount]
     );
+  }
+
+  async updateOpeningAmount(id: number, newAmount: number): Promise<void> {
+    await this.base.runImmediate(
+      `UPDATE shifts SET opening_amount = ? WHERE id = ?`,
+      [newAmount, id]
+    );
+    this.base.save();
   }
 
   async close(id: number, data: {
@@ -77,7 +91,7 @@ export class ShiftRepository implements IShiftRepository {
   }): Promise<void> {
     await this.base.runImmediate(
       `UPDATE shifts
-       SET closed_at = datetime('now'), expected_cash = ?, actual_cash = ?,
+       SET closed_at = datetime('now', 'localtime'), expected_cash = ?, actual_cash = ?,
            variance = ?, variance_type = ?, notes = ?, status = 'closed'
        WHERE id = ?`,
       [data.expected_cash, data.actual_cash, data.variance, data.variance_type, data.notes, id]
@@ -111,11 +125,26 @@ export class ShiftRepository implements IShiftRepository {
       [shiftId]
     );
 
+    // Bank portion of sales (total_amount - cash_tendered = bank amount)
+    const bankIn = await this.base.getOne<{ total: number }>(
+      `SELECT COALESCE(SUM(total_amount - cash_tendered), 0) as total FROM transactions
+       WHERE shift_id = ? AND is_voided = 0 AND transaction_type = 'sale'`,
+      [shiftId]
+    );
+    // Bank portion of returns
+    const bankOut = await this.base.getOne<{ total: number }>(
+      `SELECT COALESCE(SUM(total_amount - cash_tendered), 0) as total FROM transactions
+       WHERE shift_id = ? AND is_voided = 0 AND transaction_type = 'return'`,
+      [shiftId]
+    );
+
     const opening  = shift.opening_amount ?? 0;
     const salesCash   = cashIn?.total ?? 0;
     const returnsCash = cashOut?.total ?? 0;
     const expenses    = cashExp?.total ?? 0;
     const drops       = cashDrops?.total ?? 0;
+    const salesBank   = bankIn?.total ?? 0;
+    const returnsBank = bankOut?.total ?? 0;
     const expected    = Math.round(opening + salesCash - returnsCash - expenses - drops);
 
     return {
@@ -125,6 +154,10 @@ export class ShiftRepository implements IShiftRepository {
       total_cash_expenses: expenses,
       total_cash_drops: drops,
       expected_cash: expected,
+      total_bank_sales: salesBank,
+      total_bank_returns: returnsBank,
+      total_sales: salesCash + salesBank,
+      total_returns: returnsCash + returnsBank,
     };
   }
 
@@ -187,7 +220,7 @@ export class ShiftRepository implements IShiftRepository {
       `SELECT s.*, u.username
        FROM shifts s JOIN users u ON s.user_id = u.id
        WHERE s.status = 'open'
-         AND s.opened_at < datetime('now', '-' || ? || ' hours')`,
+         AND s.opened_at < datetime('now', 'localtime', '-' || ? || ' hours')`,
       [maxAgeHours]
     );
   }

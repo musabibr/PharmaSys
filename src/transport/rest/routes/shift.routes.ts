@@ -59,6 +59,10 @@ export function shiftRoutes(services: ServiceContainer): Router {
     res.status(201).json({ data: await services.shift.open(req.user!.id, req.body.openingAmount ?? 0) });
   }));
 
+  router.patch('/:id/opening-amount', requireAnyMicroPerm(['finance.shifts.manage', 'pos.sales']), handle(async (req, res) => {
+    res.json({ data: await services.shift.updateOpeningAmount(Number(req.params.id), req.body.openingAmount, req.user!.id, req.user!.role, req.body.reason) });
+  }));
+
   router.post('/:id/close', requireAnyMicroPerm(['finance.shifts.close', 'pos.sales']), handle(async (req, res) => {
     const { actualCash, notes } = req.body;
     res.json({ data: await services.shift.close(Number(req.params.id), actualCash, notes ?? null, req.user!.id) });

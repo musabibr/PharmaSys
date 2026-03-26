@@ -49,4 +49,22 @@ export function registerBatchHandlers(router: IpcRouter, services: ServiceContai
   router.handle('inventory:getAdjustments', async (_user, filters: any) => {
     return await services.batch.getAdjustments(filters ?? {});
   }, { permission: 'inventory.batches.damage' });
+
+  router.handle('batches:getActiveBatchesForPriceUpdate', async (_user, productId: number) => {
+    return await services.batch.getActiveBatchesForPriceUpdate(productId);
+  }, { permission: 'inventory.batches.view' });
+
+  router.handle('batches:updatePricesByProduct', async (user, payload: { productId: number; sellingPriceParent: number; sellingPriceChild?: number }) => {
+    return await services.batch.updateSellingPricesByProduct(
+      payload.productId, payload.sellingPriceParent, payload.sellingPriceChild ?? null, user!.id
+    );
+  }, { permission: 'inventory.batches.manage' });
+
+  router.handle('batches:bulkDelete', async (user, ids: number[]) => {
+    return await services.batch.bulkDeleteBatches(ids, user!.id);
+  }, { adminOnly: true });
+
+  router.handle('batches:getDeleteInfo', async (_user, id: number) => {
+    return await services.batch.getBatchDeleteInfo(id);
+  }, { adminOnly: true });
 }

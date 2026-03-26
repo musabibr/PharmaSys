@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type { ServiceContainer } from '../../../core/services/index';
-import { requireMicroPerm } from '../../middleware/auth.middleware';
+import { requireMicroPerm, requireAdmin } from '../../middleware/auth.middleware';
 import { handle }          from '../../middleware/route-helpers';
 import type { ExpensePaymentMethod } from '../../../core/types/models';
 
@@ -24,6 +24,11 @@ export function purchaseRoutes(services: ServiceContainer): Router {
 
   router.put('/suppliers/:id', requireMicroPerm('purchases.suppliers.manage'), handle(async (req, res) => {
     res.json({ data: await services.purchase.updateSupplier(Number(req.params.id), req.body, req.user!.id) });
+  }));
+
+  router.delete('/suppliers/:id', requireAdmin, handle(async (req, res) => {
+    await services.purchase.deleteSupplier(Number(req.params.id), req.user!.id);
+    res.json({ data: { ok: true } });
   }));
 
   // ─── Purchases ─────────────────────────────────────────────────────────────

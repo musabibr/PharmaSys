@@ -187,7 +187,7 @@ export class PurchaseRepository implements IPurchaseRepository {
        SET is_paid = 1, paid_date = ?, payment_method = ?,
            reference_number = ?, expense_id = ?, paid_by_user_id = ?,
            paid_amount = ?,
-           updated_at = datetime('now')
+           updated_at = datetime('now', 'localtime')
        WHERE id = ?`,
       [paidDate, paymentMethod, referenceNumber, expenseId, userId, paidAmount, paymentId]
     );
@@ -208,7 +208,7 @@ export class PurchaseRepository implements IPurchaseRepository {
   ): Promise<void> {
     await this.base.runImmediate(
       `UPDATE purchases
-       SET total_paid = ?, payment_status = ?, updated_at = datetime('now')
+       SET total_paid = ?, payment_status = ?, updated_at = datetime('now', 'localtime')
        WHERE id = ?`,
       [totalPaid, status, purchaseId]
     );
@@ -248,14 +248,14 @@ export class PurchaseRepository implements IPurchaseRepository {
 
   async updatePaymentAmount(paymentId: number, newAmount: number): Promise<void> {
     await this.base.runImmediate(
-      `UPDATE purchase_payments SET amount = ?, updated_at = datetime('now') WHERE id = ?`,
+      `UPDATE purchase_payments SET amount = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`,
       [newAmount, paymentId]
     );
   }
 
   async updatePaymentDueDate(paymentId: number, newDate: string): Promise<void> {
     await this.base.runImmediate(
-      `UPDATE purchase_payments SET due_date = ?, updated_at = datetime('now') WHERE id = ?`,
+      `UPDATE purchase_payments SET due_date = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`,
       [newDate, paymentId]
     );
   }
@@ -279,7 +279,7 @@ export class PurchaseRepository implements IPurchaseRepository {
     if (data.paid_amount !== undefined)      { sets.push('paid_amount = ?');      params.push(data.paid_amount); }
     if (data.is_paid !== undefined)          { sets.push('is_paid = ?');          params.push(data.is_paid); }
     if (sets.length === 0) return;
-    sets.push("updated_at = datetime('now')");
+    sets.push("updated_at = datetime('now', 'localtime')");
     params.push(paymentId);
     await this.base.runImmediate(
       `UPDATE purchase_payments SET ${sets.join(', ')} WHERE id = ?`,
@@ -332,7 +332,7 @@ export class PurchaseRepository implements IPurchaseRepository {
 
   async updateTotalAmount(purchaseId: number, newTotal: number): Promise<void> {
     await this.base.runImmediate(
-      `UPDATE purchases SET total_amount = ?, updated_at = datetime('now') WHERE id = ?`,
+      `UPDATE purchases SET total_amount = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`,
       [newTotal, purchaseId]
     );
   }
@@ -350,7 +350,7 @@ export class PurchaseRepository implements IPurchaseRepository {
 
     if (sets.length === 0) return;
 
-    sets.push("updated_at = datetime('now')");
+    sets.push("updated_at = datetime('now', 'localtime')");
     params.push(id);
 
     await this.base.runImmediate(
@@ -417,7 +417,7 @@ export class PurchaseRepository implements IPurchaseRepository {
     } else {
       // Can't delete — soft-delete instead (zero stock, mark sold_out)
       await this.base.runImmediate(
-        `UPDATE batches SET quantity_base = 0, status = 'sold_out', updated_at = datetime('now') WHERE id = ?`,
+        `UPDATE batches SET quantity_base = 0, status = 'sold_out', updated_at = datetime('now', 'localtime') WHERE id = ?`,
         [batchId]
       );
     }
@@ -433,7 +433,7 @@ export class PurchaseRepository implements IPurchaseRepository {
          pu.invoice_reference,
          pp.due_date,
          pp.amount,
-         CAST(JULIANDAY('now') - JULIANDAY(pp.due_date) AS INTEGER) as days_overdue,
+         CAST(JULIANDAY('now', 'localtime') - JULIANDAY(pp.due_date) AS INTEGER) as days_overdue,
          pu.purchase_date
        FROM purchase_payments pp
        JOIN purchases pu ON pp.purchase_id = pu.id
@@ -464,13 +464,13 @@ export class PurchaseRepository implements IPurchaseRepository {
          pu.invoice_reference,
          pp.due_date,
          pp.amount,
-         CAST(JULIANDAY(pp.due_date) - JULIANDAY('now') AS INTEGER) as days_until_due
+         CAST(JULIANDAY(pp.due_date) - JULIANDAY('now', 'localtime') AS INTEGER) as days_until_due
        FROM purchase_payments pp
        JOIN purchases pu ON pp.purchase_id = pu.id
        LEFT JOIN suppliers s ON pu.supplier_id = s.id
        WHERE pp.is_paid = 0
          AND pp.due_date >= DATE('now')
-         AND JULIANDAY(pp.due_date) - JULIANDAY('now') <= pu.alert_days_before
+         AND JULIANDAY(pp.due_date) - JULIANDAY('now', 'localtime') <= pu.alert_days_before
        ORDER BY pp.due_date ASC`
     );
   }
@@ -482,7 +482,7 @@ export class PurchaseRepository implements IPurchaseRepository {
        JOIN purchases pu ON pp.purchase_id = pu.id
        WHERE pp.is_paid = 0
          AND pp.due_date >= DATE('now')
-         AND JULIANDAY(pp.due_date) - JULIANDAY('now') <= pu.alert_days_before`
+         AND JULIANDAY(pp.due_date) - JULIANDAY('now', 'localtime') <= pu.alert_days_before`
     );
     return row ?? { count: 0, total: 0 };
   }

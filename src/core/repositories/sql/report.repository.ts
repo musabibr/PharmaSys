@@ -48,7 +48,8 @@ export class ReportRepository implements IReportRepository {
           COALESCE(SUM(CASE WHEN transaction_type='return' THEN cash_tendered ELSE 0 END), 0) as cash_returns,
           COALESCE(SUM(CASE WHEN transaction_type='sale' AND payment_method='bank_transfer' THEN total_amount ELSE 0 END), 0) as bank_sales
         FROM transactions
-        WHERE DATE(created_at) BETWEEN ? AND ? AND is_voided = 0
+        WHERE is_voided = 0
+          AND DATE(created_at) BETWEEN ? AND ?
       ),
       cogs_totals AS (
         SELECT
@@ -56,7 +57,8 @@ export class ReportRepository implements IReportRepository {
           COALESCE(SUM(CASE WHEN t.transaction_type='return' THEN ti.cost_price * ti.quantity_base ELSE 0 END), 0) as return_cogs
         FROM transaction_items ti
         JOIN transactions t ON ti.transaction_id = t.id
-        WHERE DATE(t.created_at) BETWEEN ? AND ? AND t.is_voided = 0
+        WHERE t.is_voided = 0
+          AND DATE(t.created_at) BETWEEN ? AND ?
       )
       SELECT * FROM txn_totals, cogs_totals`,
       [startDate, endDate, startDate, endDate]
@@ -123,7 +125,8 @@ export class ReportRepository implements IReportRepository {
               COALESCE(SUM(ti.gross_profit), 0) as profit
        FROM transactions t
        JOIN transaction_items ti ON t.id = ti.transaction_id
-       WHERE DATE(t.created_at) BETWEEN ? AND ? AND t.is_voided = 0
+       WHERE t.is_voided = 0
+         AND DATE(t.created_at) BETWEEN ? AND ?
        GROUP BY DATE(t.created_at) ORDER BY date`,
       [startDate, endDate]
     );
@@ -203,9 +206,9 @@ export class ReportRepository implements IReportRepository {
              COALESCE(SUM(b.quantity_base), 0) as stock_quantity,
              COALESCE(SUM(b.quantity_base * ${COST_PER_CHILD_SQL}), 0) as stock_value,
              ls.last_sold,
-             CAST(JULIANDAY('now') - JULIANDAY(COALESCE(ls.last_sold, '2000-01-01')) AS INTEGER) as days_since_sale,
+             CAST(JULIANDAY('now', 'localtime') - JULIANDAY(COALESCE(ls.last_sold, '2000-01-01')) AS INTEGER) as days_since_sale,
              MIN(b.created_at) as oldest_batch_date,
-             CAST(JULIANDAY('now') - JULIANDAY(COALESCE(MIN(b.created_at), datetime('now'))) AS INTEGER) as days_in_inventory
+             CAST(JULIANDAY('now', 'localtime') - JULIANDAY(COALESCE(MIN(b.created_at), datetime('now', 'localtime'))) AS INTEGER) as days_in_inventory
       FROM products p
       LEFT JOIN batches b ON p.id = b.product_id AND b.quantity_base > 0 AND b.status = 'active'
       LEFT JOIN last_sale ls ON ls.product_id = p.id
@@ -280,10 +283,12 @@ export class ReportRepository implements IReportRepository {
   }
 
   async getDashboardStats(): Promise<DashboardStats> {
-    const today = new Date().toISOString().slice(0, 10);
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
     const expiryDays = parseInt(await this.getSettingFn('expiry_warning_days') ?? '90', 10) || 90;
-    const expiryDate = new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const exp = new Date(now.getFullYear(), now.getMonth(), now.getDate() + expiryDays);
+    const expiryDate = `${exp.getFullYear()}-${String(exp.getMonth() + 1).padStart(2, '0')}-${String(exp.getDate()).padStart(2, '0')}`;
 
     // CTE 1: All transaction aggregates (today + 30-day) in one query (replaces 4 queries)
     const txn = await this.base.getOne<{
@@ -295,17 +300,19 @@ export class ReportRepository implements IReportRepository {
           COALESCE(SUM(CASE WHEN transaction_type='sale' THEN total_amount ELSE 0 END), 0) as today_sales,
           COALESCE(SUM(CASE WHEN transaction_type='return' THEN total_amount ELSE 0 END), 0) as today_returns,
           COUNT(CASE WHEN transaction_type='sale' THEN 1 END) as today_count
-        FROM transactions WHERE DATE(created_at) = ? AND is_voided = 0
+        FROM transactions WHERE is_voided = 0
+          AND DATE(created_at) = ?
       ),
       month_txn AS (
         SELECT
           COALESCE(SUM(CASE WHEN transaction_type='sale' THEN total_amount ELSE 0 END), 0) as month_sales,
           COALESCE(SUM(CASE WHEN transaction_type='return' THEN total_amount ELSE 0 END), 0) as month_returns,
           COUNT(CASE WHEN transaction_type='sale' THEN 1 END) as month_count
-        FROM transactions WHERE DATE(created_at) BETWEEN ? AND ? AND is_voided = 0
+        FROM transactions WHERE is_voided = 0
+          AND DATE(created_at) BETWEEN ? AND ?
       )
       SELECT * FROM today_txn, month_txn`,
-      [today, thirtyDaysAgo, today]
+      [today, monthStart, today]
     );
 
     // CTE 2: All inventory/alert stats in one query (replaces 5 queries)

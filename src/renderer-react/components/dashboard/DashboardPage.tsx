@@ -307,8 +307,7 @@ export function DashboardPage() {
                       const locale = i18n.language === 'ar' ? 'ar-SD' : 'en-US';
                       const fmt = { month: 'short' as const, day: 'numeric' as const };
                       const end = new Date();
-                      const start = new Date(end);
-                      start.setDate(start.getDate() - 30);
+                      const start = new Date(end.getFullYear(), end.getMonth(), 1);
                       return `${start.toLocaleDateString(locale, fmt)} — ${end.toLocaleDateString(locale, fmt)}`;
                     })()}
                   </span>

@@ -157,6 +157,12 @@ contextBridge.exposeInMainWorld('api', {
 
         bulkCreate: (items) =>
             invoke('products:bulkCreate', items),
+
+        getDeleteInfo: (id) =>
+            invoke('products:getDeleteInfo', id),
+
+        bulkDelete: (ids) =>
+            invoke('products:bulkDelete', ids),
     },
 
     // ════════════════════════════════════════
@@ -184,6 +190,18 @@ contextBridge.exposeInMainWorld('api', {
 
         getExpired: () =>
             invoke('batches:getExpired'),
+
+        getActiveBatchesForPriceUpdate: (productId) =>
+            invoke('batches:getActiveBatchesForPriceUpdate', productId),
+
+        updatePricesByProduct: (data) =>
+            invoke('batches:updatePricesByProduct', data),
+
+        getDeleteInfo: (id) =>
+            invoke('batches:getDeleteInfo', id),
+
+        bulkDelete: (ids) =>
+            invoke('batches:bulkDelete', ids),
     },
 
     // ════════════════════════════════════════
@@ -301,6 +319,9 @@ contextBridge.exposeInMainWorld('api', {
 
         forceClose: (shiftId, actualCash, notes) =>
             invoke('shifts:forceClose', { shiftId, actualCash, notes }),
+
+        updateOpeningAmount: (shiftId, openingAmount, reason) =>
+            invoke('shifts:updateOpeningAmount', { shiftId, openingAmount, reason }),
     },
 
     // ════════════════════════════════════════
@@ -421,6 +442,9 @@ contextBridge.exposeInMainWorld('api', {
 
         update: (id, data) =>
             invoke('suppliers:update', id, data),
+
+        delete: (id) =>
+            invoke('suppliers:delete', id),
     },
 
     // ════════════════════════════════════════

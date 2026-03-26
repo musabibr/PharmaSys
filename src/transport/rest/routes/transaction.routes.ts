@@ -32,7 +32,7 @@ export function transactionRoutes(services: ServiceContainer): Router {
   }));
 
   router.post('/sale', requireMicroPerm('pos.sales'), handle(async (req, res) => {
-    res.status(201).json({ data: await services.transaction.createSale(req.body, req.user!.id) });
+    res.status(201).json({ data: await services.transaction.createSale(req.body, req.user!.id, req.user!.role) });
   }));
 
   // Return — return_own users can only return their own transactions
@@ -46,7 +46,7 @@ export function transactionRoutes(services: ServiceContainer): Router {
         throw new PermissionError('You can only return your own transactions.');
       }
     }
-    res.status(201).json({ data: await services.transaction.createReturn(req.body, req.user!.id) });
+    res.status(201).json({ data: await services.transaction.createReturn(req.body, req.user!.id, req.user!.role) });
   }));
 
   router.get('/:id/returned-qty', requireAnyMicroPerm([

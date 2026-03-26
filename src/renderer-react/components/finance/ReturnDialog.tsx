@@ -3,14 +3,13 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { api } from '@/api';
 import type { Transaction, TransactionItem } from '@/api/types';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Dialog,
   DialogContent,
@@ -19,7 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { RotateCcw, Loader2 } from 'lucide-react';
+import { RotateCcw, Loader2, AlertTriangle } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -39,9 +38,11 @@ interface ReturnDialogProps {
 interface ReturnableItem {
   /** Original transaction item */
   item: TransactionItem;
-  /** Maximum returnable display-unit quantity */
-  maxReturnable: number;
-  /** User-selected return quantity */
+  /** Total remaining base units — constant source of truth */
+  maxReturnableBase: number;
+  /** Which unit the user is currently returning in (can be toggled for parent items) */
+  returnUnitType: 'parent' | 'child';
+  /** Return quantity in returnUnitType display units */
   returnQty: number;
 }
 
@@ -87,24 +88,22 @@ export function ReturnDialog({
       const returnable: ReturnableItem[] = [];
 
       for (const item of items) {
-        const key = `${item.batch_id}_${item.unit_type}`;
+        // Key is batch_id only so cross-unit returns share the same base-unit pool
+        const key = `${item.batch_id}`;
         const alreadyReturnedBase = (returnedMap && typeof returnedMap === 'object')
           ? (returnedMap[key] ?? 0)
           : 0;
         const remainingBase = item.quantity_base - alreadyReturnedBase;
 
+        // Include the item if any base units remain — even < 1 full box counts
+        // because the user can return individual strips via cross-unit return.
         if (remainingBase > 0) {
-          // Convert base units → display units for parent items
-          const cf = item.unit_type === 'parent' ? (item.conversion_factor_snapshot ?? item.conversion_factor ?? 1) : 1;
-          const maxReturnable = cf > 1 ? Math.floor(remainingBase / cf) : remainingBase;
-
-          if (maxReturnable > 0) {
-            returnable.push({
-              item,
-              maxReturnable,
-              returnQty: 0,
-            });
-          }
+          returnable.push({
+            item,
+            maxReturnableBase: remainingBase,
+            returnUnitType: item.unit_type,
+            returnQty: 0,
+          });
         }
       }
 
@@ -134,7 +133,7 @@ export function ReturnDialog({
     let total = 0;
     for (const ri of returnableItems) {
       if (ri.returnQty > 0) {
-        total += calculateLineRefund(ri.item, ri.returnQty);
+        total += calculateLineRefund(ri.item, ri.returnQty, ri.returnUnitType);
       }
     }
     return total;
@@ -142,12 +141,32 @@ export function ReturnDialog({
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
+  function getMaxReturnable(ri: ReturnableItem): number {
+    const cf = ri.item.unit_type === 'parent'
+      ? (ri.item.conversion_factor_snapshot ?? ri.item.conversion_factor ?? 1)
+      : 1;
+    // Cross-unit: strip count equals base count directly
+    if (ri.returnUnitType === 'child' && ri.item.unit_type === 'parent') {
+      return ri.maxReturnableBase;
+    }
+    return cf > 1 ? Math.floor(ri.maxReturnableBase / cf) : ri.maxReturnableBase;
+  }
+
   function updateReturnQty(index: number, qty: number) {
     setReturnableItems((prev) => {
       const next = [...prev];
       const ri = next[index];
-      const clamped = Math.max(0, Math.min(qty, ri.maxReturnable));
+      const clamped = Math.max(0, Math.min(qty, getMaxReturnable(ri)));
       next[index] = { ...ri, returnQty: clamped };
+      return next;
+    });
+  }
+
+  function updateReturnUnitType(index: number, unitType: 'parent' | 'child') {
+    setReturnableItems((prev) => {
+      const next = [...prev];
+      // Reset qty when switching units to avoid stale values
+      next[index] = { ...next[index], returnUnitType: unitType, returnQty: 0 };
       return next;
     });
   }
@@ -162,19 +181,14 @@ export function ReturnDialog({
       const returnItems = returnableItems
         .filter((ri) => ri.returnQty > 0)
         .map((ri) => ({
-          product_id: ri.item.product_id,
           batch_id: ri.item.batch_id,
           quantity: ri.returnQty,
-          unit_type: ri.item.unit_type,
-          unit_price: ri.item.unit_price,
-          cost_price: ri.item.cost_price,
-          discount_percent: ri.item.discount_percent,
+          unit_type: ri.returnUnitType,  // may differ from item.unit_type for cross-unit
         }));
 
       await api.transactions.createReturn({
         original_transaction_id: transaction.id,
         items: returnItems,
-        payment_method: 'cash',
         notes: notes.trim() || undefined,
       });
 
@@ -206,7 +220,7 @@ export function ReturnDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col">
+      <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <RotateCcw className="h-5 w-5" />
@@ -240,7 +254,7 @@ export function ReturnDialog({
 
         {/* ── Main content ─────────────────────────────────────────────── */}
         {!loading && transaction && (
-          <div className="flex flex-1 flex-col gap-4 overflow-hidden">
+          <div className="flex flex-1 flex-col gap-4 overflow-hidden min-h-0">
             {/* Transaction info summary */}
             <div className="rounded-lg bg-muted/50 px-4 py-3 space-y-1">
               <div className="flex justify-between text-sm">
@@ -259,6 +273,28 @@ export function ReturnDialog({
               </div>
             </div>
 
+            {/* ── Deleted-batch / inactive-product warnings ─────────────── */}
+            {(() => {
+              const hasDeletedBatch = returnableItems.some((ri) => ri.item.batch_number == null);
+              const hasInactiveProduct = returnableItems.some((ri) => ri.item.product_is_active === 0);
+              if (!hasDeletedBatch && !hasInactiveProduct) return null;
+              return (
+                <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 space-y-1">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                    <div className="space-y-1 text-xs text-amber-800 dark:text-amber-300">
+                      {hasDeletedBatch && (
+                        <p>{t('One or more items reference batches that have been deleted. Proceeding will restore those batches as new quarantine batches with the returned quantity. A pharmacist must review them.')}</p>
+                      )}
+                      {hasInactiveProduct && (
+                        <p>{t('One or more items have an inactive (deleted) product. The product must be reactivated before any restored stock can be sold.')}</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Returnable items or empty state */}
             {returnableItems.length === 0 ? (
               <div className="flex items-center justify-center py-8">
@@ -267,16 +303,32 @@ export function ReturnDialog({
                 </p>
               </div>
             ) : (
-              <ScrollArea className="flex-1 -mx-1 px-1">
+              <div className="flex-1 min-h-0 overflow-y-auto -mx-1 px-1">
                 <div className="space-y-3">
                   {returnableItems.map((ri, index) => {
+                    const cf = ri.item.unit_type === 'parent'
+                      ? (ri.item.conversion_factor_snapshot ?? ri.item.conversion_factor ?? 1)
+                      : 1;
+                    const isCrossReturn = ri.returnUnitType === 'child' && ri.item.unit_type === 'parent';
+                    const canToggleUnit = ri.item.unit_type === 'parent' && cf > 1;
+                    const maxReturnable = getMaxReturnable(ri);
+
+                    // Display quantities in terms of the current returnUnitType
+                    const alreadyReturnedBase = ri.item.quantity_base - ri.maxReturnableBase;
+                    const displayOriginal = isCrossReturn
+                      ? ri.item.quantity_base
+                      : (cf > 1 ? Math.floor(ri.item.quantity_base / cf) : ri.item.quantity_base);
+                    const alreadyReturned = isCrossReturn
+                      ? alreadyReturnedBase
+                      : (cf > 1 ? Math.floor(alreadyReturnedBase / cf) : alreadyReturnedBase);
+
+                    // Unit price to display — derive child price for cross-unit
+                    const displayUnitPrice = (isCrossReturn && cf > 1)
+                      ? Math.floor(ri.item.unit_price / cf)
+                      : ri.item.unit_price;
                     const lineRefund = ri.returnQty > 0
-                      ? calculateLineRefund(ri.item, ri.returnQty)
+                      ? calculateLineRefund(ri.item, ri.returnQty, ri.returnUnitType)
                       : 0;
-                    // Show display units (parent or child) not raw base units
-                    const cf = ri.item.unit_type === 'parent' ? (ri.item.conversion_factor_snapshot ?? ri.item.conversion_factor ?? 1) : 1;
-                    const displayOriginal = cf > 1 ? Math.floor(ri.item.quantity_base / cf) : ri.item.quantity_base;
-                    const alreadyReturned = displayOriginal - ri.maxReturnable;
 
                     return (
                       <div
@@ -290,16 +342,67 @@ export function ReturnDialog({
                               {ri.item.product_name ?? t('Product #{{id}}', { id: ri.item.product_id })}
                             </p>
                             <p className="text-xs text-muted-foreground">
-                              {t('Unit price')}: {formatCurrency(ri.item.unit_price)}
+                              {t('Unit price')}: {formatCurrency(displayUnitPrice)}
+                              {isCrossReturn && cf > 1 && (
+                                <span className="ms-1 text-muted-foreground/70">
+                                  / {ri.item.child_unit ?? t('strip')}
+                                </span>
+                              )}
                               {ri.item.discount_percent > 0 && (
                                 <span className="ms-2 text-destructive">
                                   -{ri.item.discount_percent}%
                                 </span>
                               )}
                             </p>
+                            {canToggleUnit && (
+                              <div className="flex items-center gap-1.5 mt-1">
+                                <span className="text-xs text-muted-foreground">{t('Return as')}:</span>
+                                <button
+                                  type="button"
+                                  onClick={() => updateReturnUnitType(index, 'parent')}
+                                  className={cn(
+                                    'px-2 py-0.5 text-xs rounded border transition-colors',
+                                    ri.returnUnitType === 'parent'
+                                      ? 'bg-primary text-primary-foreground border-primary'
+                                      : 'bg-background border-border text-muted-foreground hover:bg-muted'
+                                  )}
+                                  disabled={submitting}
+                                >
+                                  {ri.item.parent_unit ?? t('Box')}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => updateReturnUnitType(index, 'child')}
+                                  className={cn(
+                                    'px-2 py-0.5 text-xs rounded border transition-colors',
+                                    ri.returnUnitType === 'child'
+                                      ? 'bg-primary text-primary-foreground border-primary'
+                                      : 'bg-background border-border text-muted-foreground hover:bg-muted'
+                                  )}
+                                  disabled={submitting}
+                                >
+                                  {ri.item.child_unit ?? t('Strip')}
+                                </button>
+                              </div>
+                            )}
+                            {ri.item.batch_number == null && (
+                              <span className="inline-flex items-center gap-1 mt-0.5 rounded bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+                                <AlertTriangle className="h-3 w-3" />
+                                {t('Batch deleted — will restore as quarantine')}
+                              </span>
+                            )}
+                            {ri.item.product_is_active === 0 && (
+                              <span className="inline-flex items-center gap-1 mt-0.5 rounded bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+                                <AlertTriangle className="h-3 w-3" />
+                                {t('Product inactive — must reactivate before selling')}
+                              </span>
+                            )}
                           </div>
-                          <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs font-medium uppercase">
-                            {ri.item.unit_type}
+                          <span className={cn(
+                            'shrink-0 rounded px-1.5 py-0.5 text-xs font-medium uppercase',
+                            isCrossReturn ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300' : 'bg-muted'
+                          )}>
+                            {ri.returnUnitType}
                           </span>
                         </div>
 
@@ -315,7 +418,7 @@ export function ReturnDialog({
                           </div>
                           <div>
                             <span className="text-muted-foreground">{t('Max')}</span>
-                            <p className="font-medium tabular-nums">{ri.maxReturnable}</p>
+                            <p className="font-medium tabular-nums">{maxReturnable}</p>
                           </div>
                           <div>
                             <Label htmlFor={`return-qty-${index}`} className="text-xs">
@@ -325,7 +428,7 @@ export function ReturnDialog({
                               id={`return-qty-${index}`}
                               type="number"
                               min={0}
-                              max={ri.maxReturnable}
+                              max={maxReturnable}
                               step={1}
                               value={ri.returnQty}
                               onChange={(e) => {
@@ -350,7 +453,7 @@ export function ReturnDialog({
                     );
                   })}
                 </div>
-              </ScrollArea>
+              </div>
             )}
 
             {/* Notes */}
@@ -419,9 +522,20 @@ export function ReturnDialog({
 
 /**
  * Calculate the refund amount for a single line item.
- * Uses original sale prices and discount, matching the backend logic.
+ * For cross-unit returns (sold box, returning strips) the per-strip price is derived
+ * from the original box price using floor division — matching the backend logic exactly.
  */
-function calculateLineRefund(item: TransactionItem, returnQty: number): number {
-  const effectivePrice = Math.floor(item.unit_price * (100 - item.discount_percent) / 100);
-  return effectivePrice * returnQty;
+function calculateLineRefund(
+  item: TransactionItem,
+  returnQty: number,
+  returnUnitType: 'parent' | 'child'
+): number {
+  const cf = item.unit_type === 'parent'
+    ? (item.conversion_factor_snapshot ?? item.conversion_factor ?? 1)
+    : 1;
+  const isCrossUnit = item.unit_type !== returnUnitType;
+  const unitPrice = (isCrossUnit && returnUnitType === 'child' && cf > 1)
+    ? Math.floor(item.unit_price / cf)
+    : item.unit_price;
+  return Math.floor(unitPrice * (100 - item.discount_percent) / 100) * returnQty;
 }

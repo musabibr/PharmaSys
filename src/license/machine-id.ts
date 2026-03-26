@@ -11,7 +11,7 @@
  * permissions after a Windows update) don't break the license check.
  */
 
-import { execSync } from 'child_process';
+import { execSync, exec } from 'child_process';
 import * as crypto  from 'crypto';
 import * as fs      from 'fs';
 import * as path    from 'path';
@@ -108,4 +108,57 @@ export function getMachineId(): string {
  */
 export function getDisplayMachineId(): string {
   return getMachineId().split('-').slice(0, 2).join('-');
+}
+
+/**
+ * Async version of wmicQuery — uses exec() instead of execSync() so it
+ * never blocks the main process even if WMI is slow or restricted.
+ */
+function wmicQueryAsync(query: string): Promise<string> {
+  return new Promise((resolve) => {
+    const child = exec(`wmic ${query} /value`, { timeout: 5000 }, (err, stdout) => {
+      if (err) { resolve('unknown'); return; }
+      const val = stdout
+        .split(/\r?\n/)
+        .map(line => {
+          const eqIdx = line.indexOf('=');
+          return eqIdx >= 0 ? line.slice(eqIdx + 1).trim() : '';
+        })
+        .filter(v => v.length > 0 && v !== '(null)' && v !== 'To Be Filled By O.E.M.')
+        .join('');
+      resolve(val.replace(/\s+/g, '') || 'unknown');
+    });
+    // Belt-and-suspenders: kill if exec timeout option doesn't fire
+    setTimeout(() => { try { child.kill(); } catch { /* ignore */ } resolve('unknown'); }, 6000);
+  });
+}
+
+/**
+ * Async version of getMachineId — never blocks the Electron main process.
+ * Uses the same cache as getMachineId(), so the two are interchangeable once
+ * the cache is warm.
+ */
+export async function getMachineIdAsync(): Promise<string> {
+  const cached = readCache();
+  if (cached) return cached;
+
+  const [cpuId, mbId, diskId] = await Promise.all([
+    wmicQueryAsync('cpu get ProcessorId'),
+    wmicQueryAsync('baseboard get SerialNumber'),
+    wmicQueryAsync('diskdrive where "Index=0" get SerialNumber'),
+  ]);
+
+  const raw  = [cpuId, mbId, diskId].join('|');
+  const hash = crypto.createHash('sha256').update(raw).digest('hex').toUpperCase();
+  const id   = [0, 8, 16, 24].map(i => hash.slice(i, i + 8)).join('-');
+
+  const hasRealData = cpuId !== 'unknown' || mbId !== 'unknown' || diskId !== 'unknown';
+  if (hasRealData) {
+    writeCache(id);
+    console.log(`[MachineId] Async cached machine ID (cpu=${cpuId !== 'unknown'}, mb=${mbId !== 'unknown'}, disk=${diskId !== 'unknown'})`);
+  } else {
+    console.warn('[MachineId] Async: all WMI queries returned unknown — cache not written');
+  }
+
+  return id;
 }

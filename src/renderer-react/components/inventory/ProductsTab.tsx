@@ -12,6 +12,7 @@ import {
   PackageSearch,
   Loader2,
   ArrowUpDown,
+  X,
 } from 'lucide-react';
 import type { Product, Category } from '@/api/types';
 import { api } from '@/api';
@@ -260,6 +261,201 @@ function StockBadge({
 }
 
 // ---------------------------------------------------------------------------
+// Bulk delete dialog
+// ---------------------------------------------------------------------------
+
+function BulkDeleteProductsDialog({
+  open,
+  onOpenChange,
+  onDeleted,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onDeleted: () => void;
+}) {
+  const { t } = useTranslation();
+  const [searchQuery, setSearchQuery] = useState('');
+  const debouncedSearch = useDebounce(searchQuery.trim(), 250);
+  const [searchResults, setSearchResults] = useState<Product[]>([]);
+  const [toDelete, setToDelete] = useState<Product[]>([]);
+  const [deleteInfoMap, setDeleteInfoMap] = useState<Map<number, { has_stock: boolean; batch_count: number; txn_count: number }>>(new Map());
+  const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    if (!open || debouncedSearch.length < 2) {
+      setSearchResults([]);
+      return;
+    }
+    api.products.search(debouncedSearch)
+      .then((results) => setSearchResults(results.slice(0, 10)))
+      .catch(() => setSearchResults([]));
+  }, [open, debouncedSearch]);
+
+  // Fetch delete info when a product is added to the list
+  useEffect(() => {
+    for (const p of toDelete) {
+      if (!deleteInfoMap.has(p.id)) {
+        api.products.getDeleteInfo(p.id).then((info) => {
+          if (info) setDeleteInfoMap((prev) => new Map(prev).set(p.id, info));
+        }).catch(() => {});
+      }
+    }
+  }, [toDelete]); // eslint-disable-line
+
+  function handleAdd(product: Product) {
+    if (!toDelete.some((p) => p.id === product.id)) {
+      setToDelete((prev) => [...prev, product]);
+    }
+    setSearchQuery('');
+    setSearchResults([]);
+  }
+
+  function handleRemove(id: number) {
+    setToDelete((prev) => prev.filter((p) => p.id !== id));
+    setDeleteInfoMap((prev) => { const next = new Map(prev); next.delete(id); return next; });
+  }
+
+  async function handleConfirm() {
+    if (toDelete.length === 0) return;
+    setDeleting(true);
+    try {
+      const result = await api.products.bulkDelete(toDelete.map((p) => p.id));
+      if (result.deleted.length > 0) {
+        toast.success(t('{{count}} product(s) deleted', { count: result.deleted.length }));
+      }
+      if (result.errors && result.errors.length > 0) {
+        for (const err of result.errors) {
+          const product = toDelete.find((p) => p.id === err.id);
+          toast.error(`${product?.name ?? `#${err.id}`}: ${err.reason}`);
+        }
+      }
+      setToDelete([]);
+      setDeleteInfoMap(new Map());
+      onDeleted();
+      if (result.deleted.length > 0) onOpenChange(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('Failed to delete products'));
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  function handleClose() {
+    if (deleting) return;
+    setSearchQuery('');
+    setSearchResults([]);
+    setToDelete([]);
+    setDeleteInfoMap(new Map());
+    onOpenChange(false);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-destructive">
+            <Trash2 className="h-5 w-5" />
+            {t('Bulk Delete Products')}
+          </DialogTitle>
+          <DialogDescription>
+            {t('Search and add products to the delete list, then confirm.')}
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* Search */}
+        <div className="space-y-1.5">
+          <Label>{t('Search Product')}</Label>
+          <div className="relative">
+            <Search className="absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={t('Type to search...')}
+              className="ps-9"
+              disabled={deleting}
+            />
+          </div>
+          {searchResults.length > 0 && (
+            <div className="rounded-md border bg-popover shadow-md max-h-40 overflow-y-auto">
+              {searchResults.map((product) => (
+                <button
+                  key={product.id}
+                  type="button"
+                  onClick={() => handleAdd(product)}
+                  disabled={toDelete.some((p) => p.id === product.id)}
+                  className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-accent transition-colors disabled:opacity-40"
+                >
+                  <span>{product.name}</span>
+                  <span className="text-xs text-muted-foreground">{product.category_name ?? ''}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* To-delete list */}
+        {toDelete.length > 0 ? (
+          <div className="space-y-2 max-h-64 overflow-y-auto">
+            <Label>{t('To Delete ({{count}})', { count: toDelete.length })}</Label>
+            {toDelete.map((product) => {
+              const info = deleteInfoMap.get(product.id);
+              const hasWarning = info ? (info.has_stock || info.txn_count > 0) : false;
+              return (
+                <div
+                  key={product.id}
+                  className={`flex items-start gap-2 rounded-md border p-2.5 ${hasWarning ? 'border-yellow-400 bg-yellow-50 dark:bg-yellow-950/20' : 'border-muted'}`}
+                >
+                  <div className="flex-1 min-w-0 space-y-0.5">
+                    <p className="text-sm font-medium truncate">{product.name}</p>
+                    {info && hasWarning && (
+                      <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-yellow-700 dark:text-yellow-400">
+                        {info.has_stock && <span>⚠ {t('Has active stock')}</span>}
+                        {info.txn_count > 0 && <span>⚠ {t('{{n}} transaction(s)', { n: info.txn_count })}</span>}
+                      </div>
+                    )}
+                    {info && !hasWarning && (
+                      <p className="text-xs text-muted-foreground">{t('No stock or transactions — safe to delete')}</p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleRemove(product.id)}
+                    disabled={deleting}
+                    className="shrink-0 rounded p-1 hover:bg-accent"
+                    title={t('Remove')}
+                  >
+                    <X className="h-4 w-4 text-muted-foreground" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="py-4 text-center text-sm text-muted-foreground">
+            {t('No products selected. Search above to add products.')}
+          </p>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={handleClose} disabled={deleting}>
+            {t('Cancel')}
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleConfirm}
+            disabled={deleting || toDelete.length === 0}
+          >
+            {deleting
+              ? t('Deleting...')
+              : t('Delete {{count}} Product(s)', { count: toDelete.length })}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // ProductsTab
 // ---------------------------------------------------------------------------
 
@@ -291,6 +487,7 @@ export function ProductsTab() {
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [smartImportOpen, setSmartImportOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   // Sort
   type SortKey = 'name' | 'created_at';
@@ -433,6 +630,12 @@ export function ProductsTab() {
               <Upload className="me-1.5 h-4 w-4" />
               {t('Bulk Import')}
             </Button>
+            {canDelete && (
+              <Button size="sm" variant="destructive" onClick={() => setBulkDeleteOpen(true)}>
+                <Trash2 className="me-1.5 h-4 w-4" />
+                {t('Bulk Delete')}
+              </Button>
+            )}
             <Button data-tour="inv-add-product" size="sm" onClick={handleAddProduct}>
               <Plus className="me-1.5 h-4 w-4" />
               {t('Add Product')}
@@ -623,6 +826,12 @@ export function ProductsTab() {
         open={smartImportOpen}
         onOpenChange={setSmartImportOpen}
         onImported={() => fetchProducts()}
+      />
+
+      <BulkDeleteProductsDialog
+        open={bulkDeleteOpen}
+        onOpenChange={setBulkDeleteOpen}
+        onDeleted={fetchProducts}
       />
     </div>
   );

@@ -21,8 +21,8 @@ export class SettingsRepository implements ISettingsRepository {
 
   async set(key: string, value: string): Promise<void> {
     await this.base.runImmediate(
-      `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+      `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now', 'localtime'))
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now', 'localtime')`,
       [key, value]
     );
   }

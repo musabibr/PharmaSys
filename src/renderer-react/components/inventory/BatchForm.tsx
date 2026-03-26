@@ -80,6 +80,12 @@ export function BatchForm({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // ---- Create-mode: existing active batches for price update offer ----
+  const [existingActiveBatches, setExistingActiveBatches] = useState<
+    Array<{ id: number; batch_number: string | null; quantity_base: number; expiry_date: string }>
+  >([]);
+  const [updateExistingPrices, setUpdateExistingPrices] = useState(false);
+
   // Track whether sell prices have been manually edited
   const [sellParentTouched, setSellParentTouched] = useState(false);
   const [costChildTouched, setCostChildTouched] = useState(false);
@@ -94,6 +100,8 @@ export function BatchForm({
     setSellParentTouched(false);
     setCostChildTouched(false);
     setSellChildTouched(false);
+
+    setUpdateExistingPrices(false);
 
     if (batch) {
       // Edit mode: populate from existing batch
@@ -124,6 +132,17 @@ export function BatchForm({
     }
   }, [open, batch, conversionFactor]);
 
+  // ---- Fetch active batches for price-update offer (create mode only) ----
+  useEffect(() => {
+    if (!open || isEditMode) {
+      setExistingActiveBatches([]);
+      return;
+    }
+    api.batches.getActiveBatchesForPriceUpdate(productId)
+      .then(setExistingActiveBatches)
+      .catch(() => setExistingActiveBatches([]));
+  }, [open, isEditMode, productId]);
+
   // ---- Auto-calculate sell price per parent (only if not manually touched) ----
   useEffect(() => {
     if (!sellParentTouched && costPerParent > 0) {
@@ -144,6 +163,15 @@ export function BatchForm({
       setSellPricePerChild(Math.floor(sellPricePerParent / conversionFactor));
     }
   }, [sellPricePerParent, hasChildUnit, conversionFactor, sellChildTouched]);
+
+  // ---- Show price-update offer: only when new batch has the latest expiry ----
+  const showUpdateOffer = useMemo(() => {
+    if (isEditMode || !expiryDate || existingActiveBatches.length === 0) return false;
+    const maxExpiry = existingActiveBatches.reduce(
+      (max, b) => (b.expiry_date > max ? b.expiry_date : max), ''
+    );
+    return expiryDate > maxExpiry;
+  }, [isEditMode, expiryDate, existingActiveBatches]);
 
   // ---- Margin calculation (matches old version: (sell-cost)/cost) ----
   const margin = useMemo(() => {
@@ -223,7 +251,17 @@ export function BatchForm({
         }
 
         throwIfError(await api.batches.create(createData as Partial<Batch>));
-        toast.success(t('Batch created successfully'));
+
+        if (updateExistingPrices && showUpdateOffer && sellPricePerParent > 0) {
+          const updatedCount = await api.batches.updatePricesByProduct({
+            productId,
+            sellingPriceParent: sellPricePerParent,
+            ...(hasChildUnit && sellPricePerChild > 0 ? { sellingPriceChild: sellPricePerChild } : {}),
+          });
+          toast.success(t('Batch created and {{count}} existing prices updated', { count: updatedCount }));
+        } else {
+          toast.success(t('Batch created successfully'));
+        }
       }
 
       onSaved();
@@ -428,6 +466,27 @@ export function BatchForm({
                 </>
               )}
             </>
+          )}
+
+          {/* ---- Price update offer (create mode, new batch has latest expiry) ---- */}
+          {!isEditMode && showUpdateOffer && canViewCosts && (
+            <div className="rounded-lg border border-blue-200 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-800 p-3 space-y-2">
+              <p className="text-sm text-blue-700 dark:text-blue-300">
+                {t('There are {{count}} active batch(es) with older expiry dates.', { count: existingActiveBatches.length })}
+              </p>
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={updateExistingPrices}
+                  onChange={(e) => setUpdateExistingPrices(e.target.checked)}
+                  disabled={loading}
+                  className="h-4 w-4 rounded border-gray-300 accent-primary"
+                />
+                <span className="text-sm text-blue-700 dark:text-blue-300">
+                  {t('Also update their selling prices to match this batch')}
+                </span>
+              </label>
+            </div>
           )}
 
           {/* ---- Error ---- */}

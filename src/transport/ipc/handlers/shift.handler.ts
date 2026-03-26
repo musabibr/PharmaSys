@@ -42,6 +42,11 @@ export function registerShiftHandlers(router: IpcRouter, services: ServiceContai
     return { success: true, ...shift };
   }, { anyPermission: ['finance.shifts.close', 'pos.sales'] });
 
+  // Edit opening amount — shift owner or admin
+  router.handle('shifts:updateOpeningAmount', async (user, payload: { shiftId: number; openingAmount: number; reason?: string }) => {
+    return await services.shift.updateOpeningAmount(payload.shiftId, payload.openingAmount, user!.id, user!.role, payload.reason);
+  }, { anyPermission: ['finance.shifts.manage', 'pos.sales'] });
+
   // Expected cash — accessible to any POS user (needed to close their own shift)
   router.handle('shifts:getExpectedCash', async (user, shiftId: number) => {
     const perms = resolvePermissions(user!);

@@ -33,52 +33,109 @@ export class TransactionRepository implements ITransactionRepository {
     const offset = (page - 1) * limit;
     const where = `WHERE ${conditions.join(' AND ')}`;
 
-    const countRow = await this.base.getOne<{ count: number }>(
-      `SELECT COUNT(*) as count FROM transactions t ${where}`,
+    const countRow = await this.base.getOne<{ count: number; agg_sales: number; agg_returns: number }>(
+      `SELECT COUNT(*) as count,
+              COALESCE(SUM(CASE WHEN t.transaction_type='sale'   AND t.is_voided=0 THEN t.total_amount ELSE 0 END), 0) as agg_sales,
+              COALESCE(SUM(CASE WHEN t.transaction_type='return' AND t.is_voided=0 THEN t.total_amount ELSE 0 END), 0) as agg_returns
+       FROM transactions t ${where}`,
       [...params]
     );
     const total = countRow?.count ?? 0;
+    const agg_sales = countRow?.agg_sales ?? 0;
+    const agg_returns = countRow?.agg_returns ?? 0;
 
     const data = await this.base.getAll<Transaction>(
-      `SELECT t.*, u.username
+      `SELECT t.*, u.username, COALESCE(ret.returned_amount, 0) AS returned_amount
        FROM transactions t
        JOIN users u ON t.user_id = u.id
+       LEFT JOIN (
+         SELECT parent_transaction_id, SUM(total_amount) AS returned_amount
+         FROM transactions
+         WHERE transaction_type = 'return' AND is_voided = 0
+           AND parent_transaction_id IS NOT NULL
+         GROUP BY parent_transaction_id
+       ) ret ON ret.parent_transaction_id = t.id
        ${where}
        ORDER BY t.created_at DESC
        LIMIT ? OFFSET ?`,
       [...params, limit, offset]
     );
 
-    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit), agg_sales, agg_returns };
   }
 
   async getById(id: number): Promise<Transaction | undefined> {
     const txn = await this.base.getOne<Transaction>(
-      `SELECT t.*, u.username
+      `SELECT t.*, u.username, COALESCE(ret.returned_amount, 0) AS returned_amount
        FROM transactions t
        JOIN users u ON t.user_id = u.id
+       LEFT JOIN (
+         SELECT parent_transaction_id, SUM(total_amount) AS returned_amount
+         FROM transactions
+         WHERE transaction_type = 'return' AND is_voided = 0
+           AND parent_transaction_id IS NOT NULL
+         GROUP BY parent_transaction_id
+       ) ret ON ret.parent_transaction_id = t.id
        WHERE t.id = ?`,
       [id]
     );
     if (txn) {
       txn.items = await this.getItems(id);
+      if (txn.transaction_type === 'sale') {
+        txn.returns = await this.getReturnsByParent(id);
+      }
     }
     return txn;
+  }
+
+  private async getReturnsByParent(parentId: number): Promise<Transaction[]> {
+    return await this.base.getAll<Transaction>(
+      `SELECT t.*, u.username
+       FROM transactions t
+       JOIN users u ON t.user_id = u.id
+       WHERE t.parent_transaction_id = ? AND t.transaction_type = 'return' AND t.is_voided = 0
+       ORDER BY t.created_at ASC`,
+      [parentId]
+    );
   }
 
   async getItems(transactionId: number): Promise<TransactionItem[]> {
     return await this.base.getAll<TransactionItem>(
       `SELECT ti.*, p.name as product_name, p.parent_unit, p.child_unit,
-              p.conversion_factor, b.batch_number
+              p.conversion_factor, p.is_active as product_is_active, b.batch_number
        FROM transaction_items ti
-       JOIN products p ON ti.product_id = p.id
-       JOIN batches b ON ti.batch_id = b.id
+       LEFT JOIN products p ON ti.product_id = p.id
+       LEFT JOIN batches b ON ti.batch_id = b.id
        WHERE ti.transaction_id = ?`,
       [transactionId]
     );
   }
 
   async insert(data: ITransactionInsertData): Promise<number> {
+    const params = [
+      data.transaction_number, data.user_id, data.shift_id, data.transaction_type,
+      data.subtotal, data.discount_amount, data.tax_amount, data.total_amount,
+      data.payment_method, data.bank_name, data.reference_number,
+      data.cash_tendered, data.payment,
+      data.customer_name, data.customer_phone, data.notes,
+      data.parent_transaction_id,
+    ];
+
+    if (data.created_at) {
+      params.push(data.created_at);
+      return await this.base.runReturningId(
+        `INSERT INTO transactions (
+           transaction_number, user_id, shift_id, transaction_type,
+           subtotal, discount_amount, tax_amount, total_amount,
+           payment_method, bank_name, reference_number,
+           cash_tendered, payment,
+           customer_name, customer_phone, notes,
+           parent_transaction_id, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        params
+      );
+    }
+
     return await this.base.runReturningId(
       `INSERT INTO transactions (
          transaction_number, user_id, shift_id, transaction_type,
@@ -88,14 +145,7 @@ export class TransactionRepository implements ITransactionRepository {
          customer_name, customer_phone, notes,
          parent_transaction_id
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        data.transaction_number, data.user_id, data.shift_id, data.transaction_type,
-        data.subtotal, data.discount_amount, data.tax_amount, data.total_amount,
-        data.payment_method, data.bank_name, data.reference_number,
-        data.cash_tendered, data.payment,
-        data.customer_name, data.customer_phone, data.notes,
-        data.parent_transaction_id,
-      ]
+      params
     );
   }
 
@@ -117,30 +167,33 @@ export class TransactionRepository implements ITransactionRepository {
   async markVoided(id: number, reason: string, voidedBy: number): Promise<void> {
     await this.base.rawRun(
       `UPDATE transactions
-       SET is_voided = 1, void_reason = ?, voided_by = ?, voided_at = datetime('now')
+       SET is_voided = 1, void_reason = ?, voided_by = ?, voided_at = datetime('now', 'localtime')
        WHERE id = ?`,
       [reason, voidedBy, id]
     );
   }
 
   async getReturnedQuantities(originalTransactionId: number): Promise<ReturnedQuantityMap> {
-    const rows = await this.base.getAll<{ batch_id: number; unit_type: string; returned_base: number }>(
-      `SELECT ti.batch_id, ti.unit_type, SUM(ti.quantity_base) as returned_base
+    // Key is batch_id only (not batch_id+unit_type) so that cross-unit returns
+    // (e.g. returning strips from a box purchase) share the same base-unit pool.
+    const rows = await this.base.getAll<{ batch_id: number; returned_base: number }>(
+      `SELECT ti.batch_id, SUM(ti.quantity_base) as returned_base
        FROM transactions t
        JOIN transaction_items ti ON ti.transaction_id = t.id
        WHERE t.parent_transaction_id = ? AND t.transaction_type = 'return' AND t.is_voided = 0
-       GROUP BY ti.batch_id, ti.unit_type`,
+       GROUP BY ti.batch_id`,
       [originalTransactionId]
     );
     const map: ReturnedQuantityMap = {};
     for (const r of rows) {
-      map[`${r.batch_id}_${r.unit_type}`] = r.returned_base;
+      map[`${r.batch_id}`] = r.returned_base;
     }
     return map;
   }
 
   async getNextNumber(prefix: string): Promise<string> {
-    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const n = new Date();
+    const today = `${n.getFullYear()}${String(n.getMonth() + 1).padStart(2, '0')}${String(n.getDate()).padStart(2, '0')}`;
     const like = `${prefix}-${today}-%`;
     const last = await this.base.getOne<{ transaction_number: string }>(
       `SELECT transaction_number FROM transactions

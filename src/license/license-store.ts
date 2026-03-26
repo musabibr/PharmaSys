@@ -1,16 +1,18 @@
 /**
  * PharmaSys — License Storage
  *
- * Persists the license file encrypted with Windows DPAPI via electron.safeStorage.
- * The encrypted file is tied to both the Windows user account AND the physical machine.
- * Copying pharmasys.license to another PC renders it unreadable — a second protection
- * layer on top of the ECDSA machine-ID check.
+ * Stores the license file as plain JSON in the user data directory.
+ * Security is provided entirely by the ECDSA P-256 signature in the license
+ * file and the machine-ID binding check in the validator — not by encryption.
+ * Removing DPAPI (safeStorage) eliminates the fragile coupling to the Windows
+ * user account that caused paying customers to be locked out after a Windows
+ * reinstall or user-profile change.
  *
  * Storage location: %APPDATA%\PharmaSys\pharmasys.license (production)
  *                   userData/pharmasys.license (development)
  */
 
-import { safeStorage, app } from 'electron';
+import { app } from 'electron';
 import * as path from 'path';
 import * as fs   from 'fs';
 
@@ -19,38 +21,22 @@ function getLicensePath(): string {
 }
 
 /**
- * Encrypt and write the license JSON to disk.
- * Throws if safeStorage is not available (non-Windows builds without keychain).
+ * Write the license JSON to disk.
  */
 export function saveLicense(licenseJson: string): void {
-  if (!safeStorage.isEncryptionAvailable()) {
-    // Fallback: store plaintext (still protected by machine-ID + signature checks)
-    fs.writeFileSync(getLicensePath(), licenseJson, { encoding: 'utf-8' });
-    return;
-  }
-  const encrypted = safeStorage.encryptString(licenseJson);
-  fs.writeFileSync(getLicensePath(), encrypted);
+  fs.writeFileSync(getLicensePath(), licenseJson, { encoding: 'utf-8' });
 }
 
 /**
- * Read and decrypt the stored license.
- * Returns null if no license exists or decryption fails (e.g. file was copied from another PC).
+ * Read the stored license JSON.
+ * Returns null if no license file exists.
  */
 export function loadLicense(): string | null {
   const p = getLicensePath();
   if (!fs.existsSync(p)) return null;
-
   try {
-    const data = fs.readFileSync(p);
-
-    if (!safeStorage.isEncryptionAvailable()) {
-      // Was stored as plaintext in fallback mode
-      return data.toString('utf-8');
-    }
-
-    return safeStorage.decryptString(data);
+    return fs.readFileSync(p, 'utf-8');
   } catch {
-    // Decryption failed — file may be from a different machine/user account
     return null;
   }
 }

@@ -178,6 +178,21 @@ export function VoidDialog({
               </div>
             </div>
 
+            {/* Partial return warning */}
+            {transaction.transaction_type === 'sale' && (transaction.returned_amount ?? 0) > 0 && (
+              <div className="flex gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-700 dark:bg-amber-950/50">
+                <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+                <div className="text-sm">
+                  <p className="font-medium text-amber-800 dark:text-amber-200">
+                    {t('This sale has returns totalling')} {formatCurrency(transaction.returned_amount ?? 0)}
+                  </p>
+                  <p className="mt-1 text-amber-700 dark:text-amber-300">
+                    {t('Only non-returned stock will be restored. Returned items remain with the customer.')}
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Transaction details */}
             <div className="rounded-lg bg-muted/50 px-4 py-3 space-y-1.5">
               <div className="flex justify-between text-sm">

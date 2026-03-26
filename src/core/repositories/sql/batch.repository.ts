@@ -143,7 +143,7 @@ export class BatchRepository implements IBatchRepository {
          cost_per_child_override = COALESCE(?, cost_per_child_override),
          selling_price_child_override = COALESCE(?, selling_price_child_override),
          status = COALESCE(?, status),
-         updated_at = datetime('now')
+         updated_at = datetime('now', 'localtime')
        WHERE id = ?`,
       [
         data.batch_number ?? null,
@@ -171,7 +171,7 @@ export class BatchRepository implements IBatchRepository {
   ): Promise<boolean> {
     const changes = await this.base.runAndGetChanges(
       `UPDATE batches
-       SET quantity_base = ?, status = ?, version = version + 1, updated_at = datetime('now')
+       SET quantity_base = ?, status = ?, version = version + 1, updated_at = datetime('now', 'localtime')
        WHERE id = ? AND version = ?`,
       [newQuantityBase, newStatus, id, expectedVersion]
     );
@@ -239,6 +239,95 @@ export class BatchRepository implements IBatchRepository {
        ${where}
        ORDER BY ia.created_at DESC`,
       params
+    );
+  }
+
+  async getActiveBatchesForPriceUpdate(productId: number): Promise<Array<{ id: number; batch_number: string | null; quantity_base: number; expiry_date: string }>> {
+    return await this.base.getAll(
+      `SELECT id, batch_number, quantity_base, expiry_date FROM batches
+       WHERE product_id = ? AND status = 'active' AND quantity_base > 0
+         AND expiry_date > date('now')
+       ORDER BY expiry_date`,
+      [productId]
+    );
+  }
+
+  async bulkUpdateSellingPrices(
+    productId: number,
+    sellingPriceParent: number,
+    sellingPriceChild: number | null
+  ): Promise<number> {
+    const result = await this.base.runAndGetChanges(
+      `UPDATE batches SET
+         selling_price_parent = ?,
+         selling_price_parent_override = 0,
+         selling_price_child_override = CASE WHEN ? > 0 THEN ? ELSE selling_price_child_override END,
+         updated_at = datetime('now', 'localtime')
+       WHERE product_id = ? AND status = 'active' AND quantity_base > 0
+         AND expiry_date > date('now')`,
+      [sellingPriceParent, sellingPriceChild ?? 0, sellingPriceChild ?? 0, productId]
+    );
+    return result;
+  }
+
+  async getBatchDeleteInfo(id: number): Promise<{ quantity_base: number; txn_count: number; adj_count: number } | undefined> {
+    const batch = await this.base.getOne<{ quantity_base: number }>(
+      'SELECT quantity_base FROM batches WHERE id = ?', [id]
+    );
+    if (!batch) return undefined;
+    const txnRow = await this.base.getOne<{ cnt: number }>(
+      'SELECT COUNT(*) as cnt FROM transaction_items WHERE batch_id = ?', [id]
+    );
+    const adjRow = await this.base.getOne<{ cnt: number }>(
+      'SELECT COUNT(*) as cnt FROM inventory_adjustments WHERE batch_id = ?', [id]
+    );
+    return {
+      quantity_base: batch.quantity_base,
+      txn_count: txnRow?.cnt ?? 0,
+      adj_count: adjRow?.cnt ?? 0,
+    };
+  }
+
+  async deleteBatch(id: number): Promise<void> {
+    await this.base.runImmediate('DELETE FROM batches WHERE id = ?', [id]);
+  }
+
+  /**
+   * Reconstruct a deleted batch from transaction_items data during a return.
+   * The batch is created with status='quarantine' so a pharmacist must review it.
+   * Returns the new batch id.
+   */
+  async restoreDeletedBatch(data: {
+    product_id: number;
+    batch_number: string;
+    expiry_date: string;
+    quantity_base: number;
+    cost_per_parent: number;
+    cost_per_child: number;
+    selling_price_parent: number;
+    selling_price_child: number;
+  }): Promise<number> {
+    return await this.base.runReturningId(
+      `INSERT INTO batches (
+         product_id, batch_number, expiry_date, quantity_base,
+         cost_per_parent, cost_per_child, cost_per_child_override,
+         selling_price_parent, selling_price_child,
+         selling_price_parent_override, selling_price_child_override,
+         status, version
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'quarantine', 1)`,
+      [
+        data.product_id,
+        data.batch_number,
+        data.expiry_date,
+        data.quantity_base,
+        data.cost_per_parent,
+        data.cost_per_child,
+        data.cost_per_child,
+        data.selling_price_parent,
+        data.selling_price_child,
+        data.selling_price_parent,
+        data.selling_price_child,
+      ]
     );
   }
 }

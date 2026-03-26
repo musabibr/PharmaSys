@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { api } from '@/api';
-import type { Transaction, TransactionType, PaymentMethod, User, Shift } from '@/api/types';
+import type { Transaction, TransactionType, PaymentMethod, User } from '@/api/types';
 import { useAuthStore } from '@/stores/auth.store';
 import { usePermission, useAnyPermission } from '@/hooks/usePermission';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -68,11 +68,8 @@ function formatDateTime(dateStr: string): string {
 }
 
 function getDefaultDateRange(): { from: string; to: string } {
-  const now = new Date();
-  const to = now.toISOString().split('T')[0];
-  // Default to start of current month
-  const from = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-  return { from, to };
+  const today = new Date().toISOString().split('T')[0];
+  return { from: today, to: today };
 }
 
 // ---------------------------------------------------------------------------
@@ -86,7 +83,6 @@ interface TransactionFilters {
   paymentMethod: string; // 'all' | PaymentMethod
   search: string;
   cashierId: string;   // '' = all
-  shiftId: string;     // '' = all
   showVoided: boolean;
 }
 
@@ -99,7 +95,6 @@ function createDefaultFilters(): TransactionFilters {
     paymentMethod: 'all',
     search: '',
     cashierId: '',
-    shiftId: '',
     showVoided: false,
   };
 }
@@ -111,6 +106,7 @@ function createDefaultFilters(): TransactionFilters {
 export function TransactionsPage() {
   const { t } = useTranslation();
   const currentUser = useAuthStore((s) => s.currentUser);
+  const isAdmin = currentUser?.role === 'admin';
   const canVoid = usePermission('finance.transactions.void');
   const canReturnAll = usePermission('finance.transactions.return');
   const canReturnOwn = usePermission('finance.transactions.return_own');
@@ -120,22 +116,19 @@ export function TransactionsPage() {
   const [filters, setFilters] = useState<TransactionFilters>(createDefaultFilters);
   const debouncedSearch = useDebounce(filters.search, 300);
 
-  // ---- Filter options (users & shifts) ----
+  // ---- Filter options (users) ----
   const [users, setUsers] = useState<User[]>([]);
-  const [shifts, setShifts] = useState<Shift[]>([]);
 
   useEffect(() => {
     api.users.getAll().then((res) => setUsers(Array.isArray(res) ? res : [])).catch(() => {});
-    api.shifts.getAll({ limit: 100 }).then((res) => {
-      const list = Array.isArray((res as any).data) ? (res as any).data : [];
-      setShifts(list);
-    }).catch(() => {});
   }, []);
 
   // ---- Data state ----
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
+  const [aggSales, setAggSales] = useState(0);
+  const [aggReturns, setAggReturns] = useState(0);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
 
@@ -162,46 +155,38 @@ export function TransactionsPage() {
       if (filters.type !== 'all') apiFilters.transaction_type = filters.type;
       if (filters.paymentMethod !== 'all') apiFilters.payment_method = filters.paymentMethod;
       if (debouncedSearch.trim()) apiFilters.search = debouncedSearch.trim();
-      if (filters.cashierId) apiFilters.user_id = Number(filters.cashierId);
-      if (filters.shiftId) apiFilters.shift_id = Number(filters.shiftId);
       if (filters.showVoided) apiFilters.is_voided = true;
+      if (isAdmin) {
+        if (filters.cashierId) apiFilters.user_id = Number(filters.cashierId);
+      } else {
+        // Non-admin: only see own transactions (voided or not)
+        apiFilters.user_id = currentUser!.id;
+      }
 
       const result = await api.transactions.getAll(apiFilters);
       setTransactions(Array.isArray(result.data) ? result.data : []);
       setTotalPages(result.totalPages ?? 1);
       setTotal(result.total ?? 0);
+      setAggSales(result.agg_sales ?? 0);
+      setAggReturns(result.agg_returns ?? 0);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t('Failed to load transactions'));
       setTransactions([]);
     } finally {
       setLoading(false);
     }
-  }, [filters, debouncedSearch, page, t]);
+  }, [filters, debouncedSearch, page, t, isAdmin, currentUser]);
 
   useEffect(() => {
     fetchTransactions();
   }, [fetchTransactions]);
 
-  // ---- Summary calculations ----
-  const summary = useMemo(() => {
-    let totalSales = 0;
-    let totalReturns = 0;
-
-    for (const txn of transactions) {
-      if (txn.is_voided) continue;
-      if (txn.transaction_type === 'sale') {
-        totalSales += txn.total_amount;
-      } else if (txn.transaction_type === 'return') {
-        totalReturns += txn.total_amount;
-      }
-    }
-
-    return {
-      totalSales,
-      totalReturns,
-      netSales: totalSales - totalReturns,
-    };
-  }, [transactions]);
+  // ---- Summary from backend aggregates (across ALL matching rows, not just current page) ----
+  const summary = useMemo(() => ({
+    totalSales: aggSales,
+    totalReturns: aggReturns,
+    netSales: aggSales - aggReturns,
+  }), [aggSales, aggReturns]);
 
   // ---- Filter handlers ----
   function updateFilter<K extends keyof TransactionFilters>(key: K, value: TransactionFilters[K]) {
@@ -436,49 +421,30 @@ export function TransactionsPage() {
               </Select>
             </div>
 
-            {/* Cashier */}
-            <div className="space-y-1.5">
-              <Label className="text-xs">{t('Cashier')}</Label>
-              <Select
-                value={filters.cashierId || '__all__'}
-                onValueChange={(v) => updateFilter('cashierId', v === '__all__' ? '' : v)}
-              >
-                <SelectTrigger className="w-40">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">{t('All Cashiers')}</SelectItem>
-                  {users.map((u) => (
-                    <SelectItem key={u.id} value={String(u.id)}>
-                      {u.full_name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {/* Cashier — admin only */}
+            {isAdmin && (
+              <div className="space-y-1.5">
+                <Label className="text-xs">{t('Cashier')}</Label>
+                <Select
+                  value={filters.cashierId || '__all__'}
+                  onValueChange={(v) => updateFilter('cashierId', v === '__all__' ? '' : v)}
+                >
+                  <SelectTrigger className="w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">{t('All Cashiers')}</SelectItem>
+                    {users.map((u) => (
+                      <SelectItem key={u.id} value={String(u.id)}>
+                        {u.full_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
-            {/* Shift */}
-            <div className="space-y-1.5">
-              <Label className="text-xs">{t('Shift')}</Label>
-              <Select
-                value={filters.shiftId || '__all__'}
-                onValueChange={(v) => updateFilter('shiftId', v === '__all__' ? '' : v)}
-              >
-                <SelectTrigger className="w-40">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">{t('All Shifts')}</SelectItem>
-                  {shifts.map((s) => (
-                    <SelectItem key={s.id} value={String(s.id)}>
-                      #{s.id} — {s.status === 'open' ? t('Open') : t('Closed')}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Show Voided */}
+            {/* Show Voided — all users (non-admin only sees their own) */}
             <div className="flex items-center gap-2 self-end pb-1">
               <Switch
                 id="show-voided"
@@ -701,16 +667,30 @@ export function TransactionsPage() {
 
                   {/* Total */}
                   <TableCell className="text-end font-bold tabular-nums">
-                    {formatCurrency(txn.total_amount)}
+                    <div>
+                      {formatCurrency(txn.total_amount)}
+                      {(txn.returned_amount ?? 0) > 0 && (
+                        <div className="text-xs font-normal text-muted-foreground">
+                          {t('Net')}: {formatCurrency(txn.total_amount - (txn.returned_amount ?? 0))}
+                        </div>
+                      )}
+                    </div>
                   </TableCell>
 
                   {/* Status */}
                   <TableCell>
-                    {txn.is_voided ? (
-                      <Badge variant="destructive">{t('Voided')}</Badge>
-                    ) : (
-                      <Badge variant="success">{t('Completed')}</Badge>
-                    )}
+                    <div className="flex flex-wrap gap-1">
+                      {txn.is_voided ? (
+                        <Badge variant="destructive">{t('Voided')}</Badge>
+                      ) : (
+                        <Badge variant="success">{t('Completed')}</Badge>
+                      )}
+                      {txn.transaction_type === 'sale' && !txn.is_voided && (txn.returned_amount ?? 0) > 0 && (
+                        <Badge variant={(txn.returned_amount ?? 0) >= txn.total_amount ? 'destructive' : 'warning'}>
+                          {(txn.returned_amount ?? 0) >= txn.total_amount ? t('Fully Returned') : t('Partial Return')}
+                        </Badge>
+                      )}
+                    </div>
                   </TableCell>
 
                   {/* Actions */}
@@ -738,7 +718,9 @@ export function TransactionsPage() {
                         </Button>
                       )}
 
-                      {txn.transaction_type === 'sale' && !txn.is_voided && (canReturnAll || (canReturnOwn && txn.user_id === currentUser?.id)) && (
+                      {txn.transaction_type === 'sale' && !txn.is_voided &&
+                        (txn.returned_amount ?? 0) < txn.total_amount &&
+                        (canReturnAll || (canReturnOwn && txn.user_id === currentUser?.id)) && (
                         <Button
                           variant="ghost"
                           size="icon"

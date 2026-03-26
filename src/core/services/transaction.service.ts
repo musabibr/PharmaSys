@@ -56,7 +56,7 @@ export class TransactionService {
     return txn;
   }
 
-  async createSale(data: CreateTransactionInput, userId: number): Promise<Transaction> {
+  async createSale(data: CreateTransactionInput, userId: number, userRole?: string): Promise<Transaction> {
     Validate.id(userId, 'User');
     if (!data.items || data.items.length === 0) {
       throw new ValidationError('Sale must contain at least one item', 'items');
@@ -64,12 +64,16 @@ export class TransactionService {
 
     const shiftsOn = await this._shiftsEnabled();
     let shiftId: number | null = null;
-    if (shiftsOn) {
+    if (shiftsOn && userRole !== 'admin') {
       const shift = await this.shiftRepo.findOpenByUser(userId);
       if (!shift) {
         throw new ValidationError('No open shift. Please open a shift before making a sale.', 'shift');
       }
       shiftId = shift.id;
+    } else if (shiftsOn && userRole === 'admin') {
+      // Admin can sell without a shift; attach shift if one is open
+      const shift = await this.shiftRepo.findOpenByUser(userId);
+      if (shift) shiftId = shift.id;
     }
 
     await this._validatePayment(data);
@@ -80,7 +84,7 @@ export class TransactionService {
     });
   }
 
-  async createReturn(data: CreateReturnInput, userId: number): Promise<Transaction> {
+  async createReturn(data: CreateReturnInput, userId: number, userRole?: string): Promise<Transaction> {
     Validate.id(userId, 'User');
     Validate.id(data.original_transaction_id, 'Original transaction');
     if (!data.items || data.items.length === 0) {
@@ -101,24 +105,15 @@ export class TransactionService {
     }
 
     // ── 1b. Ownership check — users can only return their own transactions ──
-    if (original.user_id !== userId) {
+    if (userRole !== 'admin' && original.user_id !== userId) {
       throw new ValidationError(
         'You can only return your own transactions', 'user_id'
       );
     }
 
-    // ── 2. Require open shift (returns affect the drawer) — unless shifts disabled
+    // ── 2. Authorization window checks ───────────────────────────────────────
     const shiftsOn = await this._shiftsEnabled();
-    let shiftId: number | null = null;
-    if (shiftsOn) {
-      const shift = await this.shiftRepo.findOpenByUser(userId);
-      if (!shift) {
-        throw new ValidationError(
-          'No open shift. Please open a shift before processing a return.', 'shift'
-        );
-      }
-      shiftId = shift.id;
-
+    if (shiftsOn && userRole !== 'admin') {
       // 2-shift window — transaction must be from user's last 2 shifts
       const recentShiftIds = await this.shiftRepo.getLastNShiftIds(userId, 2);
       if (original.shift_id && !recentShiftIds.includes(original.shift_id)) {
@@ -127,7 +122,7 @@ export class TransactionService {
           'shift'
         );
       }
-    } else {
+    } else if (!shiftsOn) {
       // Shifts disabled: use 7-day date window instead
       if (original.created_at) {
         const txnDate = new Date(original.created_at).getTime();
@@ -141,20 +136,36 @@ export class TransactionService {
       }
     }
 
+    // Return is attributed to the original sale's shift and date
+    const shiftId = original.shift_id;
+
     // ── 3. Load already-returned quantities ──────────────────────────────────
     const returnedMap = await this.repo.getReturnedQuantities(data.original_transaction_id);
 
     return await this.base.inTransaction(async () => {
       const lines: DeductedLine[] = [];
+      // Tracks old_batch_id → new_batch_id for batches restored during this return
+      const restoredBatchMap = new Map<number, number>();
 
       for (const item of data.items) {
         Validate.id(item.batch_id, 'Batch');
         Validate.positiveInteger(item.quantity, 'Return quantity');
 
-        // Find matching item in original transaction (by batch + unit_type)
-        const origItem = original.items?.find(
+        // Find matching item in original transaction.
+        // First try exact match (batch + unit_type); if not found and return is child,
+        // try the parent item from the same batch — this enables cross-unit returns
+        // (e.g. customer bought a box, wants to return individual strips).
+        let origItem = original.items?.find(
           i => i.batch_id === item.batch_id && i.unit_type === item.unit_type
         );
+        const isCrossUnit = !origItem && item.unit_type === 'child'
+          ? (() => {
+              origItem = original.items?.find(
+                i => i.batch_id === item.batch_id && i.unit_type === 'parent'
+              );
+              return !!origItem;
+            })()
+          : false;
         if (!origItem) {
           throw new ValidationError(
             `Item not found in original transaction (batch ${item.batch_id})`,
@@ -168,7 +179,8 @@ export class TransactionService {
           : item.quantity;
 
         // ── 4. Enforce return quantity limit ──────────────────────────────────
-        const key          = `${item.batch_id}_${item.unit_type}`;
+        // Key is batch_id only so cross-unit returns share the same base-unit pool.
+        const key          = `${item.batch_id}`;
         const alreadyBase  = returnedMap[key] ?? 0;
         const remainingBase = origItem.quantity_base - alreadyBase;
 
@@ -180,44 +192,131 @@ export class TransactionService {
         }
 
         // ── 5. Restore stock to batch ────────────────────────────────────────
+        let effectiveBatchId = item.batch_id;
         const batch = await this.batchRepo.getById(item.batch_id);
-        if (!batch) throw new NotFoundError('Batch', item.batch_id);
 
-        const newQty = batch.quantity_base + quantityBase;
+        if (!batch) {
+          // Batch was hard-deleted. Reconstruct a quarantine batch from sale data
+          // stored in transaction_items (cost_price, unit_price, unit_type, cf_snapshot).
+          if (restoredBatchMap.has(item.batch_id)) {
+            // Same deleted batch appears again (e.g. parent + child items) — add qty
+            effectiveBatchId = restoredBatchMap.get(item.batch_id)!;
+            const restoredBatch = await this.batchRepo.getById(effectiveBatchId);
+            if (restoredBatch) {
+              const ok = await this.batchRepo.updateQuantityOptimistic(
+                effectiveBatchId,
+                restoredBatch.quantity_base + quantityBase,
+                'quarantine',
+                restoredBatch.version
+              );
+              if (!ok) throw new ConflictError('Batch modified concurrently during return. Please retry.');
+            }
+          } else {
+            // First time seeing this deleted batch — reconstruct it
+            let costPerParent: number;
+            let costPerChild: number;
+            let sellPerParent: number;
+            let sellPerChild: number;
 
-        // Determine batch status after restock:
-        //   - Quarantined batches stay quarantined
-        //   - Expired batches go to quarantine (don't put expired stock back as active)
-        //   - Otherwise active
-        let newStatus: BatchStatus;
-        if (batch.status === 'quarantine') {
-          newStatus = 'quarantine';
-        } else if (this._isBatchExpired(batch.expiry_date)) {
-          newStatus = 'quarantine';
+            if (origItem.unit_type === 'parent') {
+              costPerParent = origItem.cost_price;
+              costPerChild  = Math.floor(origItem.cost_price / cf);
+              sellPerParent = origItem.unit_price;
+              sellPerChild  = Math.floor(origItem.unit_price / cf);
+            } else {
+              costPerChild  = origItem.cost_price;
+              costPerParent = origItem.cost_price * cf;
+              sellPerChild  = origItem.unit_price;
+              sellPerParent = origItem.unit_price * cf;
+            }
+
+            const newBatchId = await this.batchRepo.restoreDeletedBatch({
+              product_id:           origItem.product_id,
+              batch_number:         `RESTORED-${item.batch_id}-REVIEW`,
+              expiry_date:          '2099-12-31', // Unknown — original batch deleted; quarantine requires manual review
+              quantity_base:        quantityBase,
+              cost_per_parent:      costPerParent,
+              cost_per_child:       costPerChild,
+              selling_price_parent: sellPerParent,
+              selling_price_child:  sellPerChild,
+            });
+
+            restoredBatchMap.set(item.batch_id, newBatchId);
+            effectiveBatchId = newBatchId;
+
+            this.bus.emit('entity:mutated', {
+              action: 'RESTORE_BATCH', table: 'batches',
+              recordId: newBatchId, userId,
+              newValues: {
+                batch_number: `RESTORED-${item.batch_id}-REVIEW`,
+                status: 'quarantine',
+                quantity_base: quantityBase,
+              },
+            });
+            this.bus.emit('stock:changed', {
+              batchId:          newBatchId,
+              productId:        origItem.product_id,
+              previousQuantity: 0,
+              newQuantity:      quantityBase,
+              changeReason:     'return',
+              userId,
+            });
+          }
         } else {
-          newStatus = 'active';
+          // Batch exists — normal stock restore
+          const newQty = batch.quantity_base + quantityBase;
+
+          // Determine batch status after restock:
+          //   - Quarantined batches stay quarantined
+          //   - Expired batches go to quarantine (don't put expired stock back as active)
+          //   - Otherwise active
+          let newStatus: BatchStatus;
+          if (batch.status === 'quarantine') {
+            newStatus = 'quarantine';
+          } else if (this._isBatchExpired(batch.expiry_date)) {
+            newStatus = 'quarantine';
+          } else {
+            newStatus = 'active';
+          }
+
+          const ok = await this.batchRepo.updateQuantityOptimistic(
+            item.batch_id, newQty, newStatus, batch.version
+          );
+          if (!ok) throw new ConflictError('Batch modified concurrently during return. Please retry.');
+
+          this.bus.emit('stock:changed', {
+            batchId:          item.batch_id,
+            productId:        origItem.product_id,
+            previousQuantity: batch.quantity_base,
+            newQuantity:      newQty,
+            changeReason:     'return',
+            userId,
+          });
         }
 
-        const restored = await this.batchRepo.updateQuantityOptimistic(
-          item.batch_id, newQty, newStatus, batch.version
-        );
-        if (!restored) throw new ConflictError('Batch modified concurrently during return. Please retry.');
-
         // ── 6. Calculate refund using ORIGINAL SALE PRICES with discount ─────
-        // Refund what the customer actually paid, not the pre-discount price
-        const discountPct   = origItem.discount_percent ?? 0;
-        const effectivePrice = Money.percent(origItem.unit_price, 100 - discountPct);
+        // For cross-unit returns (sold box → returning strips) derive per-strip price
+        // using floor division so we never refund more than was collected.
+        const unitPrice = (isCrossUnit && cf > 1)
+          ? Math.floor(origItem.unit_price / cf)
+          : origItem.unit_price;
+        const costPrice = (isCrossUnit && cf > 1)
+          ? Math.floor(origItem.cost_price / cf)
+          : origItem.cost_price;
+
+        const discountPct    = origItem.discount_percent ?? 0;
+        const effectivePrice = Money.percent(unitPrice, 100 - discountPct);
         const lineTotal      = Money.multiply(effectivePrice, item.quantity);
-        const costTotal      = Money.multiply(origItem.cost_price, item.quantity);
+        const costTotal      = Money.multiply(costPrice, item.quantity);
         const grossProfit    = -Money.subtract(lineTotal, costTotal);
 
         lines.push({
-          batchId:      item.batch_id,
+          batchId:      effectiveBatchId,
           productId:    origItem.product_id,
           quantityBase,
           unitType:     item.unit_type,
-          unitPrice:    origItem.unit_price,
-          costPrice:    origItem.cost_price,
+          unitPrice,
+          costPrice,
           discountPct,
           lineTotal,
           grossProfit,
@@ -275,7 +374,8 @@ export class TransactionService {
 
       return await this._commitTransaction(
         txnData, lines, userId, shiftId,
-        data.original_transaction_id
+        data.original_transaction_id,
+        original.created_at
       );
     });
   }
@@ -295,13 +395,22 @@ export class TransactionService {
     if (txn.is_voided) throw new ValidationError('Transaction is already voided', 'voided');
 
     return await this.base.inTransaction(async () => {
-      // Restore stock for each item
+      // For sale voids: load already-returned quantities so we don't double-restore
+      let returnedMap: Record<string, number> = {};
+      if (txn.transaction_type === 'sale') {
+        returnedMap = await this.repo.getReturnedQuantities(id);
+      }
+
+      // Restore/re-deduct stock for each item
       for (const item of (txn.items ?? [])) {
         const batch = await this.batchRepo.getById(item.batch_id);
         if (!batch) {
-          // Batch was deleted (e.g., purchase item removed). Stock cannot be adjusted.
-          // Void proceeds but stock is not restored/re-deducted — logged for audit.
-          console.warn(`[Void] Batch ${item.batch_id} not found — skipping stock adjustment for item ${item.product_id}`);
+          // Batch was deleted — stock cannot be adjusted. Emit audit event.
+          this.bus.emit('entity:mutated', {
+            action: 'VOID_STOCK_SKIP', table: 'batches',
+            recordId: item.batch_id, userId: voidedBy,
+            newValues: { reason: 'Batch deleted — stock not adjusted', product_id: item.product_id },
+          });
           continue;
         }
 
@@ -309,18 +418,26 @@ export class TransactionService {
         let newStatus: BatchStatus;
 
         if (txn.transaction_type === 'sale') {
-          // Sale void: restore stock
-          newQty    = batch.quantity_base + item.quantity_base;
+          // Sale void: restore stock, minus any already-returned quantities
+          const alreadyReturned = returnedMap[`${item.batch_id}`] ?? 0;
+          const restoreQty = item.quantity_base - alreadyReturned;
+          if (restoreQty <= 0) continue; // Fully returned — nothing to restore
+          newQty    = batch.quantity_base + restoreQty;
           newStatus = batch.status === 'sold_out' ? 'active' : batch.status;
         } else if (txn.transaction_type === 'return') {
           // Return void: re-deduct the returned stock
           if (batch.quantity_base < item.quantity_base) {
-            throw new ValidationError(
-              `Cannot void return — insufficient stock in batch ${item.batch_id}`,
-              'quantity'
-            );
+            if (!force) {
+              throw new ValidationError(
+                `Cannot void return — insufficient stock in batch ${item.batch_id}`,
+                'quantity'
+              );
+            }
+            // Force: clamp to 0 instead of failing
+            newQty = 0;
+          } else {
+            newQty = batch.quantity_base - item.quantity_base;
           }
-          newQty    = batch.quantity_base - item.quantity_base;
           newStatus = newQty === 0 ? 'sold_out' : batch.status;
         } else {
           continue;
@@ -330,6 +447,15 @@ export class TransactionService {
           item.batch_id, newQty, newStatus, batch.version
         );
         if (!success) throw new ConflictError('Batch modified concurrently during void. Please retry.');
+
+        this.bus.emit('stock:changed', {
+          batchId:          item.batch_id,
+          productId:        batch.product_id!,
+          previousQuantity: batch.quantity_base,
+          newQuantity:      newQty,
+          changeReason:     'void',
+          userId:           voidedBy,
+        });
       }
 
       await this.repo.markVoided(id, r, voidedBy);
@@ -496,7 +622,8 @@ export class TransactionService {
     lines:          DeductedLine[],
     userId:         number,
     shiftId:        number | null,
-    parentTxnId:    number | null
+    parentTxnId:    number | null,
+    createdAt?:     string | null
   ): Promise<Transaction> {
     const txnNumber  = await this.repo.getNextNumber(
       data.transaction_type === 'sale' ? 'TXN' : 'RTN'
@@ -545,6 +672,7 @@ export class TransactionService {
       customer_phone:        data.customer_phone ?? null,
       notes:                 data.notes ?? null,
       parent_transaction_id: parentTxnId,
+      created_at: createdAt ?? null,
     });
 
     for (const line of lines) {
@@ -588,7 +716,8 @@ export class TransactionService {
   /** Check if a batch has passed its expiry date. */
   private _isBatchExpired(expiryDate: string | null | undefined): boolean {
     if (!expiryDate) return false;
-    const today = new Date().toISOString().slice(0, 10);
+    const n = new Date();
+    const today = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
     return expiryDate <= today;
   }
 }

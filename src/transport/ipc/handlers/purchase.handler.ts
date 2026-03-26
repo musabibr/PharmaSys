@@ -25,6 +25,11 @@ export function registerPurchaseHandlers(router: IpcRouter, services: ServiceCon
     return await services.purchase.updateSupplier(id, data, user!.id);
   }, { permission: 'purchases.suppliers.manage' });
 
+  router.handle('suppliers:delete', async (user, id: number) => {
+    await services.purchase.deleteSupplier(id, user!.id);
+    return { ok: true };
+  }, { adminOnly: true });
+
   // ─── Purchases ─────────────────────────────────────────────────────────────
 
   router.handle('purchases:getAll', async (_user, filters?: PurchaseFilters) => {

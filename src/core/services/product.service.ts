@@ -116,6 +116,31 @@ export class ProductService {
     });
   }
 
+  async getDeleteInfo(id: number): Promise<{ has_stock: boolean; batch_count: number; txn_count: number } | undefined> {
+    const existing = await this.repo.getById(id);
+    if (!existing) return undefined;
+    return this.repo.getDeleteInfo(id);
+  }
+
+  async bulkDelete(
+    ids: number[],
+    userId: number
+  ): Promise<{ deleted: number[]; errors: Array<{ id: number; reason: string }> }> {
+    const deleted: number[] = [];
+    const errors: Array<{ id: number; reason: string }> = [];
+
+    for (const id of ids) {
+      try {
+        await this.delete(id, userId);
+        deleted.push(id);
+      } catch (err) {
+        errors.push({ id, reason: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    return { deleted, errors };
+  }
+
   async bulkCreate(
     items: BulkCreateProductInput[],
     userId: number

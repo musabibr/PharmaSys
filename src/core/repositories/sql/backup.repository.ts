@@ -6,6 +6,11 @@ import type { IBackupRepository, BackupEntry } from '../../types/repositories';
 
 const MAX_BACKUPS = 50;
 
+// Magic bytes for format detection
+const PORTABLE_MAGIC   = 'PSBK';
+const PORTABLE_VERSION = 1;
+const SQLITE_MAGIC     = 'SQLite format 3';
+
 export class BackupRepository implements IBackupRepository {
   constructor(
     private readonly base: BaseRepository,
@@ -24,32 +29,23 @@ export class BackupRepository implements IBackupRepository {
     }
   }
 
-  private _getEncryptionKey(): Buffer {
+  // ── Legacy encryption helpers (kept for restoring old encrypted backups) ────
+
+  private _getEncryptionKey(): Buffer | null {
     const envKey = process.env.PHARMASYS_BACKUP_KEY;
     if (envKey) {
       const keyBuf = Buffer.from(envKey, 'hex');
       if (keyBuf.length === 32) return keyBuf;
-      console.warn('[BackupRepo] PHARMASYS_BACKUP_KEY is not a valid 256-bit hex key. Falling back to file.');
     }
     const keyPath = path.join(this.dataPath, '.backup-key');
-    if (fs.existsSync(keyPath)) return fs.readFileSync(keyPath);
-    const key = crypto.randomBytes(32);
-    fs.writeFileSync(keyPath, key, { mode: 0o600 });
-    console.log('[BackupRepo] Generated new AES-256 encryption key. Hex:', key.toString('hex'));
-    return key;
+    if (fs.existsSync(keyPath)) {
+      const key = fs.readFileSync(keyPath);
+      if (key.length === 32) return key;
+    }
+    return null;
   }
 
-  private _encrypt(buffer: Buffer): Buffer {
-    const key = this._getEncryptionKey();
-    const iv  = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-    const encrypted = Buffer.concat([cipher.update(buffer), cipher.final()]);
-    const authTag   = cipher.getAuthTag();
-    return Buffer.concat([iv, authTag, encrypted]);
-  }
-
-  private _decrypt(buf: Buffer): Buffer {
-    const key     = this._getEncryptionKey();
+  private _decrypt(buf: Buffer, key: Buffer): Buffer {
     const iv      = buf.slice(0, 16);
     const authTag = buf.slice(16, 32);
     const data    = buf.slice(32);
@@ -58,10 +54,17 @@ export class BackupRepository implements IBackupRepository {
     return Buffer.concat([decipher.update(data), decipher.final()]);
   }
 
+  // ── Rotation ───────────────────────────────────────────────────────────────
+
+  private _isBackupFile(f: string): boolean {
+    return f.startsWith('pharmasys-backup-') &&
+      (f.endsWith('.bak') || f.endsWith('.enc') || f.endsWith('.sqlite'));
+  }
+
   private _rotate(): void {
     try {
       const files = fs.readdirSync(this.backupDir)
-        .filter(f => f.startsWith('pharmasys-backup-') && (f.endsWith('.enc') || f.endsWith('.sqlite')))
+        .filter(f => this._isBackupFile(f))
         .sort().reverse();
       files.slice(MAX_BACKUPS).forEach(f => {
         try {
@@ -73,23 +76,85 @@ export class BackupRepository implements IBackupRepository {
     } catch { /* best effort */ }
   }
 
+  // ── Migration: convert old encrypted backups to raw SQLite ──────────────
+
+  /**
+   * One-time migration: converts all .enc backups to .bak (raw SQLite).
+   * Called on startup. After conversion, deletes .backup-key since it's no longer needed.
+   */
+  migrateEncryptedBackups(): void {
+    this._ensureBackupDir();
+    const encFiles = fs.readdirSync(this.backupDir)
+      .filter(f => f.startsWith('pharmasys-backup-') && f.endsWith('.enc'));
+
+    if (encFiles.length === 0) return;
+
+    console.log(`[BackupRepo] Migrating ${encFiles.length} encrypted backup(s) to raw SQLite...`);
+    let converted = 0;
+
+    for (const encFile of encFiles) {
+      const encPath = path.join(this.backupDir, encFile);
+      try {
+        const buf = fs.readFileSync(encPath);
+        const sqliteData = this._extractSqlite(buf);
+
+        // Write as .bak
+        const bakFile = encFile.replace(/\.enc$/, '.bak');
+        const bakPath = path.join(this.backupDir, bakFile);
+        fs.writeFileSync(bakPath, sqliteData);
+
+        // Update checksum
+        const checksum = crypto.createHash('sha256').update(sqliteData).digest('hex');
+        fs.writeFileSync(bakPath + '.sha256', `${checksum}  ${bakFile}\n`);
+
+        // Remove old .enc and its checksum
+        fs.unlinkSync(encPath);
+        const oldCs = encPath + '.sha256';
+        if (fs.existsSync(oldCs)) fs.unlinkSync(oldCs);
+
+        converted++;
+        console.log(`[BackupRepo] Converted: ${encFile} → ${bakFile}`);
+      } catch (err) {
+        // Rename to .unrecoverable so it no longer appears in the backup list
+        const lostPath = encPath + '.unrecoverable';
+        try { fs.renameSync(encPath, lostPath); } catch { /* best effort */ }
+        console.warn(`[BackupRepo] Cannot convert ${encFile} — renamed to .unrecoverable`);
+      }
+    }
+
+    console.log(`[BackupRepo] Migration complete: ${converted}/${encFiles.length} converted`);
+
+    // Delete .backup-key if all encrypted backups are gone
+    const remainingEnc = fs.readdirSync(this.backupDir)
+      .filter(f => f.startsWith('pharmasys-backup-') && f.endsWith('.enc'));
+    if (remainingEnc.length === 0) {
+      const keyPath = path.join(this.dataPath, '.backup-key');
+      if (fs.existsSync(keyPath)) {
+        fs.unlinkSync(keyPath);
+        console.log('[BackupRepo] Deleted .backup-key — no longer needed');
+      }
+    }
+  }
+
+  // ── Create ─────────────────────────────────────────────────────────────────
+
   async create(label?: string): Promise<BackupEntry> {
     this._ensureBackupDir();
     this.base.save(); // flush in-memory state first
 
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const suffix = label ? `-${label.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
-    const filename  = `pharmasys-backup-${ts}${suffix}.enc`;
+    const filename  = `pharmasys-backup-${ts}${suffix}.bak`;
     const filePath  = path.join(this.backupDir, filename);
 
-    const raw       = this.base.db.export();
-    const encrypted = this._encrypt(Buffer.from(raw));
+    // Write raw SQLite bytes — no encryption, always restorable
+    const raw = Buffer.from(this.base.db.export());
 
     const tmp = filePath + '.tmp';
-    fs.writeFileSync(tmp, encrypted);
+    fs.writeFileSync(tmp, raw);
     fs.renameSync(tmp, filePath);
 
-    const checksum = crypto.createHash('sha256').update(encrypted).digest('hex');
+    const checksum = crypto.createHash('sha256').update(raw).digest('hex');
     fs.writeFileSync(filePath + '.sha256', `${checksum}  ${filename}\n`);
 
     this._rotate();
@@ -97,15 +162,17 @@ export class BackupRepository implements IBackupRepository {
     return {
       filename,
       path: filePath,
-      size: encrypted.length,
+      size: raw.length,
       created_at: new Date().toISOString(),
     };
   }
 
+  // ── List ───────────────────────────────────────────────────────────────────
+
   async list(): Promise<BackupEntry[]> {
     this._ensureBackupDir();
     return fs.readdirSync(this.backupDir)
-      .filter(f => f.startsWith('pharmasys-backup-') && (f.endsWith('.enc') || f.endsWith('.sqlite')))
+      .filter(f => this._isBackupFile(f))
       .sort().reverse()
       .map(f => {
         const filePath = path.join(this.backupDir, f);
@@ -119,13 +186,15 @@ export class BackupRepository implements IBackupRepository {
       });
   }
 
+  // ── Restore (handles all formats) ──────────────────────────────────────────
+
   async restore(filename: string): Promise<void> {
     const filePath = path.join(this.backupDir, filename);
     if (!fs.existsSync(filePath)) throw new Error('Backup file not found');
 
     const fileBuffer = fs.readFileSync(filePath);
 
-    // Verify checksum
+    // Verify checksum if available
     const csFile = filePath + '.sha256';
     if (fs.existsSync(csFile)) {
       const expected = fs.readFileSync(csFile, 'utf-8').split(' ')[0].trim();
@@ -136,13 +205,8 @@ export class BackupRepository implements IBackupRepository {
     // Safety backup before restore
     await this.create('pre-restore');
 
-    let dbBuffer: Buffer;
-    if (filename.endsWith('.enc')) {
-      try { dbBuffer = this._decrypt(fileBuffer); }
-      catch (err) { throw new Error(`Failed to decrypt backup: ${(err as Error).message}`); }
-    } else {
-      dbBuffer = fileBuffer; // legacy unencrypted
-    }
+    // Detect format and extract raw SQLite bytes
+    const dbBuffer = this._extractSqlite(fileBuffer);
 
     // Create new sql.js Database from restored buffer
     const initSqlJs = (await import('sql.js')).default;
@@ -173,5 +237,63 @@ export class BackupRepository implements IBackupRepository {
     this.base.save();
 
     console.log('[BackupRepo] Restore complete — database swapped in-memory and persisted to disk.');
+  }
+
+  /**
+   * Detect backup format and return raw SQLite bytes.
+   *
+   * Supported formats:
+   *  1. Raw SQLite (starts with "SQLite format 3") — .bak or .sqlite
+   *  2. Portable encrypted (starts with "PSBK") — .enc with embedded key
+   *  3. Legacy encrypted (anything else) — .enc, needs local .backup-key
+   */
+  private _extractSqlite(buf: Buffer): Buffer {
+    const header = buf.slice(0, 16).toString('ascii');
+
+    // ── Format 1: Raw SQLite ──────────────────────────────────────────────
+    if (header.startsWith(SQLITE_MAGIC)) {
+      console.log('[BackupRepo] Detected raw SQLite backup');
+      return buf;
+    }
+
+    // ── Format 2: Portable encrypted (PSBK header + embedded key) ─────────
+    if (buf.length > 37 && buf.slice(0, 4).toString() === PORTABLE_MAGIC) {
+      const version = buf.readUInt8(4);
+      if (version !== PORTABLE_VERSION) {
+        throw new Error(`Unsupported portable backup version: ${version}`);
+      }
+      const embeddedKey = buf.slice(5, 37);
+      const encData     = buf.slice(37);
+      console.log('[BackupRepo] Detected portable encrypted backup — using embedded key');
+
+      // Install the key so future legacy restores can also use it
+      const keyPath = path.join(this.dataPath, '.backup-key');
+      fs.writeFileSync(keyPath, embeddedKey, { mode: 0o600 });
+
+      try {
+        return this._decrypt(encData, embeddedKey);
+      } catch (err) {
+        throw new Error(`Failed to decrypt portable backup: ${(err as Error).message}`);
+      }
+    }
+
+    // ── Format 3: Legacy encrypted (no header, needs local key) ───────────
+    console.log('[BackupRepo] Detected legacy encrypted backup — looking for .backup-key');
+    const key = this._getEncryptionKey();
+    if (!key) {
+      throw new Error(
+        'Cannot restore this backup — the encryption key (.backup-key) is missing. ' +
+        'This backup was created with an older version and the key was lost during reinstall. ' +
+        'If you have the original .backup-key file, place it in the data directory and try again.'
+      );
+    }
+
+    try {
+      return this._decrypt(buf, key);
+    } catch (err) {
+      throw new Error(
+        `Failed to decrypt backup — the encryption key may not match this backup. ${(err as Error).message}`
+      );
+    }
   }
 }

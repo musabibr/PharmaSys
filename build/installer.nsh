@@ -1,6 +1,7 @@
 ; PharmaSys custom NSIS script
-; 1. Clears any existing AppData (database, caches, sessions) for a clean install
-; 2. Writes a fresh_install marker so the app resets admin credentials on first run.
+; 1. Clears previous database and config for a clean install
+; 2. PRESERVES data/backups/ and data/.backup-key so old backups remain restorable
+; 3. Writes a fresh_install marker so the app resets admin credentials on first run.
 ;
 ; The marker is written to $INSTDIR (the app's installation folder) rather than
 ; $APPDATA, because $APPDATA resolves to the ADMIN profile when the installer is
@@ -10,8 +11,12 @@
 
 !macro customInstall
   ; ── Clean up previous installation data ──────────────────────────────────
-  ; Remove the app's data directory (database, backups, tmp, config)
-  RMDir /r "$APPDATA\PharmaSys\data"
+  ; Delete database and config (reset to clean state)
+  ; PRESERVE: data/backups/ and data/.backup-key so old backups remain restorable
+  Delete "$APPDATA\PharmaSys\data\pharmasys.db"
+  Delete "$APPDATA\PharmaSys\data\device-config.json"
+  Delete "$APPDATA\PharmaSys\data\.fresh_install_processed"
+  RMDir /r "$APPDATA\PharmaSys\data\tmp"
   ; Remove Electron caches and session storage
   RMDir /r "$APPDATA\PharmaSys\Cache"
   RMDir /r "$APPDATA\PharmaSys\Code Cache"
@@ -23,7 +28,6 @@
   RMDir /r "$APPDATA\PharmaSys\Shared Dictionary"
   RMDir /r "$APPDATA\PharmaSys\SharedStorage"
   RMDir /r "$APPDATA\PharmaSys\blob_storage"
-  RMDir /r "$APPDATA\PharmaSys\backups"
   Delete "$APPDATA\PharmaSys\Preferences"
   Delete "$APPDATA\PharmaSys\Local State"
   Delete "$APPDATA\PharmaSys\debug.txt"

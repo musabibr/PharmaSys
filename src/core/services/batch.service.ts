@@ -6,7 +6,7 @@ import type {
   InventoryAdjustment, AdjustmentFilters, AdjustmentType, BatchFilters,
 } from '../types/models';
 import { Validate }               from '../common/validation';
-import { NotFoundError, ValidationError, ConflictError } from '../types/errors';
+import { NotFoundError, ValidationError, ConflictError, BusinessRuleError } from '../types/errors';
 import { Money }                  from '../common/money';
 
 export class BatchService {
@@ -166,5 +166,61 @@ export class BatchService {
 
   async getAdjustments(filters: AdjustmentFilters = {}): Promise<InventoryAdjustment[]> {
     return await this.repo.getAdjustments(filters);
+  }
+
+  async getBatchDeleteInfo(id: number): Promise<{ quantity_base: number; txn_count: number; adj_count: number } | undefined> {
+    return await this.repo.getBatchDeleteInfo(id);
+  }
+
+  async getActiveBatchesForPriceUpdate(productId: number): Promise<Array<{ id: number; batch_number: string | null; quantity_base: number; expiry_date: string }>> {
+    Validate.id(productId, 'Product');
+    return await this.repo.getActiveBatchesForPriceUpdate(productId);
+  }
+
+  async updateSellingPricesByProduct(
+    productId: number,
+    sellingPriceParent: number,
+    sellingPriceChild: number | null,
+    userId: number
+  ): Promise<number> {
+    Validate.id(productId, 'Product');
+    const count = await this.repo.bulkUpdateSellingPrices(productId, sellingPriceParent, sellingPriceChild);
+    if (count > 0) {
+      this.bus.emit('entity:mutated', {
+        action: 'BULK_UPDATE_BATCH_PRICES', table: 'batches',
+        recordId: productId, userId,
+        newValues: { selling_price_parent: sellingPriceParent, updated_count: count },
+      });
+    }
+    return count;
+  }
+
+  async deleteBatch(id: number, userId: number): Promise<void> {
+    Validate.id(id);
+    const batch = await this.repo.getById(id);
+    if (!batch) throw new NotFoundError('Batch', id);
+    await this.repo.deleteBatch(id);
+    this.bus.emit('entity:mutated', {
+      action: 'DELETE_BATCH', table: 'batches',
+      recordId: id, userId,
+      oldValues: { product_name: (batch as any).product_name, batch_number: batch.batch_number },
+    });
+  }
+
+  async bulkDeleteBatches(
+    ids: number[],
+    userId: number
+  ): Promise<{ deleted: number[]; errors: Array<{ id: number; reason: string }> }> {
+    const deleted: number[] = [];
+    const errors: Array<{ id: number; reason: string }> = [];
+    for (const id of ids) {
+      try {
+        await this.deleteBatch(id, userId);
+        deleted.push(id);
+      } catch (e) {
+        errors.push({ id, reason: e instanceof Error ? e.message : 'Unknown error' });
+      }
+    }
+    return { deleted, errors };
   }
 }

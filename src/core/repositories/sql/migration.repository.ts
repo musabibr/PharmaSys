@@ -67,13 +67,13 @@ export class MigrationRepository {
         security_answer_hash TEXT,
         security_answer_failed_attempts INTEGER DEFAULT 0,
         security_answer_locked_until TEXT,
-        created_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now'))
+        created_at TEXT DEFAULT (datetime('now', 'localtime')),
+        updated_at TEXT DEFAULT (datetime('now', 'localtime'))
       )`,
       `CREATE TABLE IF NOT EXISTS categories (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT UNIQUE NOT NULL,
-        created_at TEXT DEFAULT (datetime('now'))
+        created_at TEXT DEFAULT (datetime('now', 'localtime'))
       )`,
       `CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,8 +87,8 @@ export class MigrationRepository {
         conversion_factor INTEGER DEFAULT 1 CHECK(conversion_factor > 0),
         min_stock_level INTEGER DEFAULT 0 CHECK(min_stock_level >= 0),
         is_active INTEGER DEFAULT 1,
-        created_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now')),
+        created_at TEXT DEFAULT (datetime('now', 'localtime')),
+        updated_at TEXT DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
       )`,
       `CREATE TABLE IF NOT EXISTS batches (
@@ -106,8 +106,8 @@ export class MigrationRepository {
         selling_price_child_override INTEGER DEFAULT 0,
         status TEXT DEFAULT 'active' CHECK(status IN ('active', 'quarantine', 'sold_out')),
         version INTEGER NOT NULL DEFAULT 1,
-        created_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now')),
+        created_at TEXT DEFAULT (datetime('now', 'localtime')),
+        updated_at TEXT DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT
       )`,
       `CREATE TABLE IF NOT EXISTS transactions (
@@ -133,7 +133,7 @@ export class MigrationRepository {
         voided_by INTEGER,
         voided_at TEXT,
         parent_transaction_id INTEGER REFERENCES transactions(id),
-        created_at TEXT DEFAULT (datetime('now')),
+        created_at TEXT DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (user_id) REFERENCES users(id),
         FOREIGN KEY (shift_id) REFERENCES shifts(id),
         FOREIGN KEY (voided_by) REFERENCES users(id)
@@ -151,7 +151,7 @@ export class MigrationRepository {
         line_total INTEGER NOT NULL DEFAULT 0,
         gross_profit INTEGER NOT NULL DEFAULT 0,
         conversion_factor_snapshot INTEGER NOT NULL DEFAULT 1 CHECK(conversion_factor_snapshot > 0),
-        created_at TEXT DEFAULT (datetime('now')),
+        created_at TEXT DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE CASCADE,
         FOREIGN KEY (product_id) REFERENCES products(id),
         FOREIGN KEY (batch_id) REFERENCES batches(id)
@@ -169,7 +169,7 @@ export class MigrationRepository {
         payment_method TEXT DEFAULT 'cash' CHECK(payment_method IN ('cash', 'bank_transfer')),
         user_id INTEGER NOT NULL,
         shift_id INTEGER,
-        created_at TEXT DEFAULT (datetime('now')),
+        created_at TEXT DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (category_id) REFERENCES expense_categories(id),
         FOREIGN KEY (user_id) REFERENCES users(id),
         FOREIGN KEY (shift_id) REFERENCES shifts(id)
@@ -194,7 +194,7 @@ export class MigrationRepository {
         amount INTEGER NOT NULL CHECK(amount > 0),
         reason TEXT,
         user_id INTEGER NOT NULL,
-        created_at TEXT DEFAULT (datetime('now')),
+        created_at TEXT DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (shift_id) REFERENCES shifts(id),
         FOREIGN KEY (user_id) REFERENCES users(id)
       )`,
@@ -204,7 +204,7 @@ export class MigrationRepository {
         customer_note TEXT,
         items_json TEXT NOT NULL,
         total_amount INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT DEFAULT (datetime('now')),
+        created_at TEXT DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (user_id) REFERENCES users(id)
       )`,
       `CREATE TABLE IF NOT EXISTS inventory_adjustments (
@@ -215,7 +215,7 @@ export class MigrationRepository {
         reason TEXT,
         type TEXT NOT NULL CHECK(type IN ('damage', 'expiry', 'correction')),
         user_id INTEGER NOT NULL,
-        created_at TEXT DEFAULT (datetime('now')),
+        created_at TEXT DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (product_id) REFERENCES products(id),
         FOREIGN KEY (batch_id) REFERENCES batches(id),
         FOREIGN KEY (user_id) REFERENCES users(id)
@@ -229,12 +229,12 @@ export class MigrationRepository {
         old_values TEXT,
         new_values TEXT,
         ip_address TEXT,
-        created_at TEXT DEFAULT (datetime('now'))
+        created_at TEXT DEFAULT (datetime('now', 'localtime'))
       )`,
       `CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT,
-        updated_at TEXT DEFAULT (datetime('now'))
+        updated_at TEXT DEFAULT (datetime('now', 'localtime'))
       )`,
       // ─── Purchase Management ───
       `CREATE TABLE IF NOT EXISTS suppliers (
@@ -244,8 +244,8 @@ export class MigrationRepository {
         address TEXT,
         notes TEXT,
         is_active INTEGER DEFAULT 1,
-        created_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now'))
+        created_at TEXT DEFAULT (datetime('now', 'localtime')),
+        updated_at TEXT DEFAULT (datetime('now', 'localtime'))
       )`,
       `CREATE TABLE IF NOT EXISTS purchases (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -260,8 +260,8 @@ export class MigrationRepository {
         alert_days_before INTEGER NOT NULL DEFAULT 7,
         notes TEXT,
         user_id INTEGER NOT NULL,
-        created_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now')),
+        created_at TEXT DEFAULT (datetime('now', 'localtime')),
+        updated_at TEXT DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL,
         FOREIGN KEY (user_id) REFERENCES users(id)
       )`,
@@ -277,7 +277,7 @@ export class MigrationRepository {
         expiry_date TEXT,
         batch_number TEXT,
         notes TEXT,
-        created_at TEXT DEFAULT (datetime('now')),
+        created_at TEXT DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (purchase_id) REFERENCES purchases(id) ON DELETE CASCADE,
         FOREIGN KEY (product_id) REFERENCES products(id),
         FOREIGN KEY (batch_id) REFERENCES batches(id)
@@ -294,8 +294,8 @@ export class MigrationRepository {
         paid_by_user_id INTEGER,
         reference_number TEXT,
         notes TEXT,
-        created_at TEXT DEFAULT (datetime('now')),
-        updated_at TEXT DEFAULT (datetime('now')),
+        created_at TEXT DEFAULT (datetime('now', 'localtime')),
+        updated_at TEXT DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (purchase_id) REFERENCES purchases(id) ON DELETE CASCADE,
         FOREIGN KEY (expense_id) REFERENCES expenses(id),
         FOREIGN KEY (paid_by_user_id) REFERENCES users(id)
@@ -305,7 +305,7 @@ export class MigrationRepository {
         purchase_id INTEGER NOT NULL,
         raw_data TEXT NOT NULL,
         notes TEXT,
-        created_at TEXT DEFAULT (datetime('now')),
+        created_at TEXT DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (purchase_id) REFERENCES purchases(id) ON DELETE CASCADE
       )`,
     ];
@@ -456,6 +456,9 @@ export class MigrationRepository {
 
     // Clean up orphaned supplier payment expenses (from before decoupling fix)
     await this._cleanupSupplierPaymentExpenses();
+
+    // Fix return date attribution: returns get parent sale's created_at and shift_id
+    await this._migrateReturnDates();
 
     this.base.save();
   }
@@ -1779,7 +1782,7 @@ export class MigrationRepository {
                must_change_password = 1,
                failed_login_attempts = 0,
                locked_until = NULL,
-               updated_at = datetime('now')
+               updated_at = datetime('now', 'localtime')
            WHERE id = ?`,
           [hash, admin.id]
         );
@@ -1805,6 +1808,20 @@ export class MigrationRepository {
       await this.base.rawRun('UPDATE purchase_payments SET expense_id = NULL WHERE expense_id IS NOT NULL');
       await this.base.rawRun(`DELETE FROM expenses WHERE id IN (${ids.join(',')})`);
       console.log(`[Migration] Cleaned up ${ids.length} orphaned supplier payment expense(s)`);
+    } catch { /* table may not exist yet */ }
+  }
+
+  /** Fix return date attribution: returns should use parent sale's created_at and shift_id. */
+  private async _migrateReturnDates(): Promise<void> {
+    try {
+      await this.base.rawRun(`
+        UPDATE transactions
+        SET created_at = (SELECT p.created_at FROM transactions p WHERE p.id = transactions.parent_transaction_id),
+            shift_id   = (SELECT p.shift_id   FROM transactions p WHERE p.id = transactions.parent_transaction_id)
+        WHERE transaction_type = 'return'
+          AND parent_transaction_id IS NOT NULL
+          AND (SELECT p.created_at FROM transactions p WHERE p.id = transactions.parent_transaction_id) IS NOT NULL
+      `);
     } catch { /* table may not exist yet */ }
   }
 

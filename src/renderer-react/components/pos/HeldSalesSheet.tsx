@@ -6,7 +6,6 @@ import { formatCurrency } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Sheet,
@@ -157,7 +156,7 @@ export function HeldSalesSheet({ open, onOpenChange, onRetrieve }: HeldSalesShee
 
         {/* ---- Held sales list ---- */}
         {!loading && heldSales.length > 0 && (
-          <ScrollArea className="flex-1">
+          <div className="flex-1 min-h-0 overflow-y-auto">
             <div className="space-y-3 px-1 pb-2">
               {heldSales.map((sale) => {
                 const items = parseHeldItems(sale.items);
@@ -234,7 +233,7 @@ export function HeldSalesSheet({ open, onOpenChange, onRetrieve }: HeldSalesShee
                 );
               })}
             </div>
-          </ScrollArea>
+          </div>
         )}
       </SheetContent>
     </Sheet>

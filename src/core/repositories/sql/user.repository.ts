@@ -53,7 +53,7 @@ export class UserRepository implements IUserRepository {
       `INSERT INTO users (username, password_hash, full_name, role,
        perm_finance, perm_inventory, perm_reports, permissions_json,
        must_change_password)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
       [
         data.username, data.password_hash, data.full_name, data.role,
         data.perm_finance ? 1 : 0,
@@ -68,7 +68,7 @@ export class UserRepository implements IUserRepository {
     await this.base.runImmediate(
       `UPDATE users SET full_name = ?, role = ?, perm_finance = ?,
        perm_inventory = ?, perm_reports = ?, permissions_json = ?,
-       is_active = ?, updated_at = datetime('now') WHERE id = ?`,
+       is_active = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`,
       [
         data.full_name ?? '', data.role ?? 'cashier',
         data.perm_finance ? 1 : 0,
@@ -82,7 +82,7 @@ export class UserRepository implements IUserRepository {
 
     if (data.password_hash) {
       await this.base.runImmediate(
-        `UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?`,
+        `UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?`,
         [data.password_hash, id]
       );
     }
@@ -91,7 +91,7 @@ export class UserRepository implements IUserRepository {
   async resetPassword(userId: number, hash: string): Promise<void> {
     await this.base.runImmediate(
       `UPDATE users SET password_hash = ?, must_change_password = 1,
-       updated_at = datetime('now') WHERE id = ?`,
+       updated_at = datetime('now', 'localtime') WHERE id = ?`,
       [hash, userId]
     );
   }
@@ -99,7 +99,7 @@ export class UserRepository implements IUserRepository {
   async unlock(userId: number): Promise<void> {
     await this.base.runImmediate(
       `UPDATE users SET locked_until = NULL, failed_login_attempts = 0,
-       updated_at = datetime('now') WHERE id = ?`,
+       updated_at = datetime('now', 'localtime') WHERE id = ?`,
       [userId]
     );
   }

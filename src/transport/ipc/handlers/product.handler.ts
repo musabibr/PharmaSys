@@ -40,4 +40,12 @@ export function registerProductHandlers(router: IpcRouter, services: ServiceCont
   router.handle('products:bulkCreate', async (user, items: BulkCreateProductInput[]) => {
     return await services.product.bulkCreate(items, user!.id);
   }, { permission: 'inventory.products.bulk_import' });
+
+  router.handle('products:getDeleteInfo', async (_user, id: number) => {
+    return await services.product.getDeleteInfo(id);
+  }, { permission: 'inventory.products.delete' });
+
+  router.handle('products:bulkDelete', async (user, ids: number[]) => {
+    return await services.product.bulkDelete(ids, user!.id);
+  }, { permission: 'inventory.products.delete' });
 }

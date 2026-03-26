@@ -162,7 +162,7 @@ export class ProductRepository implements IProductRepository {
          conversion_factor = COALESCE(?, conversion_factor),
          min_stock_level = COALESCE(?, min_stock_level),
          is_active = COALESCE(?, is_active),
-         updated_at = datetime('now')
+         updated_at = datetime('now', 'localtime')
        WHERE id = ?`,
       [
         data.name ?? null,
@@ -182,7 +182,7 @@ export class ProductRepository implements IProductRepository {
 
   async softDelete(id: number): Promise<void> {
     await this.base.runImmediate(
-      `UPDATE products SET is_active = 0, updated_at = datetime('now') WHERE id = ?`,
+      `UPDATE products SET is_active = 0, updated_at = datetime('now', 'localtime') WHERE id = ?`,
       [id]
     );
   }
@@ -198,6 +198,24 @@ export class ProductRepository implements IProductRepository {
       [id]
     );
     return (row?.cnt ?? 0) > 0;
+  }
+
+  async getDeleteInfo(id: number): Promise<{ has_stock: boolean; batch_count: number; txn_count: number }> {
+    const stockRow = await this.base.getOne<{ qty: number; batches: number }>(
+      `SELECT COALESCE(SUM(quantity_base), 0) as qty, COUNT(*) as batches
+       FROM batches WHERE product_id = ? AND quantity_base > 0`,
+      [id]
+    );
+    const txnRow = await this.base.getOne<{ cnt: number }>(
+      `SELECT COUNT(DISTINCT ti.transaction_id) as cnt
+       FROM transaction_items ti JOIN batches b ON b.id = ti.batch_id WHERE b.product_id = ?`,
+      [id]
+    );
+    return {
+      has_stock: (stockRow?.qty ?? 0) > 0,
+      batch_count: stockRow?.batches ?? 0,
+      txn_count: txnRow?.cnt ?? 0,
+    };
   }
 
   async bulkCreate(items: BulkCreateProductInput[]): Promise<Array<{ success: boolean; name: string; error?: string }>> {

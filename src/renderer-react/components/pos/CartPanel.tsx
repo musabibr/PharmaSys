@@ -4,7 +4,6 @@ import { useCartStore } from '@/stores/cart.store';
 import { usePermission } from '@/hooks/usePermission';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { formatCurrency } from '@/lib/utils';
 
@@ -78,7 +77,7 @@ export function CartPanel({ onCheckout, onHold, onRetrieveHeld, shiftOpen }: Car
       </div>
 
       {/* Items list */}
-      <ScrollArea className="min-h-0 flex-1">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         {isEmpty ? (
           <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
             <ShoppingCart className="mb-3 h-10 w-10 opacity-30" />
@@ -159,7 +158,7 @@ export function CartPanel({ onCheckout, onHold, onRetrieveHeld, shiftOpen }: Car
             })}
           </div>
         )}
-      </ScrollArea>
+      </div>
 
       {/* Summary + action buttons */}
       <div className="border-t">

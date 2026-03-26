@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { useShiftStore } from '@/stores/shift.store';
 import { useSettingsStore } from '@/stores/settings.store';
+import { useAuthStore } from '@/stores/auth.store';
 import { useCartStore, type CartItem } from '@/stores/cart.store';
 import { api } from '@/api';
 import type { Transaction } from '@/api/types';
@@ -21,6 +22,7 @@ export function POSPage() {
   const currentShift = useShiftStore((s) => s.currentShift);
   const isStaleShift = useShiftStore((s) => s.isStaleShift);
   const shiftsEnabled = useSettingsStore((s) => s.getSetting('shifts_enabled') !== 'false');
+  const isAdmin = useAuthStore((s) => s.currentUser?.role === 'admin');
   const cartStore = useCartStore();
 
   const [shiftModalOpen, setShiftModalOpen] = useState(false);
@@ -32,7 +34,7 @@ export function POSPage() {
   const [lastTransaction, setLastTransaction] = useState<Transaction | null>(null);
   const [productRefreshKey, setProductRefreshKey] = useState(0);
 
-  const shiftOpen = !shiftsEnabled || currentShift != null;
+  const shiftOpen = !shiftsEnabled || currentShift != null || isAdmin;
 
   function handleProductSelect(productId: number) {
     setSelectedProductId(productId);
