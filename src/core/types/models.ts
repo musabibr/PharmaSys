@@ -26,6 +26,8 @@ export type VarianceType = 'shortage' | 'overage' | 'balanced';
 
 export type AdjustmentType = 'damage' | 'expiry' | 'correction';
 
+export type RecurringAmountType = 'monthly' | 'daily';
+
 // ─── Auth Context ───
 
 export interface UserPermissions {
@@ -234,10 +236,52 @@ export interface Expense {
   payment_method: ExpensePaymentMethod;
   user_id: number;
   shift_id: number | null;
+  is_recurring: number;
+  recurring_expense_id: number | null;
   created_at: string;
   // Joined fields
   category_name?: string;
   username?: string;
+}
+
+// ─── Recurring Expense ───
+
+export interface RecurringExpense {
+  id: number;
+  name: string;
+  category_id: number;
+  amount_type: RecurringAmountType;
+  amount: number;
+  payment_method: ExpensePaymentMethod;
+  is_active: number;
+  created_by: number;
+  created_at: string;
+  // Joined fields
+  category_name?: string;
+  created_by_username?: string;
+  // Computed
+  daily_amount?: number;
+  monthly_amount?: number;
+  last_generated_date?: string | null;
+}
+
+export interface CreateRecurringExpenseInput {
+  name: string;
+  category_id: number;
+  amount_type: RecurringAmountType;
+  amount: number;
+  payment_method?: ExpensePaymentMethod;
+}
+
+export interface GenerationPreviewItem {
+  itemId: number;
+  itemName: string;
+  categoryName: string;
+  amount: number;
+  paymentMethod: ExpensePaymentMethod;
+  dates: string[];
+  alreadyGenerated: string[];
+  type: RecurringAmountType;
 }
 
 // ─── Cash Drop ───
@@ -361,7 +405,10 @@ export interface CreateBatchInput {
   expiry_date: string;
   quantity_base: number;
   cost_per_parent: number;
+  cost_per_child?: number;
   selling_price_parent: number;
+  selling_price_child?: number;
+  selling_price_parent_override?: number;
   cost_per_child_override?: number;
   selling_price_child_override?: number;
 }
@@ -371,7 +418,9 @@ export interface UpdateBatchInput {
   expiry_date?: string;
   quantity_base?: number;
   cost_per_parent?: number;
+  cost_per_child?: number;
   selling_price_parent?: number;
+  selling_price_child?: number;
   selling_price_parent_override?: number;
   cost_per_child_override?: number;
   selling_price_child_override?: number;
@@ -423,6 +472,8 @@ export interface CreateExpenseInput {
   description?: string;
   expense_date: string;
   payment_method?: ExpensePaymentMethod;
+  is_recurring?: number;
+  recurring_expense_id?: number;
 }
 
 export interface CreateCashDropInput {
@@ -476,6 +527,8 @@ export interface ExpenseFilters {
   start_date?: string;
   end_date?: string;
   category_id?: number;
+  search?: string;
+  is_recurring?: number; // 0 = manual only, 1 = recurring only
   page?: number;
   limit?: number;
 }
@@ -905,6 +958,7 @@ export interface PaginatedResult<T> {
   totalPages: number;
   agg_sales?: number;
   agg_returns?: number;
+  totalAmount?: number;
 }
 
 // ─── App Info ───

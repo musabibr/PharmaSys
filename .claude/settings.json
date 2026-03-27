@@ -77,11 +77,27 @@
       "Bash(env -u ELECTRON_RUN_AS_NODE npm run build)",
       "Bash(\"$APPDATA/PharmaSys/data/device-config.json\")",
       "Read(//d/Noon/wroking code/Pharma/$APPDATA/PharmaSys/data/**)",
-      "Bash(netsh advfirewall firewall add rule name=\"PharmaSys Discovery\" dir=in action=allow protocol=UDP localport=41234)"
+      "Bash(netsh advfirewall firewall add rule name=\"PharmaSys Discovery\" dir=in action=allow protocol=UDP localport=41234)",
+      "Bash(find '/d/Noon/wroking code/PharmaSys/src' -type f \\\\\\(-name *.ts -o -name *.tsx \\\\\\))",
+      "Bash(node -e \"console.log\\(require\\(''crypto''\\).randomBytes\\(64\\).toString\\(''hex''\\)\\)\")",
+      "Bash(wmic cpu:*)",
+      "Bash(powershell -Command \"Get-Process | Where-Object {$_Path -like ''*PharmaSys*'' -or $_Path -like ''*electron*''} | Stop-Process -Force\")",
+      "Bash(powershell -Command \"Remove-Item -Path ''D:\\\\Noon\\\\wroking code\\\\PharmaSys\\\\dist\\\\win-unpacked'' -Recurse -Force -ErrorAction SilentlyContinue\")",
+      "Bash(powershell -Command \"Get-Process | Where-Object {$_Modules.FileName -like ''*app.asar*''} | Select-Object Name, Id\")",
+      "Bash(powershell -Command \"\\(Get-Item ''D:\\\\Noon\\\\wroking code\\\\PharmaSys\\\\dist\\\\win-unpacked\\\\resources\\\\app.asar''\\).Attributes\")",
+      "Bash(cmd.exe /c \"del /f /q \"\"D:\\\\Noon\\\\wroking code\\\\PharmaSys\\\\dist\\\\win-unpacked\\\\resources\\\\app.asar\"\" 2>&1 && echo DELETED || echo FAILED\")",
+      "Bash(npx electron-builder:*)",
+      "Bash(npx asar:*)",
+      "Read(//tmp/asar-check/node_modules/bytenode/**)",
+      "Bash(npx electron:*)",
+      "Bash(taskkill /F /IM PharmaSys.exe)",
+      "Bash(taskkill /F /IM electron.exe)"
     ],
     "additionalDirectories": [
       "\\tmp",
-      "d:\\Noon\\pharmasys-license-portal"
+      "d:\\Noon\\pharmasys-license-portal",
+      "C:\\Users\\musab\\.claude\\plans",
+      "D:\\Noon\\wroking code\\PharmaSys"
     ]
   }
 }

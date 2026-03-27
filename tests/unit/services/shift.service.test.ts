@@ -371,7 +371,7 @@ describe('ShiftService', () => {
       expect(await svc.autoCloseStale(24)).toBe(0);
     });
 
-    it('closes stale shifts with unknown variance (cash never counted)', async () => {
+    it('closes stale shifts with balanced variance (cash not counted, uses expected)', async () => {
       const { svc, shiftRepo } = createService();
       const staleShift = { ...sampleShift, id: 10 };
       shiftRepo.findStaleShifts.mockResolvedValue([staleShift]);
@@ -380,10 +380,10 @@ describe('ShiftService', () => {
       const count = await svc.autoCloseStale(24);
       expect(count).toBe(1);
       expect(shiftRepo.close).toHaveBeenCalledWith(10, expect.objectContaining({
-        actual_cash: null,
+        actual_cash: 5000,
         expected_cash: 5000,
-        variance: null,
-        variance_type: null,
+        variance: 0,
+        variance_type: 'balanced',
       }));
     });
 

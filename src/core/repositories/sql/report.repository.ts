@@ -35,7 +35,9 @@ export class ReportRepository implements IReportRepository {
   ) {}
 
   async getCashFlow(startDate: string, endDate: string): Promise<CashFlowReport> {
-    // CTE 1: Transaction totals + COGS in a single query (replaces 8 sequential queries)
+    // CTE 1: Transaction totals (from transactions table only — no JOIN inflation)
+    // CTE 2: COGS totals — fix unit mismatch: cost_price is per-display-unit,
+    //   so for parent sales divide quantity_base by CF to get display qty.
     const txn = await this.base.getOne<{
       sale_total: number; return_total: number; cash_sales: number;
       cash_returns: number; bank_sales: number; sale_cogs: number; return_cogs: number;
@@ -46,15 +48,25 @@ export class ReportRepository implements IReportRepository {
           COALESCE(SUM(CASE WHEN transaction_type='return' THEN total_amount ELSE 0 END), 0) as return_total,
           COALESCE(SUM(CASE WHEN transaction_type='sale' THEN cash_tendered ELSE 0 END), 0) as cash_sales,
           COALESCE(SUM(CASE WHEN transaction_type='return' THEN cash_tendered ELSE 0 END), 0) as cash_returns,
-          COALESCE(SUM(CASE WHEN transaction_type='sale' AND payment_method='bank_transfer' THEN total_amount ELSE 0 END), 0) as bank_sales
+          COALESCE(SUM(CASE WHEN transaction_type='sale' AND payment_method='bank_transfer' THEN total_amount
+                        WHEN transaction_type='sale' AND payment_method='mixed' THEN total_amount - COALESCE(cash_tendered, 0)
+                        ELSE 0 END), 0) as bank_sales
         FROM transactions
         WHERE is_voided = 0
           AND DATE(created_at) BETWEEN ? AND ?
       ),
       cogs_totals AS (
         SELECT
-          COALESCE(SUM(CASE WHEN t.transaction_type='sale' THEN ti.cost_price * ti.quantity_base ELSE 0 END), 0) as sale_cogs,
-          COALESCE(SUM(CASE WHEN t.transaction_type='return' THEN ti.cost_price * ti.quantity_base ELSE 0 END), 0) as return_cogs
+          COALESCE(SUM(CASE WHEN t.transaction_type='sale' THEN
+            CASE WHEN ti.unit_type='parent'
+              THEN ti.cost_price * ti.quantity_base / ti.conversion_factor_snapshot
+              ELSE ti.cost_price * ti.quantity_base END
+          ELSE 0 END), 0) as sale_cogs,
+          COALESCE(SUM(CASE WHEN t.transaction_type='return' THEN
+            CASE WHEN ti.unit_type='parent'
+              THEN ti.cost_price * ti.quantity_base / ti.conversion_factor_snapshot
+              ELSE ti.cost_price * ti.quantity_base END
+          ELSE 0 END), 0) as return_cogs
         FROM transaction_items ti
         JOIN transactions t ON ti.transaction_id = t.id
         WHERE t.is_voided = 0
@@ -64,7 +76,7 @@ export class ReportRepository implements IReportRepository {
       [startDate, endDate, startDate, endDate]
     );
 
-    // CTE 2: Expense totals in a single query (replaces 3 sequential queries)
+    // Expense totals (excluding purchase-linked expenses)
     const exp = await this.base.getOne<{
       total_expenses: number; cash_expenses: number; bank_expenses: number;
     }>(
@@ -78,7 +90,7 @@ export class ReportRepository implements IReportRepository {
       [startDate, endDate]
     );
 
-    // Query 3: Sales by payment method (GROUP BY — must be separate)
+    // Sales by payment method (GROUP BY — must be separate)
     const salesByPayment = await this.base.getAll<{ payment_method: string; total: number; count: number }>(
       `SELECT payment_method, COALESCE(SUM(total_amount), 0) as total, COUNT(*) as count
        FROM transactions
@@ -87,13 +99,13 @@ export class ReportRepository implements IReportRepository {
       [startDate, endDate]
     );
 
-    const totalSales   = Math.round(txn?.sale_total   ?? 0);
-    const totalReturns = Math.round(txn?.return_total  ?? 0);
-    const netSales     = Math.round(totalSales - totalReturns);
-    const totalCogs    = Math.round((txn?.sale_cogs ?? 0) - (txn?.return_cogs ?? 0));
-    const grossProfit  = Math.round(netSales - totalCogs);
-    const totalExp     = Math.round(exp?.total_expenses ?? 0);
-    const netProfit    = Math.round(grossProfit - totalExp);
+    const totalSales      = Math.round(txn?.sale_total   ?? 0);
+    const totalReturns    = Math.round(txn?.return_total  ?? 0);
+    const netSales        = Math.round(totalSales - totalReturns);
+    const totalCogs       = Math.round((txn?.sale_cogs ?? 0) - (txn?.return_cogs ?? 0));
+    const grossProfit     = Math.round(netSales - totalCogs);
+    const totalExp        = Math.round(exp?.total_expenses ?? 0);
+    const netProfit       = Math.round(grossProfit - totalExp);
 
     return {
       total_sales:          totalSales,
@@ -103,7 +115,7 @@ export class ReportRepository implements IReportRepository {
       gross_profit:         grossProfit,
       gross_margin:         netSales > 0 ? Math.round((grossProfit / netSales) * 100) : 0,
       operational_expenses: totalExp,
-      supplier_payments:    0,
+      supplier_payments:    0, // Already included in COGS via batch cost_per_parent
       net_profit:           netProfit,
       net_margin:           netSales > 0 ? Math.round((netProfit / netSales) * 100) : 0,
       cash_sales:           Math.round(txn?.cash_sales   ?? 0),
@@ -116,19 +128,39 @@ export class ReportRepository implements IReportRepository {
   }
 
   async getProfitLoss(startDate: string, endDate: string): Promise<ProfitLossReport> {
+    // Use two sub-selects to avoid JOIN inflation:
+    // - sales/returns come from transactions (1 row per txn)
+    // - profit comes from transaction_items (1 row per item, SUM is correct)
     const dailyData = await this.base.getAll<{
       date: string; sales: number; returns: number; profit: number;
     }>(
-      `SELECT DATE(t.created_at) as date,
-              COALESCE(SUM(CASE WHEN t.transaction_type='sale'   THEN t.total_amount ELSE 0 END), 0) as sales,
-              COALESCE(SUM(CASE WHEN t.transaction_type='return' THEN t.total_amount ELSE 0 END), 0) as returns,
-              COALESCE(SUM(ti.gross_profit), 0) as profit
-       FROM transactions t
-       JOIN transaction_items ti ON t.id = ti.transaction_id
-       WHERE t.is_voided = 0
-         AND DATE(t.created_at) BETWEEN ? AND ?
-       GROUP BY DATE(t.created_at) ORDER BY date`,
-      [startDate, endDate]
+      `SELECT
+         d.date,
+         COALESCE(txn.sales, 0) as sales,
+         COALESCE(txn.returns, 0) as returns,
+         COALESCE(items.profit, 0) as profit
+       FROM (
+         SELECT DISTINCT DATE(created_at) as date
+         FROM transactions
+         WHERE is_voided = 0 AND DATE(created_at) BETWEEN ? AND ?
+       ) d
+       LEFT JOIN (
+         SELECT DATE(created_at) as date,
+           SUM(CASE WHEN transaction_type='sale' THEN total_amount ELSE 0 END) as sales,
+           SUM(CASE WHEN transaction_type='return' THEN total_amount ELSE 0 END) as returns
+         FROM transactions
+         WHERE is_voided = 0 AND DATE(created_at) BETWEEN ? AND ?
+         GROUP BY DATE(created_at)
+       ) txn ON d.date = txn.date
+       LEFT JOIN (
+         SELECT DATE(t.created_at) as date, SUM(ti.gross_profit) as profit
+         FROM transaction_items ti
+         JOIN transactions t ON ti.transaction_id = t.id
+         WHERE t.is_voided = 0 AND DATE(t.created_at) BETWEEN ? AND ?
+         GROUP BY DATE(t.created_at)
+       ) items ON d.date = items.date
+       ORDER BY d.date`,
+      [startDate, endDate, startDate, endDate, startDate, endDate]
     );
 
     const expensesByCategory = await this.base.getAll<{ category: string; total: number }>(

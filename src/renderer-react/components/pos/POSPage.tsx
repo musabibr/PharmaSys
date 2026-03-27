@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { useShiftStore } from '@/stores/shift.store';
@@ -33,6 +33,13 @@ export function POSPage() {
   const [heldSalesOpen, setHeldSalesOpen] = useState(false);
   const [lastTransaction, setLastTransaction] = useState<Transaction | null>(null);
   const [productRefreshKey, setProductRefreshKey] = useState(0);
+
+  // Refresh product grid when products are edited in other tabs (e.g. inventory)
+  useEffect(() => {
+    const handler = () => setProductRefreshKey((k) => k + 1);
+    window.addEventListener('pharmasys:products-changed', handler);
+    return () => window.removeEventListener('pharmasys:products-changed', handler);
+  }, []);
 
   const shiftOpen = !shiftsEnabled || currentShift != null || isAdmin;
 

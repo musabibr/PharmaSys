@@ -229,7 +229,7 @@ export class PurchaseRepository implements IPurchaseRepository {
 
   async getPaidTotal(purchaseId: number): Promise<number> {
     const row = await this.base.getOne<{ total: number }>(
-      `SELECT COALESCE(SUM(COALESCE(paid_amount, amount)), 0) as total
+      `SELECT COALESCE(SUM(CASE WHEN paid_amount IS NOT NULL THEN paid_amount ELSE amount END), 0) as total
        FROM purchase_payments
        WHERE purchase_id = ? AND is_paid = 1`,
       [purchaseId]

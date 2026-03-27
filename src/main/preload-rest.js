@@ -171,13 +171,17 @@ contextBridge.exposeInMainWorld('api', {
   // ════════════════════════════════════════
 
   products: {
-    getAll:     async ()             => get('/api/v1/products'),
-    getById:    async (id)           => get(`/api/v1/products/${id}`),
-    create:     async (productData)  => post('/api/v1/products', productData),
-    update:     async (id, data)     => put(`/api/v1/products/${id}`, data),
-    delete:     async (id)           => del(`/api/v1/products/${id}`),
-    search:     async (query)        => get(`/api/v1/products/search?q=${encodeURIComponent(query)}`),
-    bulkCreate: async (items)        => post('/api/v1/products/bulk', items),
+    getAll:        async ()             => get('/api/v1/products'),
+    getList:       async (filters)      => get(`/api/v1/products/list${qs(filters)}`),
+    getById:       async (id)           => get(`/api/v1/products/${id}`),
+    create:        async (productData)  => post('/api/v1/products', productData),
+    update:        async (id, data)     => put(`/api/v1/products/${id}`, data),
+    delete:        async (id)           => del(`/api/v1/products/${id}`),
+    search:        async (query)        => get(`/api/v1/products/search?q=${encodeURIComponent(query)}`),
+    findByBarcode: async (barcode)      => get(`/api/v1/products/barcode/${encodeURIComponent(barcode)}`),
+    bulkCreate:    async (items)        => post('/api/v1/products/bulk', items),
+    getDeleteInfo: async (id)           => get(`/api/v1/products/${id}/delete-info`),
+    bulkDelete:    async (ids)          => post('/api/v1/products/bulk-delete', { ids }),
   },
 
   // ════════════════════════════════════════
@@ -185,13 +189,17 @@ contextBridge.exposeInMainWorld('api', {
   // ════════════════════════════════════════
 
   batches: {
-    getByProduct:   async (productId) => get(`/api/v1/batches/by-product/${productId}`),
-    getAvailable:   async (productId) => get(`/api/v1/batches/available/${productId}`),
-    getAllAvailable: async (filters)   => get(`/api/v1/batches/available${qs(filters)}`),
-    create:         async (batchData) => post('/api/v1/batches', batchData),
-    update:         async (id, data)  => put(`/api/v1/batches/${id}`, data),
-    getExpiring:    async (days)      => get(`/api/v1/batches/expiring?days=${days}`),
-    getExpired:     async ()          => get('/api/v1/batches/expired'),
+    getByProduct:                  async (productId) => get(`/api/v1/batches/by-product/${productId}`),
+    getAvailable:                  async (productId) => get(`/api/v1/batches/available/${productId}`),
+    getAllAvailable:                async (filters)   => get(`/api/v1/batches/available${qs(filters)}`),
+    create:                        async (batchData) => post('/api/v1/batches', batchData),
+    update:                        async (id, data)  => put(`/api/v1/batches/${id}`, data),
+    getExpiring:                   async (days)      => get(`/api/v1/batches/expiring?days=${days}`),
+    getExpired:                    async ()          => get('/api/v1/batches/expired'),
+    getActiveBatchesForPriceUpdate: async (productId) => get(`/api/v1/batches/active/${productId}`),
+    updatePricesByProduct:         async (data)      => post('/api/v1/batches/update-prices', data),
+    getDeleteInfo:                 async (id)        => get(`/api/v1/batches/${id}/delete-info`),
+    bulkDelete:                    async (ids)       => post('/api/v1/batches/bulk-delete', { ids }),
   },
 
   // ════════════════════════════════════════
@@ -382,6 +390,7 @@ contextBridge.exposeInMainWorld('api', {
     getById: async (id)              => get(`/api/v1/purchases/suppliers/${id}`),
     create:  async (data)            => post('/api/v1/purchases/suppliers', data),
     update:  async (id, data)        => put(`/api/v1/purchases/suppliers/${id}`, data),
+    delete:  async (id)              => del(`/api/v1/purchases/suppliers/${id}`),
   },
 
   // ════════════════════════════════════════
@@ -394,11 +403,43 @@ contextBridge.exposeInMainWorld('api', {
     getItems:            async (purchaseId)                => get(`/api/v1/purchases/${purchaseId}/items`),
     getPayments:         async (purchaseId)                => get(`/api/v1/purchases/${purchaseId}/payments`),
     create:              async (data)                      => post('/api/v1/purchases', data),
-    markPaymentPaid:     async (paymentId, paymentMethod)  => post(`/api/v1/purchases/payments/${paymentId}/pay`, { payment_method: paymentMethod }),
-    getAgingPayments:    async ()                          => get('/api/v1/purchases/aging'),
-    getOverdueSummary:   async ()                          => get('/api/v1/purchases/overdue-summary'),
-    getUpcomingPayments: async ()                          => get('/api/v1/purchases/upcoming-payments'),
-    getUpcomingSummary:  async ()                          => get('/api/v1/purchases/upcoming-summary'),
+    update:              async (id, data)                  => put(`/api/v1/purchases/${id}`, data),
+    delete:              async (id, force)                 => del(`/api/v1/purchases/${id}${force ? '?force=true' : ''}`),
+    addItems:            async (purchaseId, data)          => post(`/api/v1/purchases/${purchaseId}/items`, data),
+    markPaymentPaid:     async (paymentId, paymentMethod, referenceNumber, paidAmount, adjustmentStrategy) =>
+      post(`/api/v1/purchases/payments/${paymentId}/pay`, { payment_method: paymentMethod, reference_number: referenceNumber, paid_amount: paidAmount, adjustment_strategy: adjustmentStrategy }),
+    updatePaymentSchedule:  async (purchaseId, payments)   => put(`/api/v1/purchases/${purchaseId}/schedule`, { payments }),
+    replaceUnpaidSchedule:  async (purchaseId, payments)   => put(`/api/v1/purchases/${purchaseId}/schedule/replace`, { payments }),
+    getAgingPayments:       async ()                       => get('/api/v1/purchases/aging'),
+    getOverdueSummary:      async ()                       => get('/api/v1/purchases/overdue-summary'),
+    getUpcomingPayments:    async ()                       => get('/api/v1/purchases/upcoming-payments'),
+    getUpcomingSummary:     async ()                       => get('/api/v1/purchases/upcoming-summary'),
+    getPendingItems:        async (purchaseId)             => get(`/api/v1/purchases/${purchaseId}/pending-items`),
+    completePendingItem:    async (pendingItemId, itemData) => post(`/api/v1/purchases/pending-items/${pendingItemId}/complete`, itemData),
+    deletePendingItem:      async (pendingItemId)          => del(`/api/v1/purchases/pending-items/${pendingItemId}`),
+    updatePendingItem:      async (pendingItemId, rawData, notes) => put(`/api/v1/purchases/pending-items/${pendingItemId}`, { rawData, notes }),
+    updatePayment:          async (paymentId, data)        => put(`/api/v1/purchases/payments/${paymentId}`, data),
+    unmarkPaymentPaid:      async (paymentId)              => post(`/api/v1/purchases/payments/${paymentId}/unpay`, {}),
+    deletePayment:          async (paymentId)              => del(`/api/v1/purchases/payments/${paymentId}`),
+    updateItem:             async (itemId, data)           => put(`/api/v1/purchases/items/${itemId}`, data),
+    deleteItem:             async (itemId)                 => del(`/api/v1/purchases/items/${itemId}`),
+    merge:                  async (targetId, sourceIds)    => post(`/api/v1/purchases/${targetId}/merge`, { sourceIds }),
+    getAllPendingItems:     async (filters)                => get(`/api/v1/purchases/pending-items${qs(filters)}`),
+  },
+
+  // ════════════════════════════════════════
+  //  RECURRING EXPENSES
+  // ════════════════════════════════════════
+
+  recurringExpenses: {
+    getAll:       async ()         => get('/api/v1/recurring-expenses'),
+    create:       async (data)     => post('/api/v1/recurring-expenses', data),
+    update:       async (id, data) => put(`/api/v1/recurring-expenses/${id}`, data),
+    delete:       async (id)       => del(`/api/v1/recurring-expenses/${id}`),
+    toggleActive: async (id)       => post(`/api/v1/recurring-expenses/${id}/toggle`, {}),
+    preview:      async ()         => get('/api/v1/recurring-expenses/preview'),
+    generate:     async (itemIds)  => post('/api/v1/recurring-expenses/generate', { itemIds }),
+    restartTimer: async ()         => { /* no-op in client mode — timer runs on server */ },
   },
 
   // ════════════════════════════════════════
@@ -442,6 +483,21 @@ contextBridge.exposeInMainWorld('api', {
       return ipcRenderer.invoke('discovery:scan');
     },
   },
+
+  // ════════════════════════════════════════
+  //  PDF PARSING (not available in client mode)
+  // ════════════════════════════════════════
+
+  pdf: {
+    parsePython: async () => ({ error: 'PDF parsing is only available on the server device', code: 'NOT_AVAILABLE' }),
+  },
+
+  // ════════════════════════════════════════
+  //  STARTUP NOTIFICATIONS
+  // ════════════════════════════════════════
+
+  notifyReady: () => {},
+  onStartupRecurringGenerated: noop,
 });
 
 console.log(`[Preload-REST] PharmaSys client mode → ${SERVER_URL}`);

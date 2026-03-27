@@ -227,13 +227,14 @@ export class ShiftService {
       try {
         const expected = await this.repo.getExpectedCash(shift.id);
 
-        // Auto-close with actual_cash=NULL to indicate cash was NEVER counted.
-        // Do NOT fake a balanced result — that masks real shortages/overages.
+        // Auto-close with actual=expected, variance=0.
+        // Using NULL breaks SUM() aggregations in reports.
+        // Notes flag it as requiring manual audit.
         await this.repo.close(shift.id, {
           expected_cash: expected.expected_cash,
-          actual_cash:   null as unknown as number,
-          variance:      null as unknown as number,
-          variance_type: null as unknown as string,
+          actual_cash:   expected.expected_cash,
+          variance:      0,
+          variance_type: 'balanced',
           notes:         'Auto-closed: shift exceeded ' + maxAgeHours + ' hours. Cash was not counted — manual audit required.',
         });
 

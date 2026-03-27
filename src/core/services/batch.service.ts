@@ -61,7 +61,10 @@ export class BatchService {
     const result = await this.repo.create({
       ...data,
       cost_per_parent: costParent,
+      cost_per_child: Money.divideToChild(costParent, cf),
       selling_price_parent: sellParent,
+      selling_price_child: sellParent ? Money.divideToChild(sellParent, cf) : 0,
+      selling_price_parent_override: sellParent,
       cost_per_child_override: costChild,
       selling_price_child_override: sellChild,
     });
@@ -91,6 +94,30 @@ export class BatchService {
 
     if (data.expiry_date !== undefined) {
       Validate.dateString(data.expiry_date, 'Expiry date');
+    }
+
+    // Block cost_per_parent changes on batches that have been sold
+    if (data.cost_per_parent !== undefined && data.cost_per_parent !== existing.cost_per_parent) {
+      const info = await this.repo.getBatchDeleteInfo(id);
+      if (info && info.txn_count > 0) {
+        throw new ValidationError(
+          'Cannot change cost after sales have been recorded against this batch', 'cost_per_parent'
+        );
+      }
+    }
+
+    // Auto-recalculate base child prices when parent prices change
+    const cf = (existing as any).conversion_factor ?? 1;
+    if (data.cost_per_parent !== undefined && cf > 1) {
+      data.cost_per_child = Money.divideToChild(data.cost_per_parent, cf);
+    }
+    if ((data.selling_price_parent !== undefined || data.selling_price_parent_override !== undefined) && cf > 1) {
+      const newSellParent = data.selling_price_parent_override
+        ?? data.selling_price_parent
+        ?? existing.selling_price_parent_override
+        ?? existing.selling_price_parent
+        ?? 0;
+      data.selling_price_child = Money.divideToChild(newSellParent, cf);
     }
 
     await this.repo.update(id, data);
@@ -184,7 +211,10 @@ export class BatchService {
     userId: number
   ): Promise<number> {
     Validate.id(productId, 'Product');
-    const count = await this.repo.bulkUpdateSellingPrices(productId, sellingPriceParent, sellingPriceChild);
+    const product = await this.productRepo.getById(productId);
+    const cf = product?.conversion_factor ?? 1;
+    const baseChildPrice = cf > 1 ? Money.divideToChild(sellingPriceParent, cf) : sellingPriceParent;
+    const count = await this.repo.bulkUpdateSellingPrices(productId, sellingPriceParent, baseChildPrice, sellingPriceChild);
     if (count > 0) {
       this.bus.emit('entity:mutated', {
         action: 'BULK_UPDATE_BATCH_PRICES', table: 'batches',

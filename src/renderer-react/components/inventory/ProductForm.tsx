@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { Loader2, Package, X } from 'lucide-react';
-import type { Product, Category, Batch } from '@/api/types';
+import type { Product, Category } from '@/api/types';
 import { api, throwIfError } from '@/api';
 import { formatCurrency } from '@/lib/utils';
 import { usePermission } from '@/hooks/usePermission';
@@ -57,6 +57,7 @@ interface ProductFormProps {
 
 // ---------------------------------------------------------------------------
 // ProductForm — create / edit product dialog
+// Product-level fields only. Pricing is managed per-batch in BatchForm.
 // ---------------------------------------------------------------------------
 
 export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFormProps) {
@@ -77,7 +78,7 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
   const [conversionFactor, setConversionFactor] = useState(1);
   const [minStockLevel, setMinStockLevel] = useState(0);
 
-  // ── Stock section state ───────────────────────────────────────────────────
+  // ── Initial stock section state (create mode only) ─────────────────────
   const [addStock, setAddStock] = useState(false);
   const [batchNumber, setBatchNumber] = useState('');
   const [expiryDate, setExpiryDate] = useState('');
@@ -99,33 +100,7 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
 
   const hasChildUnit = !!childUnit.trim() && conversionFactor > 1;
 
-  // ── Existing batches (edit mode only) ───────────────────────────────────
-  const [existingBatches, setExistingBatches] = useState<Batch[]>([]);
-  const [editingBatchPrices, setEditingBatchPrices] = useState<Record<number, { sell: number; markup: number }>>({});
-
-  useEffect(() => {
-    if (!open || !isEdit || !product) { setExistingBatches([]); return; }
-    (async () => {
-      try {
-        const batches = await api.batches.getByProduct(product.id);
-        setExistingBatches(batches.filter(b => b.quantity_base > 0));
-        const prices: Record<number, { sell: number; markup: number }> = {};
-        for (const b of batches) {
-          if (b.quantity_base > 0) {
-            const sell = b.selling_price_parent_override || b.selling_price_parent || 0;
-            const cost = b.cost_per_parent || 0;
-            prices[b.id] = {
-              sell,
-              markup: cost > 0 ? Math.round(((sell - cost) / cost) * 100) : 0,
-            };
-          }
-        }
-        setEditingBatchPrices(prices);
-      } catch { /* non-critical */ }
-    })();
-  }, [open, isEdit, product]);
-
-  // ── Fetch categories on open ──────────────────────────────────────────────
+  // ── Fetch categories when dialog opens ───────────────────────────────────
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -138,7 +113,7 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
     return () => { cancelled = true; };
   }, [open]);
 
-  // ── Populate / reset form ─────────────────────────────────────────────────
+  // ── Populate form AFTER categories are loaded (fixes Radix Select blank) ─
   useEffect(() => {
     if (!open) return;
     if (isEdit && product) {
@@ -175,7 +150,7 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
     setCostChildTouched(false);
     setSellChildTouched(false);
     setError(null);
-  }, [open, isEdit, product]);
+  }, [open, isEdit, product, categories]);
 
   // ── Auto-calc: sell price parent from cost ────────────────────────────────
   useEffect(() => {
@@ -222,7 +197,7 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
       setError(t('Conversion factor must be at least 1'));
       return false;
     }
-    if (addStock) {
+    if (addStock && !isEdit) {
       if (!expiryDate) {
         setError(t('Expiry date is required when adding stock'));
         return false;
@@ -266,33 +241,15 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
 
       if (isEdit && product) {
         savedProduct = throwIfError(await api.products.update(product.id, productPayload));
-
-        // Save batch price changes (selling price + markup)
-        for (const [batchIdStr, prices] of Object.entries(editingBatchPrices)) {
-          const batchId = Number(batchIdStr);
-          const origBatch = existingBatches.find(b => b.id === batchId);
-          if (!origBatch) continue;
-          const origSell = origBatch.selling_price_parent_override || origBatch.selling_price_parent || 0;
-          if (prices.sell !== origSell) {
-            try {
-              await api.batches.update(batchId, {
-                selling_price_parent: prices.sell,
-                selling_price_parent_override: prices.sell,
-                version: origBatch.version,
-              } as Partial<Batch>);
-            } catch { /* batch might have been modified — non-critical */ }
-          }
-        }
-
         toast.success(t('Product updated'));
       } else {
         savedProduct = throwIfError(await api.products.create(productPayload));
         toast.success(t('Product created'));
       }
 
-      // Create batch if stock section is filled in
-      if (addStock && (savedProduct?.id || (isEdit && product?.id))) {
-        const productId = savedProduct?.id ?? product!.id;
+      // Create initial batch (create mode only)
+      if (!isEdit && addStock && savedProduct?.id) {
+        const productId = savedProduct.id;
         const cf = effectiveConvFactor;
 
         const batchPayload: Record<string, unknown> = {
@@ -314,7 +271,6 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
           throwIfError(await api.batches.create(batchPayload as Parameters<typeof api.batches.create>[0]));
           toast.success(t('Stock batch added'));
         } catch (batchErr: unknown) {
-          // Product was saved — warn about batch failure but don't block
           toast.warning(
             t('Product saved but batch failed: {{msg}}', {
               msg: batchErr instanceof Error ? batchErr.message : t('Unknown error'),
@@ -323,6 +279,8 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
         }
       }
 
+      // Signal other components (e.g. POS ProductGrid) to refresh
+      window.dispatchEvent(new Event('pharmasys:products-changed'));
       onSaved();
       onOpenChange(false);
     } catch (err: unknown) {
@@ -346,7 +304,7 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
           </DialogTitle>
           <DialogDescription>
             {isEdit
-              ? t('Update the product details below.')
+              ? t('Update the product details below. Manage pricing in the Batches tab.')
               : t('Fill in the details to create a new product.')}
           </DialogDescription>
         </DialogHeader>
@@ -480,6 +438,13 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
               </p>
             )}
 
+            {/* ── CF cascade notice (edit mode) ─────────────────────────── */}
+            {isEdit && product && conversionFactor !== (product.conversion_factor || 1) && conversionFactor > 1 && (
+              <p className="rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                {t('Changing conversion factor will recalculate all batch child prices automatically.')}
+              </p>
+            )}
+
             {/* ── Min stock level ───────────────────────────────────────── */}
             <div className="space-y-1.5">
               <Label htmlFor="pf-min-stock">{t('Min Stock Level')}</Label>
@@ -498,83 +463,35 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
 
             <Separator />
 
-            {/* ── Existing batch prices (edit mode) ────────────────────── */}
-            {isEdit && existingBatches.length > 0 && canViewCosts && (
-              <div className="space-y-3">
-                <p className="text-sm font-medium">{t('Current Batch Prices')}</p>
-                {existingBatches.map((b) => {
-                  const prices = editingBatchPrices[b.id];
-                  if (!prices) return null;
-                  return (
-                    <div key={b.id} className="flex items-center gap-2 rounded-md border p-2 text-sm">
-                      <div className="flex-1 min-w-0">
-                        <span className="text-xs text-muted-foreground">{b.batch_number || `#${b.id}`}</span>
-                        <span className="mx-1.5 text-muted-foreground">·</span>
-                        <span className="text-xs">{t('Cost')}: {formatCurrency(b.cost_per_parent)}</span>
-                      </div>
-                      <Input
-                        type="number" min={0} step={1}
-                        className="h-7 w-24 text-end text-xs"
-                        value={prices.sell || ''}
-                        placeholder={t('Sell')}
-                        onChange={(e) => {
-                          const sell = Math.max(0, parseInt(e.target.value, 10) || 0);
-                          const cost = b.cost_per_parent || 1;
-                          setEditingBatchPrices(prev => ({
-                            ...prev,
-                            [b.id]: { sell, markup: Math.round(((sell - cost) / cost) * 100) },
-                          }));
-                        }}
-                      />
-                      <Input
-                        type="number" min={0} step={1}
-                        className="h-7 w-16 text-end text-xs"
-                        value={prices.markup || ''}
-                        placeholder="%"
-                        title={t('Markup %')}
-                        onChange={(e) => {
-                          const markup = parseInt(e.target.value, 10) || 0;
-                          const cost = b.cost_per_parent || 1;
-                          const sell = Math.round(cost * (1 + markup / 100));
-                          setEditingBatchPrices(prev => ({
-                            ...prev,
-                            [b.id]: { sell, markup },
-                          }));
-                        }}
-                      />
-                    </div>
-                  );
-                })}
+            {/* ── Add Initial Stock toggle (create mode only) ────────────── */}
+            {!isEdit && (
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Package className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">
+                    {t('Add Initial Stock')}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={addStock}
+                  onClick={() => setAddStock(!addStock)}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                    addStock ? 'bg-primary' : 'bg-input'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
+                      addStock ? 'translate-x-4' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
               </div>
             )}
 
-            {/* ── Add Stock toggle ──────────────────────────────────────── */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Package className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-medium">
-                  {isEdit ? t('Add New Stock Batch') : t('Add Initial Stock')}
-                </span>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={addStock}
-                onClick={() => setAddStock(!addStock)}
-                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                  addStock ? 'bg-primary' : 'bg-input'
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
-                    addStock ? 'translate-x-4' : 'translate-x-0.5'
-                  }`}
-                />
-              </button>
-            </div>
-
-            {/* ── Stock fields (shown when toggle is ON) ────────────────── */}
-            {addStock && (
+            {/* ── Stock fields (create mode only, shown when toggle is ON) */}
+            {!isEdit && addStock && (
               <div className="space-y-4 rounded-lg border border-dashed p-4">
 
                 {/* Batch number */}

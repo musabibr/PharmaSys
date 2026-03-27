@@ -14,6 +14,7 @@ const ALLOWED_KEYS = new Set([
   'money_migration_manual_needed', 'money_migration_completed',
   'session_timeout_minutes', 'account_lockout_attempts',
   'account_lockout_duration_minutes', 'shifts_enabled',
+  'recurring_generation_mode', 'recurring_generation_hour',
 ]);
 
 export class SettingsService {

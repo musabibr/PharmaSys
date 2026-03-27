@@ -171,6 +171,37 @@ describe('ProductService', () => {
         action: 'UPDATE_PRODUCT',
       }));
     });
+
+    it('cascades conversion_factor change to batch child prices', async () => {
+      const { svc, productRepo, batchRepo, bus } = createService();
+      productRepo.getById
+        .mockResolvedValueOnce({ ...sampleProduct, conversion_factor: 20 })
+        .mockResolvedValue({ ...sampleProduct, conversion_factor: 10 });
+      batchRepo.recalculateChildPricesForProduct.mockResolvedValue(3);
+
+      const result = await svc.update(1, { conversion_factor: 10 } as any, 1);
+      expect(batchRepo.recalculateChildPricesForProduct).toHaveBeenCalledWith(1, 10);
+      expect(bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
+        action: 'CASCADE_CF_CHANGE',
+        oldValues: { conversion_factor: 20 },
+        newValues: { conversion_factor: 10 },
+      }));
+      expect(result.conversion_factor).toBe(10);
+    });
+
+    it('does not cascade when conversion_factor is unchanged', async () => {
+      const { svc, productRepo, batchRepo } = createService();
+      productRepo.getById.mockResolvedValue({ ...sampleProduct, conversion_factor: 20 });
+
+      await svc.update(1, { conversion_factor: 20 } as any, 1);
+      expect(batchRepo.recalculateChildPricesForProduct).not.toHaveBeenCalled();
+    });
+
+    it('rejects non-integer conversion_factor', async () => {
+      const { svc, productRepo } = createService();
+      productRepo.getById.mockResolvedValue(sampleProduct);
+      await expect(svc.update(1, { conversion_factor: 1.5 } as any, 1)).rejects.toThrow(ValidationError);
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════════════════

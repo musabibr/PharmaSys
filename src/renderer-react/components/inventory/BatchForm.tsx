@@ -91,6 +91,9 @@ export function BatchForm({
   const [costChildTouched, setCostChildTouched] = useState(false);
   const [sellChildTouched, setSellChildTouched] = useState(false);
 
+  // Link child sell → parent sell (reverse calculation)
+  const [linkPrices, setLinkPrices] = useState(true);
+
   // ---- Initialize form when opening ----
   useEffect(() => {
     if (!open) return;
@@ -107,9 +110,8 @@ export function BatchForm({
       // Edit mode: populate from existing batch
       setBatchNumber(batch.batch_number ?? '');
       setExpiryDate(batch.expiry_date);
-      // For edit mode, quantity is the current base quantity converted to parent
-      const cf = conversionFactor || 1;
-      setQuantity(cf > 1 ? Math.floor(batch.quantity_base / cf) : batch.quantity_base);
+      // Edit mode: show raw base units to avoid truncation (e.g., 105 strips, not 10 boxes)
+      setQuantity(batch.quantity_base);
       setCostPerParent(batch.cost_per_parent);
       setSellPricePerParent(
         batch.selling_price_parent_override || batch.selling_price_parent || 0
@@ -157,12 +159,12 @@ export function BatchForm({
     }
   }, [costPerParent, hasChildUnit, conversionFactor, costChildTouched]);
 
-  // ---- Auto-calculate sell price per child (only if not manually touched) ----
+  // ---- Auto-calculate sell price per child from parent (forward sync) ----
   useEffect(() => {
-    if (!sellChildTouched && hasChildUnit && sellPricePerParent > 0) {
+    if (!sellChildTouched && hasChildUnit && sellPricePerParent > 0 && linkPrices) {
       setSellPricePerChild(Math.floor(sellPricePerParent / conversionFactor));
     }
-  }, [sellPricePerParent, hasChildUnit, conversionFactor, sellChildTouched]);
+  }, [sellPricePerParent, hasChildUnit, conversionFactor, sellChildTouched, linkPrices]);
 
   // ---- Show price-update offer: only when new batch has the latest expiry ----
   const showUpdateOffer = useMemo(() => {
@@ -190,13 +192,32 @@ export function BatchForm({
         ? 'text-yellow-600'
         : 'text-destructive';
 
+  // ---- Child margin ----
+  const childMargin = useMemo(() => {
+    if (!hasChildUnit || sellPricePerChild <= 0 || costPerChild <= 0) {
+      return { percent: 0, profit: 0 };
+    }
+    const profit = sellPricePerChild - costPerChild;
+    return { percent: Math.round((profit / costPerChild) * 100), profit };
+  }, [costPerChild, sellPricePerChild, hasChildUnit]);
+
+  const childMarginColor =
+    childMargin.percent >= defaultMarkup
+      ? 'text-green-600'
+      : childMargin.percent >= defaultMarkup / 2
+        ? 'text-yellow-600'
+        : 'text-destructive';
+
   // ---- Validation ----
   function validate(): string | null {
     if (!expiryDate) return t('Expiry date is required');
     if (!isEditMode) {
+      const today = new Date().toISOString().split('T')[0];
+      if (expiryDate <= today) return t('Expiry date must be in the future');
       if (quantity < 1) return t('Quantity must be at least 1');
     }
     if (costPerParent <= 0) return t('Cost per base unit is required');
+    if (sellPricePerParent <= 0) return t('Selling price is required');
     return null;
   }
 
@@ -216,11 +237,11 @@ export function BatchForm({
     try {
       if (isEditMode && batch) {
         // Edit mode: update batch (including quantity for physical count corrections)
-        const cf = conversionFactor || 1;
+        // quantity is already in base units in edit mode — no CF multiplication needed
         const updateData: Record<string, unknown> = {
           version: batch.version,
           expiry_date: expiryDate,
-          quantity_base: quantity * cf,
+          quantity_base: quantity,
           cost_per_parent: costPerParent,
           selling_price_parent: sellPricePerParent || null,
           selling_price_parent_override: sellPricePerParent || null,
@@ -323,7 +344,7 @@ export function BatchForm({
           {/* ---- Quantity ---- */}
           <div className="space-y-2">
             <Label htmlFor="batch-qty">
-              {isEditMode ? t('Stock Quantity') : t('Quantity')} ({parentUnit}) {!isEditMode && '*'}
+              {isEditMode ? t('Stock Quantity') : t('Quantity')} ({isEditMode && childUnit ? childUnit : parentUnit}) {!isEditMode && '*'}
             </Label>
             <Input
               id="batch-qty"
@@ -378,7 +399,13 @@ export function BatchForm({
                     value={sellPricePerParent || ''}
                     onChange={(e) => {
                       setSellParentTouched(true);
-                      setSellPricePerParent(Math.max(0, parseInt(e.target.value, 10) || 0));
+                      const parentSell = Math.max(0, parseInt(e.target.value, 10) || 0);
+                      setSellPricePerParent(parentSell);
+                      // Forward sync: parent sell ÷ CF = child sell
+                      if (linkPrices && hasChildUnit && parentSell > 0) {
+                        setSellChildTouched(true);
+                        setSellPricePerChild(Math.floor(parentSell / conversionFactor));
+                      }
                     }}
                     placeholder={costPerParent > 0 ? String(Math.round(costPerParent * 1.2)) : '0'}
                     disabled={loading}
@@ -393,7 +420,12 @@ export function BatchForm({
                       onChange={(e) => {
                         const pct = parseInt(e.target.value, 10) || 0;
                         setSellParentTouched(true);
-                        setSellPricePerParent(Math.round(costPerParent * (1 + pct / 100)));
+                        const parentSell = Math.round(costPerParent * (1 + pct / 100));
+                        setSellPricePerParent(parentSell);
+                        if (linkPrices && hasChildUnit && parentSell > 0) {
+                          setSellChildTouched(true);
+                          setSellPricePerChild(Math.floor(parentSell / conversionFactor));
+                        }
                       }}
                       placeholder="%"
                       disabled={loading || costPerParent <= 0}
@@ -408,9 +440,20 @@ export function BatchForm({
                 <>
                   <Separator />
 
-                  <p className="text-xs text-muted-foreground">
-                    {t('Small unit prices')} (1 {parentUnit} = {conversionFactor} {childUnit})
-                  </p>
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-muted-foreground">
+                      {t('Small unit prices')} (1 {parentUnit} = {conversionFactor} {childUnit})
+                    </p>
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={linkPrices}
+                        onChange={(e) => setLinkPrices(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded border-gray-300 accent-primary"
+                      />
+                      <span className="text-xs text-muted-foreground">{t('Link prices')}</span>
+                    </label>
+                  </div>
 
                   {/* ---- Cost per child ---- */}
                   <div className="space-y-2">
@@ -432,25 +475,64 @@ export function BatchForm({
                     />
                   </div>
 
-                  {/* ---- Selling price per child ---- */}
+                  {/* ---- Selling price per child + markup ---- */}
                   <div className="space-y-2">
                     <Label htmlFor="sell-child">
                       {t('Selling Price (Small Unit)')} (SDG)
                     </Label>
-                    <Input
-                      id="sell-child"
-                      type="number"
-                      min={0}
-                      step={1}
-                      value={sellPricePerChild || ''}
-                      onChange={(e) => {
-                        setSellChildTouched(true);
-                        setSellPricePerChild(Math.max(0, parseInt(e.target.value, 10) || 0));
-                      }}
-                      placeholder={sellPricePerParent > 0 ? String(Math.floor(sellPricePerParent / conversionFactor)) : '0'}
-                      disabled={loading}
-                    />
+                    <div className="flex gap-2">
+                      <Input
+                        id="sell-child"
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={sellPricePerChild || ''}
+                        onChange={(e) => {
+                          setSellChildTouched(true);
+                          const childSell = Math.max(0, parseInt(e.target.value, 10) || 0);
+                          setSellPricePerChild(childSell);
+                          // Reverse calc: child sell × CF = parent sell
+                          if (linkPrices && childSell > 0) {
+                            setSellParentTouched(true);
+                            setSellPricePerParent(childSell * conversionFactor);
+                          }
+                        }}
+                        placeholder={sellPricePerParent > 0 ? String(Math.floor(sellPricePerParent / conversionFactor)) : '0'}
+                        disabled={loading}
+                        className="flex-1"
+                      />
+                      <div className="w-20 shrink-0">
+                        <Input
+                          type="number"
+                          min={0}
+                          step={1}
+                          value={costPerChild > 0 ? Math.round(((sellPricePerChild - costPerChild) / costPerChild) * 100) : ''}
+                          onChange={(e) => {
+                            const pct = parseInt(e.target.value, 10) || 0;
+                            setSellChildTouched(true);
+                            const childSell = Math.round((costPerChild || 1) * (1 + pct / 100));
+                            setSellPricePerChild(childSell);
+                            if (linkPrices && childSell > 0) {
+                              setSellParentTouched(true);
+                              setSellPricePerParent(childSell * conversionFactor);
+                            }
+                          }}
+                          placeholder="%"
+                          disabled={loading || costPerChild <= 0}
+                          title={t('Markup %')}
+                        />
+                      </div>
+                    </div>
                   </div>
+
+                  {/* ---- Child margin ---- */}
+                  {costPerChild > 0 && (
+                    <div className="rounded-lg bg-muted/50 px-4 py-2">
+                      <p className={`text-xs font-semibold ${childMarginColor}`}>
+                        {t('Margin')}: {childMargin.percent}% ({formatCurrency(childMargin.profit)} {t('profit per')} {childUnit})
+                      </p>
+                    </div>
+                  )}
                 </>
               )}
 

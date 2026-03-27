@@ -1,10 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import {
-  DollarSign,
-  Hash,
-  TrendingDown,
   Plus,
   Trash2,
   Loader2,
@@ -16,10 +13,13 @@ import {
   FolderPlus,
   Printer,
   Pencil,
+  CalendarClock,
+  Search,
 } from 'lucide-react';
 import { printHtml } from '@/lib/print';
 import { api } from '@/api';
 import type { Expense, ExpenseCategory } from '@/api/types';
+import { RecurringExpensesPanel } from './RecurringExpensesPanel';
 import { DataPagination } from '@/components/ui/data-pagination';
 import { useAuthStore } from '@/stores/auth.store';
 import { usePermission } from '@/hooks/usePermission';
@@ -31,7 +31,7 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import {
   Table,
   TableBody,
@@ -52,10 +52,10 @@ import {
   Select,
   SelectContent,
   SelectItem,
-  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -82,10 +82,10 @@ function todayStr(): string {
   return `${y}-${m}-${day}`;
 }
 
-/** Format an ISO date string in a human-friendly form */
-function formatDate(dateStr: string): string {
+/** Format an ISO date string in a human-friendly form (locale-aware) */
+function formatDate(dateStr: string, locale: string = 'en'): string {
   const d = new Date(dateStr);
-  return d.toLocaleDateString('en-US', {
+  return d.toLocaleDateString(locale === 'ar' ? 'ar-EG' : 'en-US', {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
@@ -100,6 +100,8 @@ interface Filters {
   startDate: string;
   endDate: string;
   categoryId: string; // "all" or a stringified number
+  search: string;
+  recurringFilter: 'all' | 'recurring' | 'manual';
 }
 
 function defaultFilters(): Filters {
@@ -107,28 +109,134 @@ function defaultFilters(): Filters {
     startDate: firstOfMonth(),
     endDate: todayStr(),
     categoryId: ALL_CATEGORIES,
+    search: '',
+    recurringFilter: 'all',
   };
 }
 
 // ---------------------------------------------------------------------------
-// StatCard (local re-use)
+// Category Management Panel (scalable)
 // ---------------------------------------------------------------------------
 
-interface StatCardProps {
-  label: string;
-  value: string;
-  icon: React.ReactNode;
-}
+function CategoryManagementPanel({
+  categories,
+  onAddCategory,
+  newCategoryName,
+  setNewCategoryName,
+  addingCategory,
+  fetchCategories,
+}: {
+  categories: ExpenseCategory[];
+  onAddCategory: () => void;
+  newCategoryName: string;
+  setNewCategoryName: (v: string) => void;
+  addingCategory: boolean;
+  fetchCategories: () => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [catSearch, setCatSearch] = useState('');
 
-function StatCard({ label, value, icon }: StatCardProps) {
+  const filteredCats = useMemo(() => {
+    if (!catSearch.trim()) return categories;
+    const q = catSearch.toLowerCase();
+    return categories.filter(c => c.name.toLowerCase().includes(q));
+  }, [categories, catSearch]);
+
   return (
     <Card>
-      <CardContent className="p-6">
-        <div className="flex items-center justify-between">
-          <p className="text-sm font-medium text-muted-foreground">{label}</p>
-          <div className="text-muted-foreground/60">{icon}</div>
+      <CardContent className="p-3">
+        <div className="flex items-center gap-2 mb-2">
+          <Tag className="h-4 w-4 text-muted-foreground" />
+          <span className="text-sm font-medium">{t('Expense Categories')}</span>
+          <Badge variant="secondary" className="text-xs">{categories.length}</Badge>
         </div>
-        <p className="mt-2 text-2xl font-bold">{value}</p>
+
+        {/* Search + Add row */}
+        <div className="flex items-center gap-2 mb-2">
+          <Input
+            className="h-7 flex-1 text-sm"
+            placeholder={t('Search categories...')}
+            value={catSearch}
+            onChange={(e) => setCatSearch(e.target.value)}
+          />
+          <Input
+            className="h-7 w-36 text-sm"
+            placeholder={t('New category name')}
+            value={newCategoryName}
+            onChange={(e) => setNewCategoryName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                onAddCategory();
+              }
+            }}
+          />
+          <Button
+            size="sm"
+            className="h-7 gap-1 px-2"
+            onClick={onAddCategory}
+            disabled={!newCategoryName.trim() || addingCategory}
+          >
+            {addingCategory ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <FolderPlus className="h-3 w-3" />
+            )}
+            {t('Add')}
+          </Button>
+        </div>
+
+        {/* Category list */}
+        {categories.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-2">{t('No categories yet')}</p>
+        ) : (
+          <div className="max-h-48 overflow-auto space-y-0.5">
+            {filteredCats.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-2 text-center">{t('No categories found')}</p>
+            ) : (
+              filteredCats.map((cat) => (
+                <div
+                  key={cat.id}
+                  className="flex items-center justify-between rounded px-2 py-1 hover:bg-muted/50 group text-sm"
+                >
+                  <span>{cat.name}</span>
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      title={t('Rename')}
+                      onClick={() => {
+                        const newName = window.prompt(t('Rename category'), cat.name);
+                        if (newName && newName.trim() && newName.trim() !== cat.name) {
+                          api.expenses.updateCategory(cat.id, newName.trim())
+                            .then(() => { toast.success(t('Category updated')); fetchCategories(); })
+                            .catch((err: unknown) => toast.error(err instanceof Error ? err.message : t('Failed')));
+                        }
+                      }}
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-destructive hover:text-destructive"
+                      title={t('Delete category')}
+                      onClick={() => {
+                        if (!window.confirm(t('Delete category "{{name}}"?', { name: cat.name }))) return;
+                        api.expenses.deleteCategory(cat.id)
+                          .then(() => { toast.success(t('Category deleted')); fetchCategories(); })
+                          .catch((err: unknown) => toast.error(err instanceof Error ? err.message : t('Failed')));
+                      }}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -140,37 +248,25 @@ function StatCard({ label, value, icon }: StatCardProps) {
 
 function ExpensesSkeleton() {
   return (
-    <div className="space-y-6">
-      {/* Stats */}
-      <div className="grid gap-4 sm:grid-cols-3">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <Card key={i}>
-            <CardContent className="p-6">
-              <Skeleton className="mb-3 h-4 w-24" />
-              <Skeleton className="h-8 w-32" />
-            </CardContent>
-          </Card>
-        ))}
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <Skeleton className="h-8 w-40" />
+        <div className="flex gap-2">
+          <Skeleton className="h-8 w-20" />
+          <Skeleton className="h-8 w-28" />
+        </div>
       </div>
-
-      {/* Filter bar */}
       <Card>
-        <CardContent className="p-4">
-          <div className="flex gap-3">
-            <Skeleton className="h-9 w-40" />
-            <Skeleton className="h-9 w-40" />
-            <Skeleton className="h-9 w-40" />
-            <Skeleton className="h-9 w-24" />
+        <CardContent className="p-0">
+          <div className="flex gap-3 border-b p-3">
+            <Skeleton className="h-8 w-32" />
+            <Skeleton className="h-8 w-32" />
+            <Skeleton className="h-8 w-32" />
+            <Skeleton className="h-8 w-16" />
           </div>
-        </CardContent>
-      </Card>
-
-      {/* Table */}
-      <Card>
-        <CardContent className="p-4">
-          <div className="space-y-3">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} className="h-10 w-full" />
+          <div className="p-3 space-y-2">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <Skeleton key={i} className="h-9 w-full" />
             ))}
           </div>
         </CardContent>
@@ -184,7 +280,7 @@ function ExpensesSkeleton() {
 // ---------------------------------------------------------------------------
 
 export function ExpensesPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const currentUser = useAuthStore((s) => s.currentUser);
   const isAdmin = currentUser?.role === 'admin';
   const canManageExpenses = usePermission('finance.expenses.manage');
@@ -201,6 +297,7 @@ export function ExpensesPage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
+  const [totalAmount, setTotalAmount] = useState(0);
 
   // ── Filter state ──────────────────────────────────────────────────────────
   const [filters, setFilters] = useState<Filters>(defaultFilters);
@@ -218,6 +315,7 @@ export function ExpensesPage() {
   const [creatingCategory, setCreatingCategory] = useState(false);
   const [formAmount, setFormAmount] = useState('');
   const [formPaymentMethod, setFormPaymentMethod] = useState('cash');
+  const [formExpenseDate, setFormExpenseDate] = useState(todayStr());
   const [formDescription, setFormDescription] = useState('');
   const [formSubmitting, setFormSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -226,17 +324,15 @@ export function ExpensesPage() {
   const [newCategoryName, setNewCategoryName] = useState('');
   const [addingCategory, setAddingCategory] = useState(false);
 
-  // ── Derived stats ─────────────────────────────────────────────────────────
+  // ── Derived stats (uses API-level totalAmount, not page sum) ──────────────
   const stats = useMemo(() => {
-    const total = expenses.reduce((sum, e) => sum + e.amount, 0);
-    const count = expenses.length;
-    // Monthly average: total / number of months in the date range
+    // Monthly average: totalAmount / number of months in the date range
     const s = new Date(filters.startDate);
     const e = new Date(filters.endDate);
     const months = Math.max(1, (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth()) + 1);
-    const monthlyAvg = total > 0 ? Math.round(total / months) : 0;
-    return { total, count, monthlyAvg, months };
-  }, [expenses, filters.startDate, filters.endDate]);
+    const monthlyAvg = totalAmount > 0 ? Math.round(totalAmount / months) : 0;
+    return { total: totalAmount, count: total, monthlyAvg, months };
+  }, [totalAmount, total, filters.startDate, filters.endDate]);
 
   // ── Data fetching ─────────────────────────────────────────────────────────
   const fetchCategories = useCallback(async () => {
@@ -259,10 +355,14 @@ export function ExpensesPage() {
       if (f.startDate) apiFilters.start_date = f.startDate;
       if (f.endDate) apiFilters.end_date = f.endDate;
       if (f.categoryId !== ALL_CATEGORIES) apiFilters.category_id = Number(f.categoryId);
+      if (f.search.trim()) apiFilters.search = f.search.trim();
+      if (f.recurringFilter === 'recurring') apiFilters.is_recurring = 1;
+      else if (f.recurringFilter === 'manual') apiFilters.is_recurring = 0;
 
       const result = await api.expenses.getAll(apiFilters);
       setExpenses(Array.isArray(result.data) ? result.data : []);
       setTotal(result.total);
+      setTotalAmount(result.totalAmount ?? 0);
       setTotalPages(result.totalPages);
       if (p > result.totalPages && result.totalPages > 0) {
         setPage(result.totalPages);
@@ -275,6 +375,7 @@ export function ExpensesPage() {
   }, [t]);
 
   // ── Initial load ──────────────────────────────────────────────────────────
+  const initialLoadDone = useRef(false);
   useEffect(() => {
     let cancelled = false;
 
@@ -282,6 +383,7 @@ export function ExpensesPage() {
       await fetchCategories();
       if (!cancelled) {
         await fetchExpenses(filters);
+        initialLoadDone.current = true;
       }
     })();
 
@@ -289,8 +391,9 @@ export function ExpensesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Re-fetch on page change ───────────────────────────────────────────────
+  // ── Re-fetch on page change (skip initial render) ──────────────────────────
   useEffect(() => {
+    if (!initialLoadDone.current) return;
     fetchExpenses(filters, page);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
@@ -312,11 +415,13 @@ export function ExpensesPage() {
 
   // ── Dialog open/close ─────────────────────────────────────────────────────
   function openNewExpenseDialog() {
+    setEditingExpense(null);
     setFormCategoryId('');
     setFormNewCategoryName('');
     setCreatingCategory(false);
     setFormAmount('');
     setFormPaymentMethod('cash');
+    setFormExpenseDate(todayStr());
     setFormDescription('');
     setFormError(null);
     setDialogOpen(true);
@@ -368,6 +473,7 @@ export function ExpensesPage() {
           amount,
           description: formDescription.trim() || null,
           payment_method: formPaymentMethod,
+          expense_date: formExpenseDate || todayStr(),
         });
         toast.success(t('Expense updated'));
       } else {
@@ -376,7 +482,7 @@ export function ExpensesPage() {
           amount,
           description: formDescription.trim() || null,
           payment_method: formPaymentMethod,
-          expense_date: new Date().toISOString().split('T')[0],
+          expense_date: formExpenseDate || todayStr(),
         });
         toast.success(t('Expense added'));
       }
@@ -397,15 +503,18 @@ export function ExpensesPage() {
     setFormAmount(String(expense.amount));
     setFormDescription(expense.description ?? '');
     setFormPaymentMethod(expense.payment_method ?? 'cash');
+    setFormExpenseDate(expense.expense_date ? expense.expense_date.split('T')[0] : todayStr());
     setFormError(null);
     setDialogOpen(true);
   }
 
   // ── Delete expense ────────────────────────────────────────────────────────
   async function handleDelete(expense: Expense) {
-    const confirmed = window.confirm(
-      `${t('Are you sure you want to delete this expense?')}\n\n${expense.category_name ?? t('Expense')} — ${formatCurrency(expense.amount)}`
-    );
+    const isRecurring = !!(expense as Record<string, unknown>).is_recurring;
+    const message = isRecurring
+      ? `${t('This expense was auto-generated by a recurring rule. Deleting it may cause it to regenerate on next startup.')}\n\n${t('To stop generation permanently, deactivate the recurring item instead.')}\n\n${t('Delete anyway?')}`
+      : `${t('Are you sure you want to delete this expense?')}\n\n${expense.category_name ?? t('Expense')} — ${formatCurrency(expense.amount)}`;
+    const confirmed = window.confirm(message);
     if (!confirmed) return;
 
     try {
@@ -440,31 +549,53 @@ export function ExpensesPage() {
   }
 
   // ── Print handler ─────────────────────────────────────────────────────────
-  function handlePrint() {
+  async function handlePrint() {
     if (expenses.length === 0) return;
+
+    // Fetch ALL expenses for print (not just the current page)
+    let allExpenses = expenses;
+    if (total > PAGE_SIZE) {
+      try {
+        const apiFilters: Record<string, string | number> = {
+          page: 1,
+          limit: total, // fetch all
+        };
+        if (filters.startDate) apiFilters.start_date = filters.startDate;
+        if (filters.endDate) apiFilters.end_date = filters.endDate;
+        if (filters.categoryId !== ALL_CATEGORIES) apiFilters.category_id = Number(filters.categoryId);
+        if (filters.search.trim()) apiFilters.search = filters.search.trim();
+        if (filters.recurringFilter === 'recurring') apiFilters.is_recurring = 1;
+        else if (filters.recurringFilter === 'manual') apiFilters.is_recurring = 0;
+
+        const result = await api.expenses.getAll(apiFilters);
+        allExpenses = Array.isArray(result.data) ? result.data : expenses;
+      } catch {
+        // Fall back to current page if fetch fails
+      }
+    }
 
     // Category breakdown
     const catMap = new Map<string, number>();
-    for (const e of expenses) {
+    for (const e of allExpenses) {
       const catName = e.category_name ?? `#${e.category_id}`;
       catMap.set(catName, (catMap.get(catName) ?? 0) + e.amount);
     }
     const categoryBreakdownRows = Array.from(catMap.entries())
       .sort((a, b) => b[1] - a[1])
       .map(
-        ([name, total]) =>
-          `<p><strong>${name}:</strong> ${formatCurrency(total)}</p>`
+        ([name, amt]) =>
+          `<p><strong>${name}:</strong> ${formatCurrency(amt)}</p>`
       )
       .join('');
 
-    const rows = expenses
+    const rows = allExpenses
       .map((expense) => {
         let paymentLabel = expense.payment_method ?? '\u2014';
         if (expense.payment_method === 'cash') paymentLabel = t('Cash');
         else if (expense.payment_method === 'bank_transfer') paymentLabel = t('Bank Transfer');
 
         return `<tr>
-          <td>${formatDate(expense.expense_date || expense.created_at)}</td>
+          <td>${formatDate(expense.expense_date || expense.created_at, i18n.language)}</td>
           <td>${expense.category_name ?? '#' + expense.category_id}</td>
           <td>${expense.description || '\u2014'}</td>
           <td class="num">${formatCurrency(expense.amount)}</td>
@@ -535,15 +666,10 @@ export function ExpensesPage() {
     Number(formAmount) > 0;
 
   return (
-    <div className="space-y-6">
-      {/* ── Page Header + New Expense Button ──────────────────────────────── */}
+    <div className="space-y-4">
+      {/* ── Page Header ───────────────────────────────────────────────── */}
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">{t('Expenses')}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {t('Track and manage business expenses')}
-          </p>
-        </div>
+        <h1 className="text-2xl font-bold tracking-tight">{t('Expenses')}</h1>
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
@@ -556,7 +682,7 @@ export function ExpensesPage() {
             {t('Print')}
           </Button>
           {canManageExpenses && (
-            <Button onClick={openNewExpenseDialog} className="gap-1.5" data-tour="expense-add">
+            <Button size="sm" onClick={openNewExpenseDialog} className="gap-1.5" data-tour="expense-add">
               <Plus className="h-4 w-4" />
               {t('New Expense')}
             </Button>
@@ -564,108 +690,115 @@ export function ExpensesPage() {
         </div>
       </div>
 
-      {/* ── Stats Cards ──────────────────────────────────────────────────── */}
-      <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard
-          label={t('Total Expenses')}
-          value={formatCurrency(stats.total)}
-          icon={<DollarSign className="h-5 w-5" />}
-        />
-        <StatCard
-          label={t('Expense Count')}
-          value={String(total)}
-          icon={<Hash className="h-5 w-5" />}
-        />
-        <StatCard
-          label={t('Monthly Average')}
-          value={formatCurrency(stats.monthlyAvg)}
-          icon={<TrendingDown className="h-5 w-5" />}
-        />
+      {/* ── Summary Stats ─────────────────────────────────────────────── */}
+      <div className="flex items-center gap-6 text-sm">
+        <div className="flex items-center gap-1.5">
+          <span className="text-muted-foreground">{t('Total Expenses')}</span>
+          <span className="font-semibold tabular-nums">{formatCurrency(stats.total)}</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-muted-foreground">{t('Expense Count')}</span>
+          <span className="font-semibold tabular-nums">{total}</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-muted-foreground">{t('Monthly Average')}</span>
+          <span className="font-semibold tabular-nums">{formatCurrency(stats.monthlyAvg)}</span>
+        </div>
       </div>
 
-      {/* ── Filter Bar ───────────────────────────────────────────────────── */}
-      <Card>
-        <CardContent className="p-4">
-          <div className="flex flex-wrap items-end gap-3">
-            {/* From date */}
-            <div className="space-y-1.5">
+      {/* ── Main Card: Filters + Table ────────────────────────────────── */}
+      <Card data-tour="expense-list">
+        <CardContent className="p-0">
+          {/* Filter toolbar */}
+          <div className="flex flex-wrap items-end gap-2 border-b p-3">
+            <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">{t('From')}</Label>
               <Input
                 type="date"
-                className="w-40"
+                className="h-8 w-36"
                 value={pendingFilters.startDate}
                 onChange={(e) =>
                   setPendingFilters((prev) => ({ ...prev, startDate: e.target.value }))
                 }
               />
             </div>
-
-            {/* To date */}
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">{t('To')}</Label>
               <Input
                 type="date"
-                className="w-40"
+                className="h-8 w-36"
                 value={pendingFilters.endDate}
                 onChange={(e) =>
                   setPendingFilters((prev) => ({ ...prev, endDate: e.target.value }))
                 }
               />
             </div>
-
-            {/* Category filter */}
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">{t('Category')}</Label>
-              <Select
+              <SearchableSelect
                 value={pendingFilters.categoryId}
                 onValueChange={(val) =>
                   setPendingFilters((prev) => ({ ...prev, categoryId: val }))
                 }
+                options={categories.map(c => ({ value: String(c.id), label: c.name }))}
+                placeholder={t('All Categories')}
+                searchPlaceholder={t('Search categories...')}
+                emptyMessage={t('No categories found')}
+                allOption={t('All Categories')}
+                allValue={ALL_CATEGORIES}
+                triggerClassName="h-8 w-40"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">{t('Type')}</Label>
+              <Select
+                value={pendingFilters.recurringFilter}
+                onValueChange={(val) =>
+                  setPendingFilters((prev) => ({ ...prev, recurringFilter: val as Filters['recurringFilter'] }))
+                }
               >
-                <SelectTrigger className="w-44">
-                  <SelectValue placeholder={t('All Categories')} />
+                <SelectTrigger className="h-8 w-32">
+                  <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={ALL_CATEGORIES}>{t('All Categories')}</SelectItem>
-                  {categories.map((cat) => (
-                    <SelectItem key={cat.id} value={String(cat.id)}>
-                      {cat.name}
-                    </SelectItem>
-                  ))}
+                  <SelectItem value="all">{t('All')}</SelectItem>
+                  <SelectItem value="manual">{t('Manual')}</SelectItem>
+                  <SelectItem value="recurring">{t('Recurring')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-
-            {/* Apply / Reset */}
-            <Button onClick={handleApplyFilters} size="sm" className="gap-1.5">
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">{t('Search')}</Label>
+              <div className="relative">
+                <Search className="absolute start-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  className="h-8 w-40 ps-7"
+                  placeholder={t('Description or amount...')}
+                  value={pendingFilters.search}
+                  onChange={(e) =>
+                    setPendingFilters((prev) => ({ ...prev, search: e.target.value }))
+                  }
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleApplyFilters(); }}
+                />
+              </div>
+            </div>
+            <Button onClick={handleApplyFilters} size="sm" className="h-8 gap-1.5">
               <Filter className="h-3.5 w-3.5" />
               {t('Apply')}
             </Button>
-            <Button onClick={handleResetFilters} variant="outline" size="sm" className="gap-1.5">
+            <Button onClick={handleResetFilters} variant="ghost" size="sm" className="h-8 gap-1.5">
               <RotateCcw className="h-3.5 w-3.5" />
               {t('Reset')}
             </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ── Expenses Table ───────────────────────────────────────────────── */}
-      <Card data-tour="expense-list">
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-2">
-            <Receipt className="h-5 w-5 text-muted-foreground" />
-            <CardTitle className="text-base">{t('Expense Records')}</CardTitle>
             {loading && <Loader2 className="ms-auto h-4 w-4 animate-spin text-muted-foreground" />}
           </div>
-        </CardHeader>
-        <CardContent>
-          {expenses.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-              <Receipt className="mb-3 h-10 w-10" />
+
+          {/* Table or empty state */}
+          {expenses.length === 0 && !loading ? (
+            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+              <Receipt className="mb-2 h-8 w-8" />
               <p className="text-sm font-medium">{t('No expenses found')}</p>
-              <p className="mt-1 text-xs">
-                {t('Try adjusting your filters or add a new expense')}
-              </p>
+              <p className="mt-1 text-xs">{t('Try adjusting your filters or add a new expense')}</p>
             </div>
           ) : (
             <Table className="sticky-col">
@@ -673,11 +806,11 @@ export function ExpensesPage() {
                 <TableRow>
                   <TableHead>{t('Date')}</TableHead>
                   <TableHead>{t('Category')}</TableHead>
-                  <TableHead>{t('Description')}</TableHead>
+                  <TableHead className="hidden lg:table-cell">{t('Description')}</TableHead>
                   <TableHead>{t('Payment')}</TableHead>
                   <TableHead className="text-end">{t('Amount')}</TableHead>
-                  <TableHead>{t('User')}</TableHead>
-                  {(canManageExpenses || canDeleteExpenses) && <TableHead className="w-24">{t('Actions')}</TableHead>}
+                  <TableHead className="hidden md:table-cell">{t('User')}</TableHead>
+                  {(canManageExpenses || canDeleteExpenses) && <TableHead className="w-20">{t('Actions')}</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -687,19 +820,25 @@ export function ExpensesPage() {
                     className="cursor-pointer hover:bg-muted/50"
                     onClick={() => { setDetailExpense(expense); setDetailOpen(true); }}
                   >
-                    <TableCell className="whitespace-nowrap text-muted-foreground">
-                      {formatDate(expense.expense_date || expense.created_at)}
+                    <TableCell className="whitespace-nowrap text-muted-foreground tabular-nums">
+                      {formatDate(expense.expense_date || expense.created_at, i18n.language)}
                     </TableCell>
                     <TableCell className="font-medium">
-                      {expense.category_name ?? `#${expense.category_id}`}
+                      <span className="flex items-center gap-1.5">
+                        {expense.category_name ?? `#${expense.category_id}`}
+                        {!!expense.is_recurring && (
+                          <Badge variant="outline" className="text-[10px] gap-0.5 px-1 py-0">
+                            <CalendarClock className="h-3 w-3" />
+                            {t('Recurring')}
+                          </Badge>
+                        )}
+                      </span>
                     </TableCell>
-                    <TableCell className="max-w-[200px] truncate text-muted-foreground">
+                    <TableCell className="hidden lg:table-cell max-w-[200px] truncate text-muted-foreground">
                       {expense.description || '\u2014'}
                     </TableCell>
                     <TableCell>
-                      <Badge
-                        variant={expense.payment_method === 'cash' ? 'secondary' : 'outline'}
-                      >
+                      <Badge variant={expense.payment_method === 'cash' ? 'secondary' : 'outline'}>
                         {expense.payment_method === 'cash'
                           ? t('Cash')
                           : expense.payment_method === 'bank_transfer'
@@ -707,35 +846,35 @@ export function ExpensesPage() {
                             : expense.payment_method ?? '\u2014'}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-end tabular-nums font-medium">
+                    <TableCell className="text-end tabular-nums font-semibold">
                       {formatCurrency(expense.amount)}
                     </TableCell>
-                    <TableCell className="text-muted-foreground">
+                    <TableCell className="hidden md:table-cell text-muted-foreground">
                       {expense.username ?? `#${expense.user_id}`}
                     </TableCell>
                     {(canManageExpenses || canDeleteExpenses) && (
                       <TableCell>
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-0.5">
                           {canManageExpenses && (
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-8 w-8"
+                              className="h-7 w-7"
                               title={t('Edit')}
                               onClick={(e) => { e.stopPropagation(); handleEdit(expense); }}
                             >
-                              <Pencil className="h-4 w-4" />
+                              <Pencil className="h-3.5 w-3.5" />
                             </Button>
                           )}
                           {canDeleteExpenses && (
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-8 w-8 text-destructive hover:text-destructive"
+                              className="h-7 w-7 text-destructive hover:text-destructive"
                               title={t('Delete')}
                               onClick={(e) => { e.stopPropagation(); handleDelete(expense); }}
                             >
-                              <Trash2 className="h-4 w-4" />
+                              <Trash2 className="h-3.5 w-3.5" />
                             </Button>
                           )}
                         </div>
@@ -746,98 +885,39 @@ export function ExpensesPage() {
               </TableBody>
             </Table>
           )}
-          <DataPagination
-            page={page}
-            totalPages={totalPages}
-            total={total}
-            pageSize={PAGE_SIZE}
-            onPageChange={setPage}
-            className="mt-4"
-          />
+
+          {/* Pagination */}
+          {expenses.length > 0 && (
+            <div className="border-t p-3">
+              <DataPagination
+                page={page}
+                totalPages={totalPages}
+                total={total}
+                pageSize={PAGE_SIZE}
+                onPageChange={setPage}
+              />
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      {/* ── Category Management ──────────────────────────────────────────── */}
+      {/* ── Recurring Expenses (secondary) ────────────────────────────── */}
+      <RecurringExpensesPanel
+        categories={categories}
+        canManage={canManageExpenses}
+        onExpensesGenerated={() => fetchExpenses(filters, page)}
+      />
+
+      {/* ── Category Management (admin) ───────────────────────────────── */}
       {canManageCategories && (
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex items-center gap-2">
-              <Tag className="h-5 w-5 text-muted-foreground" />
-              <CardTitle className="text-base">{t('Expense Categories')}</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Existing categories — click to edit, X to delete */}
-            <div className="flex flex-wrap gap-2">
-              {categories.length === 0 ? (
-                <p className="text-sm text-muted-foreground">{t('No categories yet')}</p>
-              ) : (
-                categories.map((cat) => (
-                  <Badge key={cat.id} variant="secondary" className="text-sm gap-1.5 group">
-                    <button
-                      type="button"
-                      className="hover:underline"
-                      onClick={() => {
-                        const newName = window.prompt(t('Rename category'), cat.name);
-                        if (newName && newName.trim() && newName.trim() !== cat.name) {
-                          api.expenses.updateCategory(cat.id, newName.trim())
-                            .then(() => { toast.success(t('Category updated')); fetchCategories(); })
-                            .catch((err: unknown) => toast.error(err instanceof Error ? err.message : t('Failed')));
-                        }
-                      }}
-                    >
-                      {cat.name}
-                    </button>
-                    <button
-                      type="button"
-                      className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
-                      title={t('Delete category')}
-                      onClick={() => {
-                        if (!window.confirm(t('Delete category "{{name}}"?', { name: cat.name }))) return;
-                        api.expenses.deleteCategory(cat.id)
-                          .then(() => { toast.success(t('Category deleted')); fetchCategories(); })
-                          .catch((err: unknown) => toast.error(err instanceof Error ? err.message : t('Failed')));
-                      }}
-                    >
-                      &times;
-                    </button>
-                  </Badge>
-                ))
-              )}
-            </div>
-
-            <Separator />
-
-            {/* Add new category */}
-            <div className="flex items-center gap-2">
-              <Input
-                className="max-w-xs"
-                placeholder={t('New category name')}
-                value={newCategoryName}
-                onChange={(e) => setNewCategoryName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleAddCategory();
-                  }
-                }}
-              />
-              <Button
-                size="sm"
-                onClick={handleAddCategory}
-                disabled={!newCategoryName.trim() || addingCategory}
-                className="gap-1.5"
-              >
-                {addingCategory ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <FolderPlus className="h-3.5 w-3.5" />
-                )}
-                {t('Add')}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+        <CategoryManagementPanel
+          categories={categories}
+          onAddCategory={handleAddCategory}
+          newCategoryName={newCategoryName}
+          setNewCategoryName={setNewCategoryName}
+          addingCategory={addingCategory}
+          fetchCategories={fetchCategories}
+        />
       )}
 
       {/* ── New Expense Dialog ────────────────────────────────────────────── */}
@@ -857,25 +937,17 @@ export function ExpensesPage() {
                 <Label>
                   {t('Category')} <span className="text-destructive">*</span>
                 </Label>
-                <Select value={formCategoryId} onValueChange={setFormCategoryId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder={t('Select category')} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {categories.map((cat) => (
-                      <SelectItem key={cat.id} value={String(cat.id)}>
-                        {cat.name}
-                      </SelectItem>
-                    ))}
-                    {categories.length > 0 && <SelectSeparator />}
-                    <SelectItem value={NEW_CATEGORY_SENTINEL}>
-                      <span className="flex items-center gap-1.5">
-                        <Plus className="h-3.5 w-3.5" />
-                        {t('New Category')}
-                      </span>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
+                <SearchableSelect
+                  value={formCategoryId}
+                  onValueChange={setFormCategoryId}
+                  options={[
+                    ...categories.map(c => ({ value: String(c.id), label: c.name })),
+                    { value: NEW_CATEGORY_SENTINEL, label: `+ ${t('New Category')}` },
+                  ]}
+                  placeholder={t('Select category')}
+                  searchPlaceholder={t('Search categories...')}
+                  emptyMessage={t('No categories found')}
+                />
               </div>
 
               {/* ── Inline new category creator ─────────────────────────── */}
@@ -925,6 +997,19 @@ export function ExpensesPage() {
                 />
               </div>
 
+              {/* ── Expense Date ────────────────────────────────────────── */}
+              <div className="space-y-1.5">
+                <Label htmlFor="exp-date">
+                  {t('Date')} <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="exp-date"
+                  type="date"
+                  value={formExpenseDate}
+                  onChange={(e) => setFormExpenseDate(e.target.value)}
+                />
+              </div>
+
               {/* ── Payment Method ──────────────────────────────────────── */}
               <div className="space-y-1.5">
                 <Label>{t('Payment Method')}</Label>
@@ -967,7 +1052,7 @@ export function ExpensesPage() {
               </Button>
               <Button type="submit" disabled={!canSubmitExpense || formSubmitting}>
                 {formSubmitting && <Loader2 className="me-2 h-4 w-4 animate-spin" />}
-                {t('Add Expense')}
+                {editingExpense ? t('Update') : t('Add Expense')}
               </Button>
             </DialogFooter>
           </form>
@@ -981,7 +1066,7 @@ export function ExpensesPage() {
             <DialogTitle>{t('Expense Details')}</DialogTitle>
             <DialogDescription>
               {detailExpense
-                ? `#${detailExpense.id} — ${formatDate(detailExpense.expense_date || detailExpense.created_at)}`
+                ? `#${detailExpense.id} — ${formatDate(detailExpense.expense_date || detailExpense.created_at, i18n.language)}`
                 : ''}
             </DialogDescription>
           </DialogHeader>
@@ -1014,7 +1099,7 @@ export function ExpensesPage() {
                 <div>
                   <p className="text-xs text-muted-foreground">{t('Date')}</p>
                   <p className="font-medium">
-                    {formatDate(detailExpense.expense_date || detailExpense.created_at)}
+                    {formatDate(detailExpense.expense_date || detailExpense.created_at, i18n.language)}
                   </p>
                 </div>
                 <div>
@@ -1043,7 +1128,37 @@ export function ExpensesPage() {
             </div>
           )}
 
-          <DialogFooter>
+          <DialogFooter className="flex-row justify-between sm:justify-between">
+            <div className="flex gap-1">
+              {canManageExpenses && detailExpense && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1"
+                  onClick={() => {
+                    setDetailOpen(false);
+                    handleEdit(detailExpense);
+                  }}
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  {t('Edit')}
+                </Button>
+              )}
+              {canDeleteExpenses && detailExpense && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1 text-destructive hover:text-destructive"
+                  onClick={() => {
+                    setDetailOpen(false);
+                    handleDelete(detailExpense);
+                  }}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  {t('Delete')}
+                </Button>
+              )}
+            </div>
             <Button variant="outline" onClick={() => setDetailOpen(false)}>
               {t('Close')}
             </Button>

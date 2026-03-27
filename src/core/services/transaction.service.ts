@@ -9,7 +9,7 @@ import type {
   Transaction, TransactionFilters, PaginatedResult,
   CreateTransactionInput, CreateTransactionItemInput,
   CreateReturnInput,
-  PaymentMethod, UnitType, BatchStatus,
+  PaymentMethod, UnitType, BatchStatus, AdjustmentType,
 } from '../types/models';
 import type { IFIFOBatch } from '../types/repositories';
 import { Validate }        from '../common/validation';
@@ -298,10 +298,10 @@ export class TransactionService {
         // For cross-unit returns (sold box → returning strips) derive per-strip price
         // using floor division so we never refund more than was collected.
         const unitPrice = (isCrossUnit && cf > 1)
-          ? Math.floor(origItem.unit_price / cf)
+          ? Math.max(1, Math.floor(origItem.unit_price / cf))
           : origItem.unit_price;
         const costPrice = (isCrossUnit && cf > 1)
-          ? Math.floor(origItem.cost_price / cf)
+          ? Math.max(1, Math.floor(origItem.cost_price / cf))
           : origItem.cost_price;
 
         const discountPct    = origItem.discount_percent ?? 0;
@@ -333,7 +333,7 @@ export class TransactionService {
       const proportionalDiscount = origSubtotal > 0
         ? Math.round(subtotal * origDiscount / origSubtotal)
         : 0;
-      const totalAmount = subtotal - proportionalDiscount;
+      const totalAmount = Math.max(0, subtotal - proportionalDiscount);
 
       // ── 8. Match original payment method for refund ────────────────────────
       // Returns refund via the same channel the customer paid with
@@ -352,7 +352,7 @@ export class TransactionService {
         const origTotal = original.total_amount ?? 0;
         const origCash  = original.cash_tendered ?? 0;
         const cashRatio = origTotal > 0 ? origCash / origTotal : 1;
-        cashTendered    = Math.floor(totalAmount * cashRatio);
+        cashTendered    = Math.round(totalAmount * cashRatio);
         const bankPortion = totalAmount - cashTendered;
         bankName = original.bank_name ?? null;
         paymentBreakdown = JSON.stringify({ cash: cashTendered, bank: bankPortion });
@@ -433,8 +433,19 @@ export class TransactionService {
                 'quantity'
               );
             }
-            // Force: clamp to 0 instead of failing
+            // Force: clamp to 0 and record the discrepancy as an inventory adjustment
             newQty = 0;
+            const lostQty = item.quantity_base - batch.quantity_base;
+            if (lostQty > 0) {
+              await this.batchRepo.insertAdjustment({
+                product_id:    batch.product_id!,
+                batch_id:      item.batch_id,
+                quantity_base: lostQty,
+                reason:        `Force-void of return #${id}: ${lostQty} units could not be re-deducted`,
+                type:          'correction' as AdjustmentType,
+                user_id:       voidedBy,
+              });
+            }
           } else {
             newQty = batch.quantity_base - item.quantity_base;
           }
@@ -572,11 +583,12 @@ export class TransactionService {
         );
         if (!success) throw new ConflictError('Batch modified concurrently. Please retry.');
 
-        // Determine unit price and cost from override columns
+        // Determine unit price: use caller override if provided, else batch price
         const unitPrice =
-          item.unit_type === 'parent'
+          item.unit_price ??
+          (item.unit_type === 'parent'
             ? (batch.selling_price_parent_override || batch.selling_price_parent || 0)
-            : (batch.selling_price_child_override  || batch.selling_price_child  || 0);
+            : (batch.selling_price_child_override  || batch.selling_price_child  || 0));
 
         const costPrice =
           item.unit_type === 'parent'
@@ -596,7 +608,7 @@ export class TransactionService {
           productId:    item.product_id,
           quantityBase: take,
           unitType:     item.unit_type,
-          unitPrice:    item.unit_price ?? unitPrice,
+          unitPrice,
           costPrice,
           discountPct,
           lineTotal,
@@ -637,6 +649,9 @@ export class TransactionService {
     }
     if (discount < 0) {
       throw new ValidationError('Discount cannot be negative', 'discount_amount');
+    }
+    if (discount > subtotal) {
+      throw new ValidationError('Discount cannot exceed subtotal', 'discount_amount');
     }
     if (tax < 0) {
       throw new ValidationError('Tax cannot be negative', 'tax_amount');

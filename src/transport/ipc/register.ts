@@ -21,7 +21,8 @@ import { registerReportHandlers }      from './handlers/report.handler';
 import { registerAuditHandlers }       from './handlers/audit.handler';
 import { registerSettingsHandlers }    from './handlers/settings.handler';
 import { registerBackupHandlers }      from './handlers/backup.handler';
-import { registerPurchaseHandlers }    from './handlers/purchase.handler';
+import { registerPurchaseHandlers }          from './handlers/purchase.handler';
+import { registerRecurringExpenseHandlers }  from './handlers/recurring-expense.handler';
 
 export function registerAllHandlers(
   ipcMain: IpcMain,
@@ -45,4 +46,5 @@ export function registerAllHandlers(
   registerSettingsHandlers(router, services);
   registerBackupHandlers(router, services);
   registerPurchaseHandlers(router, services);
+  registerRecurringExpenseHandlers(router, services);
 }

@@ -107,6 +107,9 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
       if (!bankName) return t('Please select a bank');
       if (!referenceNumber.trim()) return t('Reference number is required');
     }
+    if (paymentMethod === 'cash' && parsedCashTendered > 0 && parsedCashTendered < totalAmount) {
+      return t('Cash tendered must be at least the total amount');
+    }
     if (isMixed) {
       if (parsedBankAmount <= 0) return t('Bank amount must be greater than zero');
       if (parsedBankAmount >= totalAmount) return t('Bank amount must be less than total');

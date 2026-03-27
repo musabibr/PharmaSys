@@ -208,7 +208,10 @@ export function AddToCartModal({ productId, open, onOpenChange }: AddToCartModal
         updateDiscount(existingIndex, discountPercent);
       }
     } else {
-      // Add new item
+      // Add new item — record available stock for cart-side clamping
+      const maxInUnit = unitType === 'parent'
+        ? Math.floor(totalBase / conversionFactor)
+        : totalBase;
       const cartItem: CartItem = {
         product_id: product.id,
         product_name: product.name,
@@ -222,6 +225,7 @@ export function AddToCartModal({ productId, open, onOpenChange }: AddToCartModal
         conversion_factor: conversionFactor,
         parent_unit: product.parent_unit,
         child_unit: product.child_unit,
+        availableStock: maxInUnit,
       };
       addItem(cartItem);
     }

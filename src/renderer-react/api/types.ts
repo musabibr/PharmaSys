@@ -158,12 +158,54 @@ export interface Expense {
   user_id: number;
   username?: string;
   shift_id: number | null;
+  is_recurring?: number;
+  recurring_expense_id?: number | null;
   created_at: string;
 }
 
 export interface ExpenseCategory {
   id: number;
   name: string;
+}
+
+export type RecurringAmountType = 'monthly' | 'daily';
+
+export type ExpensePaymentMethod = 'cash' | 'bank_transfer';
+
+export interface RecurringExpense {
+  id: number;
+  name: string;
+  category_id: number;
+  amount_type: RecurringAmountType;
+  amount: number;
+  payment_method: ExpensePaymentMethod;
+  is_active: number;
+  created_by: number;
+  created_at: string;
+  category_name?: string;
+  created_by_username?: string;
+  daily_amount?: number;
+  monthly_amount?: number;
+  last_generated_date?: string | null;
+}
+
+export interface CreateRecurringExpenseInput {
+  name: string;
+  category_id: number;
+  amount_type: RecurringAmountType;
+  amount: number;
+  payment_method?: ExpensePaymentMethod;
+}
+
+export interface GenerationPreviewItem {
+  itemId: number;
+  itemName: string;
+  categoryName: string;
+  amount: number;
+  paymentMethod: ExpensePaymentMethod;
+  dates: string[];
+  alreadyGenerated: string[];
+  type: RecurringAmountType;
 }
 
 export interface HeldSale {
@@ -608,6 +650,17 @@ export interface PharmaSysApi {
     delete(id: number): Promise<{ success: boolean }>;
   };
 
+  recurringExpenses: {
+    getAll(): Promise<RecurringExpense[]>;
+    create(data: CreateRecurringExpenseInput): Promise<RecurringExpense>;
+    update(id: number, data: CreateRecurringExpenseInput): Promise<RecurringExpense>;
+    delete(id: number): Promise<{ success: boolean }>;
+    toggleActive(id: number): Promise<RecurringExpense>;
+    preview(): Promise<{ items: GenerationPreviewItem[]; capped: boolean }>;
+    generate(itemIds?: number[]): Promise<{ count: number }>;
+    restartTimer(): void;
+  };
+
   shifts: {
     open(openingAmount: number): Promise<Shift>;
     getLastCash(): Promise<number | null>;
@@ -719,6 +772,9 @@ export interface PharmaSysApi {
     scan(): Promise<DiscoveredServer[]>;
   };
 
+  notifyReady(): void;
+  onStartupRecurringGenerated(callback: (data: { count: number }) => void): void;
+
 }
 
 export interface DiscoveredServer {
@@ -760,6 +816,7 @@ export interface PaginatedResult<T> {
   totalPages: number;
   agg_sales?: number;
   agg_returns?: number;
+  totalAmount?: number;
 }
 
 // ─── Global declaration ─────────────────────────────────────────────────────

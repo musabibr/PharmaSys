@@ -23,6 +23,7 @@ import {
   auditRoutes, settingsRoutes, backupRoutes, appInfoRoutes,
 } from './routes/misc.routes';
 import { purchaseRoutes }           from './routes/purchase.routes';
+import { recurringExpenseRoutes }  from './routes/recurring-expense.routes';
 
 export function createApp(services: ServiceContainer): Application {
   const app = express();
@@ -101,7 +102,8 @@ export function createApp(services: ServiceContainer): Application {
   api.use('/audit',        auditRoutes(services));
   api.use('/settings',     settingsRoutes(services));
   api.use('/backups',      backupRoutes(services));
-  api.use('/purchases',    purchaseRoutes(services));
+  api.use('/purchases',             purchaseRoutes(services));
+  api.use('/recurring-expenses',   recurringExpenseRoutes(services));
   api.use('/app',          appInfoRoutes(services));
 
   app.use('/api/v1', generalLimiter, api);

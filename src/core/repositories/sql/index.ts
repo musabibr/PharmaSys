@@ -17,8 +17,9 @@ import { ReportRepository }      from './report.repository';
 import { AuditRepository }       from './audit.repository';
 import { SettingsRepository }    from './settings.repository';
 import { BackupRepository }      from './backup.repository';
-import { SupplierRepository }    from './supplier.repository';
-import { PurchaseRepository }    from './purchase.repository';
+import { SupplierRepository }           from './supplier.repository';
+import { PurchaseRepository }           from './purchase.repository';
+import { RecurringExpenseRepository }   from './recurring-expense.repository';
 
 export interface Repositories {
   base:        BaseRepository;
@@ -35,8 +36,9 @@ export interface Repositories {
   audit:       AuditRepository;
   settings:    SettingsRepository;
   backup:      BackupRepository;
-  supplier:    SupplierRepository;
-  purchase:    PurchaseRepository;
+  supplier:           SupplierRepository;
+  purchase:           PurchaseRepository;
+  recurringExpense:   RecurringExpenseRepository;
 }
 
 export function createRepositories(
@@ -76,8 +78,9 @@ export function createRepositories(
     audit,
     settings,
     backup,
-    supplier:    new SupplierRepository(base),
-    purchase:    new PurchaseRepository(base),
+    supplier:         new SupplierRepository(base),
+    purchase:         new PurchaseRepository(base),
+    recurringExpense: new RecurringExpenseRepository(base),
   };
 }
 
@@ -99,4 +102,5 @@ export {
   BackupRepository,
   SupplierRepository,
   PurchaseRepository,
+  RecurringExpenseRepository,
 };

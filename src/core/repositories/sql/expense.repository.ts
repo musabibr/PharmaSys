@@ -90,17 +90,27 @@ export class ExpenseRepository implements IExpenseRepository {
     if (filters.start_date)  { conditions.push("e.expense_date >= ?"); params.push(filters.start_date); }
     if (filters.end_date)    { conditions.push("e.expense_date <= ?"); params.push(filters.end_date); }
     if (filters.category_id) { conditions.push("e.category_id = ?");  params.push(Number(filters.category_id)); }
+    if (filters.search) {
+      conditions.push("(e.description LIKE ? OR CAST(e.amount AS TEXT) LIKE ?)");
+      const q = `%${filters.search}%`;
+      params.push(q, q);
+    }
+    if (filters.is_recurring !== undefined && filters.is_recurring !== null) {
+      conditions.push("e.is_recurring = ?");
+      params.push(Number(filters.is_recurring));
+    }
 
     const where = `WHERE ${conditions.join(' AND ')}`;
     const page  = Math.max(1, Number(filters.page) || 1);
     const limit = Math.min(PAGINATION.MAX_LIMIT, Math.max(PAGINATION.MIN_LIMIT, Number(filters.limit) || PAGINATION.DEFAULT_LIMIT));
     const offset = (page - 1) * limit;
 
-    const countRow = await this.base.getOne<{ cnt: number }>(
-      `SELECT COUNT(*) as cnt FROM expenses e ${where}`,
+    const aggRow = await this.base.getOne<{ cnt: number; total_amount: number }>(
+      `SELECT COUNT(*) as cnt, COALESCE(SUM(e.amount), 0) as total_amount FROM expenses e ${where}`,
       [...params]
     );
-    const total = countRow?.cnt ?? 0;
+    const total = aggRow?.cnt ?? 0;
+    const totalAmount = aggRow?.total_amount ?? 0;
 
     const data = await this.base.getAll<Expense>(
       `SELECT e.*, ec.name as category_name, u.username
@@ -113,13 +123,13 @@ export class ExpenseRepository implements IExpenseRepository {
       [...params, limit, offset]
     );
 
-    return { data, total, page, limit, totalPages: Math.ceil(total / limit) || 1 };
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) || 1, totalAmount };
   }
 
   async create(data: CreateExpenseInput, userId: number, shiftId: number | null) {
     return await this.base.runImmediate(
-      `INSERT INTO expenses (category_id, amount, description, expense_date, payment_method, user_id, shift_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO expenses (category_id, amount, description, expense_date, payment_method, user_id, shift_id, is_recurring, recurring_expense_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.category_id,
         data.amount,
@@ -128,6 +138,8 @@ export class ExpenseRepository implements IExpenseRepository {
         data.payment_method ?? 'cash',
         userId,
         shiftId,
+        data.is_recurring ?? 0,
+        data.recurring_expense_id ?? null,
       ]
     );
   }

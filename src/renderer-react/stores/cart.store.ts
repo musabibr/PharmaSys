@@ -13,6 +13,7 @@ export interface CartItem {
   conversion_factor: number;
   parent_unit: string;
   child_unit: string;
+  availableStock?: number; // max units available when item was added
 }
 
 interface CartState {
@@ -52,7 +53,12 @@ export const useCartStore = create<CartState>((set, get) => ({
   updateQuantity: (index, qty) => {
     if (qty < 1 || !Number.isInteger(qty)) return;
     const items = [...get().items];
-    if (items[index]) items[index] = { ...items[index], quantity: qty };
+    if (!items[index]) return;
+    const item = items[index];
+    // Clamp to available stock if known (server-side is the ultimate guard)
+    const maxQty = item.availableStock ?? Infinity;
+    const clampedQty = Math.min(qty, maxQty);
+    items[index] = { ...items[index], quantity: clampedQty };
     set({ items });
   },
 

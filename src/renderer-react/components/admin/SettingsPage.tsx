@@ -20,6 +20,7 @@ import {
   Eye,
   EyeOff,
   Upload,
+  CalendarClock,
 } from 'lucide-react';
 import { api } from '@/api';
 import { useSettingsStore } from '@/stores/settings.store';
@@ -208,6 +209,11 @@ export function SettingsPage() {
   const [backupInterval, setBackupInterval] = useState('8');
   const [savingBackupInterval, setSavingBackupInterval] = useState(false);
 
+  // ── Recurring Expense Generation ─────────────────────────────────────────
+  const [generationMode, setGenerationMode] = useState('startup');
+  const [generationHour, setGenerationHour] = useState('0');
+  const [savingGeneration, setSavingGeneration] = useState(false);
+
   // ── Account Security — Change Password ────────────────────────────────────
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -244,6 +250,8 @@ export function SettingsPage() {
       setLockoutDuration(s['account_lockout_duration_minutes'] || '15');
       setBankAccounts(parseBankAccounts(s['bank_config']));
       setBackupInterval(s['auto_backup_hours'] || '8');
+      setGenerationMode(s['recurring_generation_mode'] || 'startup');
+      setGenerationHour(s['recurring_generation_hour'] || '0');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t('Failed to load settings'));
     }
@@ -521,6 +529,21 @@ export function SettingsPage() {
       toast.error(err instanceof Error ? err.message : t('Failed to save backup interval'));
     } finally {
       setSavingBackupInterval(false);
+    }
+  }
+
+  async function handleSaveGeneration() {
+    setSavingGeneration(true);
+    try {
+      await api.settings.set('recurring_generation_mode', generationMode);
+      await api.settings.set('recurring_generation_hour', generationHour);
+      api.recurringExpenses.restartTimer();
+      toast.success(t('Generation settings saved'));
+      await loadSettings();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('Failed to save settings'));
+    } finally {
+      setSavingGeneration(false);
     }
   }
 
@@ -814,6 +837,49 @@ export function SettingsPage() {
 
                 <div className="flex justify-end">
                   <SaveBtn saving={savingPreferences} onClick={handleSavePreferences} />
+                </div>
+              </section>
+
+              {/* ── Recurring Expense Generation ─────────────────────────── */}
+              <section className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <CalendarClock className="h-4 w-4 text-muted-foreground" />
+                  <h2 className="text-sm font-semibold">{t('Recurring Expense Generation')}</h2>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="space-y-1.5">
+                    <Label>{t('Generation Mode')}</Label>
+                    <Select value={generationMode} onValueChange={setGenerationMode}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="startup">{t('On Startup')}</SelectItem>
+                        <SelectItem value="scheduled">{t('Scheduled (daily)')}</SelectItem>
+                        <SelectItem value="manual">{t('Manual Only')}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {generationMode === 'scheduled' && (
+                    <div className="space-y-1.5">
+                      <Label htmlFor="gen-hour">{t('Generation Hour')}</Label>
+                      <Input
+                        id="gen-hour"
+                        type="number"
+                        min={0}
+                        max={23}
+                        step={1}
+                        value={generationHour}
+                        onChange={(e) => setGenerationHour(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {t('0 = midnight, 12 = noon, 23 = 11 PM')}
+                      </p>
+                    </div>
+                  )}
+                </div>
+                <div className="flex justify-end">
+                  <SaveBtn saving={savingGeneration} onClick={handleSaveGeneration} />
                 </div>
               </section>
             </div>

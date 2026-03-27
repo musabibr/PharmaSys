@@ -160,6 +160,19 @@ export class MigrationRepository {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT UNIQUE NOT NULL
       )`,
+      `CREATE TABLE IF NOT EXISTS recurring_expenses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        category_id INTEGER NOT NULL,
+        amount_type TEXT NOT NULL CHECK(amount_type IN ('monthly', 'daily')),
+        amount INTEGER NOT NULL CHECK(amount > 0),
+        payment_method TEXT DEFAULT 'cash',
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_by INTEGER NOT NULL,
+        created_at TEXT DEFAULT (datetime('now', 'localtime')),
+        FOREIGN KEY (category_id) REFERENCES expense_categories(id),
+        FOREIGN KEY (created_by) REFERENCES users(id)
+      )`,
       `CREATE TABLE IF NOT EXISTS expenses (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         category_id INTEGER NOT NULL,
@@ -169,10 +182,13 @@ export class MigrationRepository {
         payment_method TEXT DEFAULT 'cash' CHECK(payment_method IN ('cash', 'bank_transfer')),
         user_id INTEGER NOT NULL,
         shift_id INTEGER,
+        is_recurring INTEGER NOT NULL DEFAULT 0,
+        recurring_expense_id INTEGER,
         created_at TEXT DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (category_id) REFERENCES expense_categories(id),
         FOREIGN KEY (user_id) REFERENCES users(id),
-        FOREIGN KEY (shift_id) REFERENCES shifts(id)
+        FOREIGN KEY (shift_id) REFERENCES shifts(id),
+        FOREIGN KEY (recurring_expense_id) REFERENCES recurring_expenses(id)
       )`,
       `CREATE TABLE IF NOT EXISTS shifts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -459,6 +475,29 @@ export class MigrationRepository {
 
     // Fix return date attribution: returns get parent sale's created_at and shift_id
     await this._migrateReturnDates();
+
+    // Recurring expenses table (for existing databases that don't have it yet)
+    await this.base.rawRun(`CREATE TABLE IF NOT EXISTS recurring_expenses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      category_id INTEGER NOT NULL,
+      amount_type TEXT NOT NULL CHECK(amount_type IN ('monthly', 'daily')),
+      amount INTEGER NOT NULL CHECK(amount > 0),
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_by INTEGER NOT NULL,
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (category_id) REFERENCES expense_categories(id),
+      FOREIGN KEY (created_by) REFERENCES users(id)
+    )`);
+
+    // Add recurring columns to expenses table
+    await this._migrateColumn('expenses', 'is_recurring',
+      'ALTER TABLE expenses ADD COLUMN is_recurring INTEGER NOT NULL DEFAULT 0',
+      'ALTER TABLE expenses ADD COLUMN recurring_expense_id INTEGER REFERENCES recurring_expenses(id)');
+
+    // Payment method on recurring expenses (defaults to 'cash')
+    await this._migrateColumn('recurring_expenses', 'payment_method',
+      "ALTER TABLE recurring_expenses ADD COLUMN payment_method TEXT DEFAULT 'cash'");
 
     this.base.save();
   }

@@ -25,15 +25,11 @@
       border-radius: 14px;
       padding: 36px 32px;
       width: 100%;
-      max-width: 440px;
+      max-width: 480px;
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
     }
 
-    .logo {
-      font-size: 2rem;
-      margin-bottom: 4px;
-      text-align: center;
-    }
+    .logo { font-size: 2rem; margin-bottom: 4px; text-align: center; }
 
     h1 {
       font-size: 1.25rem;
@@ -55,11 +51,11 @@
       border-left: 3px solid #f38ba8;
       border-radius: 6px;
       padding: 10px 14px;
-      margin-bottom: 24px;
+      margin-bottom: 20px;
       font-size: 0.85rem;
       color: #f38ba8;
       line-height: 1.4;
-      display: none; /* shown by JS only when reason is non-empty */
+      display: none;
     }
 
     .field-label {
@@ -68,27 +64,31 @@
       color: #a6adc8;
       letter-spacing: 0.06em;
       text-transform: uppercase;
-      margin-bottom: 6px;
+      margin-bottom: 8px;
     }
 
-    .machine-id-box {
+    .key-input {
+      width: 100%;
       background: #1e1e2e;
-      border: 1px solid #45475a;
+      border: 2px solid #45475a;
       border-radius: 8px;
-      padding: 12px 16px;
+      padding: 14px 16px;
       font-family: 'Courier New', 'Consolas', monospace;
-      font-size: 1.05rem;
-      letter-spacing: 3px;
+      font-size: 0.95rem;
+      letter-spacing: 2px;
       color: #a6e3a1;
       margin-bottom: 8px;
-      word-break: break-all;
-      user-select: all;
+      outline: none;
+      transition: border-color 0.15s;
     }
 
-    .machine-id-hint {
+    .key-input:focus { border-color: #cba6f7; }
+    .key-input::placeholder { color: #45475a; letter-spacing: 1px; }
+
+    .key-hint {
       font-size: 0.75rem;
       color: #6c7086;
-      margin-bottom: 28px;
+      margin-bottom: 20px;
     }
 
     .btn {
@@ -102,18 +102,10 @@
       transition: background 0.15s;
     }
 
-    .btn-primary {
-      background: #cba6f7;
-      color: #1e1e2e;
-    }
-
+    .btn-primary { background: #cba6f7; color: #1e1e2e; }
     .btn-primary:hover { background: #d6bdf7; }
     .btn-primary:active { background: #b48ae4; }
-    .btn-primary:disabled {
-      background: #45475a;
-      color: #6c7086;
-      cursor: not-allowed;
-    }
+    .btn-primary:disabled { background: #45475a; color: #6c7086; cursor: not-allowed; }
 
     .status-msg {
       margin-top: 14px;
@@ -125,11 +117,7 @@
     .status-msg.success { color: #a6e3a1; }
     .status-msg.error   { color: #f38ba8; }
 
-    .divider {
-      border: none;
-      border-top: 1px solid #45475a;
-      margin: 24px 0;
-    }
+    .divider { border: none; border-top: 1px solid #45475a; margin: 24px 0; }
 
     .footer {
       font-size: 0.72rem;
@@ -143,18 +131,27 @@
   <div class="card">
     <div class="logo">💊</div>
     <h1>PharmaSys</h1>
-    <p class="subtitle">This device has not been activated</p>
+    <p class="subtitle">Enter your activation key to get started</p>
 
     <div class="reason-box" id="reasonBox"></div>
 
-    <div class="field-label">Your Machine ID</div>
-    <div class="machine-id-box" id="machineIdDisplay">—</div>
-    <p class="machine-id-hint">
-      Send this ID to your vendor. They will generate a license file for your device.
-    </p>
+    <div class="field-label">Device ID</div>
+    <div style="background:#1e1e2e;border:1px solid #45475a;border-radius:8px;padding:10px 14px;font-family:'Courier New',monospace;font-size:1rem;letter-spacing:2px;color:#a6e3a1;margin-bottom:16px;user-select:all;text-align:center;" id="machineIdDisplay">—</div>
 
-    <button class="btn btn-primary" id="importBtn" onclick="importLicense()">
-      📂 Import License File (.pharmalicense)
+    <div class="field-label">Activation Key</div>
+    <input
+      type="text"
+      class="key-input"
+      id="keyInput"
+      placeholder="PH-XXXXX-XXXXX-XXXXX-..."
+      autocomplete="off"
+      spellcheck="false"
+      autofocus
+    >
+    <p class="key-hint">Enter the activation key provided by your vendor.</p>
+
+    <button class="btn btn-primary" id="activateBtn" onclick="activate()">
+      Activate
     </button>
 
     <div class="status-msg" id="statusMsg"></div>
@@ -168,49 +165,71 @@
   </div>
 
   <script>
-    // Read values passed via URL query string by main process
-    const params    = new URLSearchParams(window.location.search);
+    // Read params passed from main process
+    const params = new URLSearchParams(window.location.search);
+    const reason = params.get('reason') ?? '';
     const machineId = params.get('machineId') ?? '';
-    const reason    = params.get('reason')    ?? '';
 
     // Display machine ID
-    document.getElementById('machineIdDisplay').textContent =
-      machineId || 'Unable to read hardware ID — contact support';
+    document.getElementById('machineIdDisplay').textContent = machineId || '—';
 
-    // Display reason (only if provided)
     if (reason) {
       const box = document.getElementById('reasonBox');
       box.textContent = reason;
       box.style.display = 'block';
     }
 
-    async function importLicense() {
-      const btn    = document.getElementById('importBtn');
-      const status = document.getElementById('statusMsg');
+    // Auto-format key input: uppercase + insert dashes
+    const keyInput = document.getElementById('keyInput');
+    keyInput.addEventListener('input', () => {
+      let raw = keyInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      // Insert prefix
+      if (raw.startsWith('PH')) raw = raw.substring(2);
+      // Group into 5-char chunks
+      const groups = [];
+      for (let i = 0; i < raw.length; i += 5) {
+        groups.push(raw.substring(i, i + 5));
+      }
+      keyInput.value = groups.length > 0 ? 'PH-' + groups.join('-') : '';
+    });
 
-      btn.disabled   = true;
-      btn.textContent = '⏳ Importing…';
+    // Enter key triggers activate
+    keyInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') activate();
+    });
+
+    async function activate() {
+      const btn    = document.getElementById('activateBtn');
+      const status = document.getElementById('statusMsg');
+      const key    = keyInput.value.trim();
+
+      if (!key || key.length < 10) {
+        status.textContent = 'Please enter a valid activation key.';
+        status.className   = 'status-msg error';
+        return;
+      }
+
+      btn.disabled    = true;
+      btn.textContent = 'Activating...';
       status.textContent = '';
       status.className   = 'status-msg';
 
       try {
-        const result = await window.licenseApi.importFile();
+        const result = await window.licenseApi.activate(key);
 
         if (result && result.success) {
-          btn.textContent        = '✅ Activated!';
-          status.textContent     = 'Activation successful. The application will open now.';
-          status.className       = 'status-msg success';
-          // Main process closes this window and opens the main app
+          btn.textContent    = 'Activated!';
+          status.textContent = 'Activation successful. The application will open now.';
+          status.className   = 'status-msg success';
         } else {
           btn.disabled    = false;
-          btn.textContent = '📂 Import License File (.pharmalicense)';
-          const msg = (result && result.reason) ? result.reason : 'Activation failed. Please try again.';
-          status.textContent = msg;
+          btn.textContent = 'Activate';
+          status.textContent = (result && result.error) || 'Activation failed. Please check your key.';
           status.className   = 'status-msg error';
         }
       } catch (err) {
         btn.disabled    = false;
-        btn.textContent = '📂 Import License File (.pharmalicense)';
+        btn.textContent = 'Activate';
         status.textContent = 'Unexpected error. Please restart the application.';
         status.className   = 'status-msg error';
       }

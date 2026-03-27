@@ -21,7 +21,8 @@ import { DashboardService }   from './dashboard.service';
 import { AuditService }       from './audit.service';
 import { SettingsService }    from './settings.service';
 import { BackupService }      from './backup.service';
-import { PurchaseService }    from './purchase.service';
+import { PurchaseService }          from './purchase.service';
+import { RecurringExpenseService }  from './recurring-expense.service';
 
 export class ServiceContainer {
   private _auth?:        AuthService;
@@ -38,7 +39,8 @@ export class ServiceContainer {
   private _audit?:      AuditService;
   private _settings?:   SettingsService;
   private _backup?:     BackupService;
-  private _purchase?:   PurchaseService;
+  private _purchase?:          PurchaseService;
+  private _recurringExpense?:  RecurringExpenseService;
 
   constructor(
     private readonly repos: Repositories,
@@ -156,6 +158,15 @@ export class ServiceContainer {
     ));
   }
 
+  get recurringExpense(): RecurringExpenseService {
+    return (this._recurringExpense ??= new RecurringExpenseService(
+      this.repos.recurringExpense,
+      this.repos.expense,
+      this.repos.settings,
+      this.bus
+    ));
+  }
+
   get purchase(): PurchaseService {
     return (this._purchase ??= new PurchaseService(
       this.repos.purchase,
@@ -187,4 +198,5 @@ export {
   SettingsService,
   BackupService,
   PurchaseService,
+  RecurringExpenseService,
 };

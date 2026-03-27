@@ -171,6 +171,49 @@ describe('BatchService', () => {
         action: 'UPDATE_BATCH',
       }));
     });
+
+    it('blocks cost_per_parent change when batch has sales', async () => {
+      const { svc, batchRepo } = createService();
+      batchRepo.getById.mockResolvedValue(sampleBatch);
+      batchRepo.getBatchDeleteInfo.mockResolvedValue({ quantity_base: 200, txn_count: 3, adj_count: 0 });
+      await expect(svc.update(1, { cost_per_parent: 9999 } as any, 1)).rejects.toThrow(ValidationError);
+    });
+
+    it('allows cost_per_parent change when batch has no sales', async () => {
+      const { svc, batchRepo } = createService();
+      batchRepo.getById
+        .mockResolvedValueOnce(sampleBatch)
+        .mockResolvedValue({ ...sampleBatch, cost_per_parent: 600 });
+      batchRepo.getBatchDeleteInfo.mockResolvedValue({ quantity_base: 200, txn_count: 0, adj_count: 0 });
+      const result = await svc.update(1, { cost_per_parent: 600 } as any, 1);
+      expect(batchRepo.update).toHaveBeenCalled();
+      expect(result.cost_per_parent).toBe(600);
+    });
+
+    it('auto-recalculates child cost when cost_per_parent changes', async () => {
+      const { svc, batchRepo } = createService();
+      batchRepo.getById
+        .mockResolvedValueOnce({ ...sampleBatch, conversion_factor: 20 })
+        .mockResolvedValue({ ...sampleBatch, cost_per_parent: 6000 });
+      batchRepo.getBatchDeleteInfo.mockResolvedValue({ quantity_base: 200, txn_count: 0, adj_count: 0 });
+      await svc.update(1, { cost_per_parent: 6000 } as any, 1);
+      // 6000 / 20 = 300
+      expect(batchRepo.update).toHaveBeenCalledWith(1, expect.objectContaining({
+        cost_per_child: 300,
+      }));
+    });
+
+    it('auto-recalculates child selling price when selling_price_parent_override changes', async () => {
+      const { svc, batchRepo } = createService();
+      batchRepo.getById
+        .mockResolvedValueOnce({ ...sampleBatch, conversion_factor: 20 })
+        .mockResolvedValue(sampleBatch);
+      await svc.update(1, { selling_price_parent_override: 1000 } as any, 1);
+      // 1000 / 20 = 50
+      expect(batchRepo.update).toHaveBeenCalledWith(1, expect.objectContaining({
+        selling_price_child: 50,
+      }));
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -292,6 +335,49 @@ describe('BatchService', () => {
       const { svc, batchRepo } = createService();
       batchRepo.getExpired.mockResolvedValue([sampleBatch]);
       expect(await svc.getExpired()).toHaveLength(1);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // updateSellingPricesByProduct
+  // ═══════════════════════════════════════════════════════════════════════════
+  describe('updateSellingPricesByProduct', () => {
+    it('computes base child price from product CF and passes to repo', async () => {
+      const { svc, batchRepo, productRepo } = createService();
+      productRepo.getById.mockResolvedValue({ ...sampleProduct, conversion_factor: 10 });
+      batchRepo.bulkUpdateSellingPrices.mockResolvedValue(3);
+      await svc.updateSellingPricesByProduct(1, 5000, null, 1);
+      // base child = floor(5000 / 10) = 500
+      expect(batchRepo.bulkUpdateSellingPrices).toHaveBeenCalledWith(1, 5000, 500, null);
+    });
+
+    it('emits event when batches are updated', async () => {
+      const { svc, batchRepo, productRepo, bus } = createService();
+      productRepo.getById.mockResolvedValue(sampleProduct);
+      batchRepo.bulkUpdateSellingPrices.mockResolvedValue(2);
+      await svc.updateSellingPricesByProduct(1, 8000, null, 1);
+      expect(bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
+        action: 'BULK_UPDATE_BATCH_PRICES',
+      }));
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // create — base child price population
+  // ═══════════════════════════════════════════════════════════════════════════
+  describe('create — child price auto-calculation', () => {
+    it('passes both base and override child prices to repo', async () => {
+      const { svc, batchRepo, productRepo } = createService();
+      productRepo.getById.mockResolvedValue({ ...sampleProduct, conversion_factor: 10 });
+      batchRepo.create.mockResolvedValue(runResult(1));
+      batchRepo.getById.mockResolvedValue(sampleBatch);
+
+      await svc.create({ ...createInput, cost_per_parent: 5000, selling_price_parent: 8000 } as any, 1);
+      expect(batchRepo.create).toHaveBeenCalledWith(expect.objectContaining({
+        cost_per_child: 500,          // floor(5000 / 10)
+        selling_price_child: 800,     // floor(8000 / 10)
+        selling_price_parent_override: 8000,
+      }));
     });
   });
 });

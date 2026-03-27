@@ -2,7 +2,7 @@ import { useState, useEffect, lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { DirectionProvider } from '@radix-ui/react-direction';
-import { Toaster } from 'sonner';
+import { Toaster, toast } from 'sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { useAuthStore } from '@/stores/auth.store';
 import { useUiStore } from '@/stores/ui.store';
@@ -108,6 +108,23 @@ export function App() {
     }
   }, [settingsLoaded, storedLanguage, i18n]);
 
+  // Notify main process that renderer is ready + listen for startup generation results
+  useEffect(() => {
+    if (window.api?.notifyReady) {
+      window.api.notifyReady();
+    }
+    if (window.api?.onStartupRecurringGenerated) {
+      window.api.onStartupRecurringGenerated(({ count }) => {
+        if (count > 0) {
+          toast.info(
+            i18n.t('Auto-generated {{count}} recurring expense(s) on startup', { count }),
+            { duration: 6000 }
+          );
+        }
+      });
+    }
+  }, [i18n]);
+
   // Session activity tracker
   useEffect(() => {
     if (!isAuthenticated || !window.api?.session) return;
@@ -143,8 +160,9 @@ export function App() {
   // of the HTML dir attribute.
   const dir = i18n.dir();
 
-  // Loading screen
-  if (isLoading || deviceMode === null) {
+  // Loading screen — also wait for settings to load after login so components
+  // get the real default_markup_percent, not the hardcoded fallback '20'.
+  if (isLoading || deviceMode === null || (isAuthenticated && !settingsLoaded)) {
     return (
       <DirectionProvider dir={dir}>
         <div className="flex h-screen items-center justify-center">

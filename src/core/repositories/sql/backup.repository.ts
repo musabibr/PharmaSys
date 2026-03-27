@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as fsp from 'fs/promises';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import type { BaseRepository, SqlJsDatabase } from './base.repository';
@@ -147,15 +148,15 @@ export class BackupRepository implements IBackupRepository {
     const filename  = `pharmasys-backup-${ts}${suffix}.bak`;
     const filePath  = path.join(this.backupDir, filename);
 
-    // Write raw SQLite bytes — no encryption, always restorable
+    // Write raw SQLite bytes — async file I/O to avoid blocking main thread
     const raw = Buffer.from(this.base.db.export());
 
     const tmp = filePath + '.tmp';
-    fs.writeFileSync(tmp, raw);
-    fs.renameSync(tmp, filePath);
+    await fsp.writeFile(tmp, raw);
+    await fsp.rename(tmp, filePath);
 
     const checksum = crypto.createHash('sha256').update(raw).digest('hex');
-    fs.writeFileSync(filePath + '.sha256', `${checksum}  ${filename}\n`);
+    await fsp.writeFile(filePath + '.sha256', `${checksum}  ${filename}\n`);
 
     this._rotate();
 
@@ -192,14 +193,16 @@ export class BackupRepository implements IBackupRepository {
     const filePath = path.join(this.backupDir, filename);
     if (!fs.existsSync(filePath)) throw new Error('Backup file not found');
 
-    const fileBuffer = fs.readFileSync(filePath);
+    const fileBuffer = await fsp.readFile(filePath);
 
     // Verify checksum if available
     const csFile = filePath + '.sha256';
-    if (fs.existsSync(csFile)) {
-      const expected = fs.readFileSync(csFile, 'utf-8').split(' ')[0].trim();
+    try {
+      const expected = (await fsp.readFile(csFile, 'utf-8')).split(' ')[0].trim();
       const actual   = crypto.createHash('sha256').update(fileBuffer).digest('hex');
       if (expected !== actual) throw new Error('Backup integrity check failed — file may be corrupted');
+    } catch (e: any) {
+      if (e.code !== 'ENOENT') throw e; // Only ignore missing checksum file
     }
 
     // Safety backup before restore
@@ -220,11 +223,11 @@ export class BackupRepository implements IBackupRepository {
     // Persist restored database to disk FIRST (before swapping in-memory)
     const dbPath = path.join(this.dataPath, 'pharmasys.db');
     const tmp    = dbPath + '.restore.tmp';
-    fs.writeFileSync(tmp, Buffer.from(dbBuffer));
-    fs.renameSync(tmp, dbPath);
+    await fsp.writeFile(tmp, Buffer.from(dbBuffer));
+    await fsp.rename(tmp, dbPath);
 
     // Verify the file was written correctly
-    const written = fs.readFileSync(dbPath);
+    const written = await fsp.readFile(dbPath);
     if (written.length !== dbBuffer.length) {
       throw new Error(`Restore verification failed: wrote ${dbBuffer.length} bytes but file is ${written.length} bytes`);
     }

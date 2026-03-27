@@ -12,7 +12,8 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import * as path   from 'path';
 import * as fs     from 'fs';
-import { execFile, execSync } from 'child_process';
+import { execFile } from 'child_process';
+import { Worker }   from 'worker_threads';
 import initSqlJs   from 'sql.js';
 
 import { BaseRepository }        from '../../core/repositories/sql/base.repository';
@@ -24,6 +25,12 @@ import { registerAllHandlers }  from '../../transport/ipc/register';
 import { startRestServer, getLanIp, getAllLanIps } from '../../transport/rest/index';
 import { startDiscoveryResponder, discoverServers } from '../../transport/discovery';
 import type { UserPublic }      from '../../core/types/models';
+
+// License system
+import { decodeKey }                                        from '../../license/activation-key';
+import { setLicensePath, loadLicense, validateLicense,
+         createAndSaveLicense, deleteLicense }              from '../../license/local-license';
+import { setMachineIdCachePath, getMachineId, getDisplayMachineId } from '../../license/machine-id';
 
 // ─── Device Mode Types ───────────────────────────────────────────────────────
 
@@ -149,26 +156,28 @@ function saveDeviceConfig(config: DeviceConfig): void {
 // ─── Firewall Auto-Rule (Windows) ───────────────────────────────────────────
 
 function ensureFirewallRules(tcpPort: number, udpPort: number): void {
-  try {
-    const check = execSync(
-      `netsh advfirewall firewall show rule name="PharmaSys Server"`,
-      { encoding: 'utf8', timeout: 5000 },
-    );
-    if (check.includes('PharmaSys Server')) return; // already exists
-  } catch { /* rule doesn't exist yet — create it */ }
-  try {
-    execSync(
-      `netsh advfirewall firewall add rule name="PharmaSys Server" dir=in action=allow protocol=TCP localport=${tcpPort}`,
-      { timeout: 5000 },
-    );
-    execSync(
-      `netsh advfirewall firewall add rule name="PharmaSys Discovery" dir=in action=allow protocol=UDP localport=${udpPort}`,
-      { timeout: 5000 },
-    );
-    console.log(`[Firewall] Inbound rules created for TCP:${tcpPort} UDP:${udpPort}`);
-  } catch (err) {
-    console.warn('[Firewall] Could not auto-create rules (may need admin):', (err as Error).message);
-  }
+  // Run firewall checks asynchronously to avoid blocking the main thread
+  execFile('netsh', ['advfirewall', 'firewall', 'show', 'rule', 'name=PharmaSys Server'],
+    { timeout: 5000 }, (err, stdout) => {
+      if (!err && stdout.includes('PharmaSys Server')) return; // already exists
+      // Create rules
+      execFile('netsh', ['advfirewall', 'firewall', 'add', 'rule',
+        'name=PharmaSys Server', 'dir=in', 'action=allow', 'protocol=TCP', `localport=${tcpPort}`],
+        { timeout: 5000 }, (addErr) => {
+          if (addErr) {
+            console.warn('[Firewall] Could not create TCP rule (may need admin):', addErr.message);
+          }
+        });
+      execFile('netsh', ['advfirewall', 'firewall', 'add', 'rule',
+        'name=PharmaSys Discovery', 'dir=in', 'action=allow', 'protocol=UDP', `localport=${udpPort}`],
+        { timeout: 5000 }, (addErr) => {
+          if (addErr) {
+            console.warn('[Firewall] Could not create UDP rule (may need admin):', addErr.message);
+          } else {
+            console.log(`[Firewall] Inbound rules created for TCP:${tcpPort} UDP:${udpPort}`);
+          }
+        });
+    });
 }
 
 const deviceConfig = loadDeviceConfig();
@@ -220,25 +229,48 @@ async function initDatabase(): Promise<ServiceContainer> {
   // Mutable reference — saveFn always exports the current DB (survives backup restore swap)
   const dbRef = { current: db };
 
-  // Save function — atomic rename with Windows EPERM retry
+  // Worker thread for non-blocking file I/O (db.export() is still sync but fast;
+  // the file write is the slow part and now runs off the main thread)
+  const workerPath = path.join(__dirname, 'save-worker.js');
+  let saveWorker: Worker | null = null;
+  let saveInFlight = false;
+
+  function ensureSaveWorker(): Worker {
+    if (!saveWorker) {
+      saveWorker = new Worker(workerPath);
+      saveWorker.on('message', (msg: { ok: boolean; error?: string }) => {
+        saveInFlight = false;
+        if (!msg.ok) console.error('[DB] Worker save failed:', msg.error);
+      });
+      saveWorker.on('error', (e: Error) => {
+        saveInFlight = false;
+        console.error('[DB] Worker error:', e.message);
+        saveWorker = null; // Recreate on next save
+      });
+    }
+    return saveWorker;
+  }
+
+  // Save function — export DB on main thread (fast), write to disk on worker (non-blocking)
   const saveFn = (): void => {
+    if (saveInFlight) return; // Skip if previous save still writing
     const data = dbRef.current.export();
-    const tmp  = dbFile + '.tmp';
-    let attempts = 0;
-    const tryWrite = (): void => {
+    try {
+      const worker = ensureSaveWorker();
+      saveInFlight = true;
+      // Transfer the buffer to avoid copying (zero-copy)
+      worker.postMessage({ data, dbFile }, [data.buffer]);
+    } catch {
+      // Fallback: synchronous save if worker fails
+      saveInFlight = false;
       try {
+        const tmp = dbFile + '.tmp';
         fs.writeFileSync(tmp, data);
         fs.renameSync(tmp, dbFile);
       } catch (err: any) {
-        if (err.code === 'EPERM' && attempts < 3) {
-          attempts++;
-          setTimeout(tryWrite, 100);
-        } else {
-          console.error('[DB] Save failed:', err.message);
-        }
+        console.error('[DB] Fallback save failed:', err.message);
       }
-    };
-    tryWrite();
+    }
   };
 
   flushDbToDisk = saveFn;
@@ -419,6 +451,241 @@ function registerAllAppHandlers(): void {
   registerPdfParseHandler();
 }
 
+// ─── License Gate ────────────────────────────────────────────────────────────
+
+function checkLicense(): { valid: boolean; reason?: string; daysRemaining?: number } {
+  const license = loadLicense();
+  if (!license) return { valid: false, reason: 'No license found. Please activate.' };
+  const status = validateLicense(license);
+  if (!status.valid) {
+    deleteLicense(); // Remove tampered/expired file
+    return { valid: false, reason: status.reason };
+  }
+  return { valid: true, daysRemaining: status.daysRemaining };
+}
+
+function showActivationScreen(reason?: string): void {
+  const iconPath = path.join(projectRoot, 'build/icon.ico');
+  const licensePreload = path.join(projectRoot, 'src/main/license-preload.js');
+  const htmlPath = path.join(__dirname, 'license-screen/not-activated.html');
+  const displayId = getDisplayMachineId();
+
+  const win = new BrowserWindow({
+    width: 520, height: 580,
+    resizable: false,
+    maximizable: false,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: licensePreload,
+      sandbox: true,
+      devTools: isDev,
+    },
+    title: 'PharmaSys — Activation',
+    backgroundColor: '#1e1e2e',
+    icon: fs.existsSync(iconPath) ? iconPath : undefined,
+  });
+
+  const params = new URLSearchParams();
+  if (reason) params.set('reason', reason);
+  params.set('machineId', displayId);
+  win.loadFile(htmlPath, { search: params.toString() });
+
+  // IPC: activate with key (machine ID used as HMAC salt)
+  const fullMachineId = getMachineId();
+  ipcMain.handle('license:activate', async (_event, keyString: string) => {
+    const result = decodeKey(keyString, fullMachineId);
+    if (!result.valid) {
+      return { success: false, error: result.reason || 'Invalid key' };
+    }
+
+    // Create local license bound to this machine
+    createAndSaveLicense(keyString, result.payload!.licenseDurationDays, fullMachineId);
+    console.log(`[License] Activated — duration: ${result.payload!.licenseDurationDays === 0 ? 'forever' : result.payload!.licenseDurationDays + ' days'}`);
+
+    // Boot main app, then close activation window
+    // Guard: prevent app.quit() while transitioning windows
+    isReconfiguringWindow = true;
+    setTimeout(async () => {
+      try {
+        ipcMain.removeHandler('license:activate');
+        ipcMain.removeHandler('license:getStatus');
+        await bootMainApp();
+        win.close();
+      } catch (err) {
+        console.error('[License] Failed to boot after activation:', err);
+        win.close();
+      } finally {
+        isReconfiguringWindow = false;
+      }
+    }, 1500);
+
+    return { success: true };
+  });
+
+  ipcMain.handle('license:getStatus', () => {
+    return checkLicense();
+  });
+
+  win.on('closed', () => {
+    ipcMain.removeHandler('license:activate');
+    ipcMain.removeHandler('license:getStatus');
+  });
+}
+
+async function bootMainApp(): Promise<void> {
+  // ── Client mode — no local database ─────────────────────────────────
+  if (deviceMode === 'client') {
+    console.log(`[Startup] Client mode → connecting to http://${deviceConfig.serverHost}:${deviceConfig.serverPort}`);
+    createWindow();
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+    return;
+  }
+
+  // ── Standalone / Server mode — local database ───────────────────────
+  services = await initDatabase();
+
+  // ── Auto-close stale shifts ────────────────────────────────────────
+  try {
+    const staleCount = await services.shift.autoCloseStale(24);
+    if (staleCount > 0) console.log(`[Startup] Auto-closed ${staleCount} stale shift(s)`);
+  } catch (err) {
+    console.warn('[Startup] Failed to auto-close stale shifts:', (err as Error).message);
+  }
+
+  // ── Auto-generate recurring expenses ───────────────────────────────
+  let startupGeneratedCount = 0;
+  const generationMode = await services.settings.get('recurring_generation_mode') ?? 'startup';
+  if (generationMode !== 'manual') {
+    try {
+      startupGeneratedCount = await services.recurringExpense.generateForMissedDays(1);
+      if (startupGeneratedCount > 0) console.log(`[Startup] Auto-generated ${startupGeneratedCount} recurring expense(s)`);
+    } catch (err) {
+      console.warn('[Startup] Failed to auto-generate recurring expenses:', (err as Error).message);
+    }
+  }
+
+  if (startupGeneratedCount > 0) {
+    ipcMain.once('app:ready', () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('startup:recurringGenerated', { count: startupGeneratedCount });
+      }
+    });
+  }
+
+  // ── Register IPC/REST handlers ─────────────────────────────────────
+  registerAllAppHandlers();
+
+  // Backup save-as dialog
+  ipcMain.handle('backup:saveAs', async (_event, sourcePath: string) => {
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    if (!win) return { success: false, error: 'No window available' };
+    const backupDir = path.resolve(path.join(dataPath, 'backups'));
+    const resolvedSource = path.resolve(sourcePath);
+    if (!resolvedSource.startsWith(backupDir + path.sep) && resolvedSource !== backupDir) {
+      return { success: false, error: 'Invalid backup source path' };
+    }
+    const defaultName = path.basename(sourcePath);
+    const ext = path.extname(defaultName).replace('.', '') || 'bak';
+    const { filePath, canceled } = await dialog.showSaveDialog(win, {
+      title: 'Save Backup As',
+      defaultPath: defaultName,
+      filters: [{ name: 'PharmaSys Backup', extensions: [ext] }],
+    });
+    if (canceled || !filePath) return { success: false };
+    try {
+      fs.copyFileSync(sourcePath, filePath);
+      return { success: true, savedPath: filePath };
+    } catch (err) {
+      return { success: false, error: `Failed to save backup: ${(err as Error).message}` };
+    }
+  });
+
+  // Restore backup from external file
+  ipcMain.handle('backup:restoreFromFile', async () => {
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    if (!win) return { success: false, error: 'No window available' };
+    const { filePaths, canceled } = await dialog.showOpenDialog(win, {
+      title: 'Select Backup File',
+      filters: [{ name: 'PharmaSys Backup', extensions: ['bak', 'enc', 'sqlite'] }],
+      properties: ['openFile'],
+    });
+    if (canceled || filePaths.length === 0) return { success: false };
+    const selectedFile = filePaths[0];
+    const backupDir = path.join(dataPath, 'backups');
+    if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+    const filename = path.basename(selectedFile);
+    fs.copyFileSync(selectedFile, path.join(backupDir, filename));
+    try {
+      await services!.backup.restore(filename, currentUser?.id ?? 0);
+      return { success: true, restartRequired: true };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  });
+
+  // ── REST server ────────────────────────────────────────────────────
+  if (deviceMode === 'server' || isDev || process.argv.includes('--rest')) {
+    const port = Number(process.env.REST_PORT ?? deviceConfig.serverPort);
+    const host = deviceMode === 'server' ? '0.0.0.0' : '127.0.0.1';
+    if (deviceMode === 'server') ensureFirewallRules(port, 41234);
+    startRestServer(services, port, host);
+    if (deviceMode === 'server') {
+      startDiscoveryResponder(port, 'PharmaSys Server');
+      console.log(`[Startup] Server mode — LAN IP: ${getLanIp()}`);
+    }
+  }
+
+  // ── Auto-backup timer ──────────────────────────────────────────────
+  let autoBackupTimer: ReturnType<typeof setInterval> | null = null;
+  async function startAutoBackupTimer() {
+    if (autoBackupTimer) clearInterval(autoBackupTimer);
+    const hours = parseInt(await services!.settings.get('auto_backup_hours') ?? '8', 10) || 8;
+    if (hours <= 0) return;
+    console.log(`[AutoBackup] Scheduled every ${hours} hours`);
+    autoBackupTimer = setInterval(async () => {
+      try {
+        const entry = await services!.backup.create(0, 'auto');
+        console.log(`[AutoBackup] Created: ${entry.filename}`);
+      } catch (err) { console.error('[AutoBackup] Failed:', err); }
+    }, hours * 3_600_000);
+  }
+  startAutoBackupTimer();
+  ipcMain.on('autoBackupTimerRestart', () => { startAutoBackupTimer(); });
+
+  // ── Recurring expense timer ────────────────────────────────────────
+  let recurringExpenseTimer: ReturnType<typeof setTimeout> | null = null;
+  async function startRecurringExpenseTimer() {
+    if (recurringExpenseTimer) { clearTimeout(recurringExpenseTimer); recurringExpenseTimer = null; }
+    const mode = await services!.settings.get('recurring_generation_mode') ?? 'startup';
+    if (mode !== 'scheduled') return;
+    const hour = parseInt(await services!.settings.get('recurring_generation_hour') ?? '0', 10);
+    const now = new Date();
+    const target = new Date(now);
+    target.setHours(hour, 0, 0, 0);
+    if (target <= now) target.setDate(target.getDate() + 1);
+    recurringExpenseTimer = setTimeout(async () => {
+      try {
+        const count = await services!.recurringExpense.generateForMissedDays(1);
+        if (count > 0 && mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('startup:recurringGenerated', { count });
+        }
+      } catch (err) { console.error('[RecurringExpenses] Timer failed:', err); }
+      startRecurringExpenseTimer();
+    }, target.getTime() - now.getTime());
+    console.log(`[RecurringExpenses] Next generation at ${target.toLocaleString()}`);
+  }
+  startRecurringExpenseTimer();
+  ipcMain.on('recurringExpenseTimerRestart', () => { startRecurringExpenseTimer(); });
+
+  createWindow();
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+}
+
 // ─── Application Lifecycle ────────────────────────────────────────────────────
 
 app.setAppUserModelId('com.pharmasys.app');
@@ -426,6 +693,10 @@ app.setAppUserModelId('com.pharmasys.app');
 app.whenReady().then(async () => {
   try {
     console.log(`[Startup] Device mode: ${deviceMode}`);
+
+    // Set license + machine ID paths before any license operations
+    setLicensePath(dataPath);
+    setMachineIdCachePath(dataPath);
 
     // ── IPC handler for device config (available in all modes) ───────────
     ipcMain.handle('device:getConfig', () => ({
@@ -504,140 +775,19 @@ app.whenReady().then(async () => {
       app.exit(0);
     });
 
-    // ── Client mode — no local database ─────────────────────────────────
-    if (deviceMode === 'client') {
-      console.log(`[Startup] Client mode → connecting to http://${deviceConfig.serverHost}:${deviceConfig.serverPort}`);
-      createWindow();
-      app.on('activate', () => {
-        if (BrowserWindow.getAllWindows().length === 0) createWindow();
-      });
-      return;
+    // ── License Gate ─────────────────────────────────────────────────────
+    // Skip license check in dev mode for convenience
+    // Only skip license in explicit --dev mode (not just !app.isPackaged)
+    const skipLicense = process.argv.includes('--dev');
+    const licenseCheck = skipLicense ? { valid: true } : checkLicense();
+
+    if (licenseCheck.valid) {
+      console.log(`[License] Valid${licenseCheck.daysRemaining === -1 ? ' (forever)' : ` (${licenseCheck.daysRemaining} days remaining)`}`);
+      await bootMainApp();
+    } else {
+      console.log(`[License] ${licenseCheck.reason}`);
+      showActivationScreen(licenseCheck.reason);
     }
-
-    // ── Standalone / Server mode — local database ───────────────────────
-    services = await initDatabase();
-
-    // ── Auto-close stale shifts (open > 24 hours) ──────────────────────────
-    try {
-      const staleCount = await services.shift.autoCloseStale(24);
-      if (staleCount > 0) console.log(`[Startup] Auto-closed ${staleCount} stale shift(s)`);
-    } catch (err) {
-      console.warn('[Startup] Failed to auto-close stale shifts:', (err as Error).message);
-    }
-
-    registerAllAppHandlers();
-
-    // Backup save-as dialog: copies backup file to user-chosen location
-    ipcMain.handle('backup:saveAs', async (_event, sourcePath: string) => {
-      const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-      if (!win) return { success: false, error: 'No window available' };
-
-      // Validate that sourcePath is within the expected backup directory
-      const backupDir = path.resolve(path.join(dataPath, 'backups'));
-      const resolvedSource = path.resolve(sourcePath);
-      if (!resolvedSource.startsWith(backupDir + path.sep) && resolvedSource !== backupDir) {
-        return { success: false, error: 'Invalid backup source path' };
-      }
-
-      const defaultName = path.basename(sourcePath);
-      const ext = path.extname(defaultName).replace('.', '') || 'bak';
-      const { filePath, canceled } = await dialog.showSaveDialog(win, {
-        title: 'Save Backup As',
-        defaultPath: defaultName,
-        filters: [{ name: 'PharmaSys Backup', extensions: [ext] }],
-      });
-      if (canceled || !filePath) return { success: false };
-      try {
-        fs.copyFileSync(sourcePath, filePath);
-        return { success: true, savedPath: filePath };
-      } catch (err) {
-        return { success: false, error: `Failed to save backup: ${(err as Error).message}` };
-      }
-    });
-
-    // Restore backup from external file (device migration scenario)
-    // All format detection (raw SQLite, PSBK portable, legacy encrypted) is
-    // handled by BackupRepository.restore() — no branching needed here.
-    ipcMain.handle('backup:restoreFromFile', async (_event) => {
-      const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-      if (!win) return { success: false, error: 'No window available' };
-
-      const { filePaths, canceled } = await dialog.showOpenDialog(win, {
-        title: 'Select Backup File',
-        filters: [{ name: 'PharmaSys Backup', extensions: ['bak', 'enc', 'sqlite'] }],
-        properties: ['openFile'],
-      });
-      if (canceled || filePaths.length === 0) return { success: false };
-
-      const selectedFile = filePaths[0];
-      const backupDir = path.join(dataPath, 'backups');
-      if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
-
-      // Copy file to local backup directory, then let repository handle format detection
-      const filename = path.basename(selectedFile);
-      const destPath = path.join(backupDir, filename);
-      fs.copyFileSync(selectedFile, destPath);
-
-      try {
-        console.log('[Restore] Starting restore of:', filename);
-        await services!.backup.restore(filename, currentUser?.id ?? 0);
-        console.log('[Restore] Restore completed successfully');
-        return { success: true, restartRequired: true };
-      } catch (err) {
-        console.error('[Restore] Failed:', (err as Error).message);
-        return { success: false, error: (err as Error).message };
-      }
-    });
-
-    // Start REST server — always in server mode, optionally in dev mode
-    if (deviceMode === 'server' || isDev || process.argv.includes('--rest')) {
-      const port = Number(process.env.REST_PORT ?? deviceConfig.serverPort);
-      const host = deviceMode === 'server' ? '0.0.0.0' : '127.0.0.1';
-
-      // Auto-create Windows Firewall rules in server mode
-      if (deviceMode === 'server') {
-        ensureFirewallRules(port, 41234);
-      }
-
-      startRestServer(services, port, host);
-
-      // Start UDP discovery responder so client devices can find this server
-      if (deviceMode === 'server') {
-        startDiscoveryResponder(port, 'PharmaSys Server');
-        console.log(`[Startup] Server mode — LAN IP: ${getLanIp()}`);
-      }
-    }
-
-    // ── Auto-backup timer ────────────────────────────────────────────────────
-    let autoBackupTimer: ReturnType<typeof setInterval> | null = null;
-
-    async function startAutoBackupTimer() {
-      if (autoBackupTimer) clearInterval(autoBackupTimer);
-      const hoursStr = await services!.settings.get('auto_backup_hours');
-      const hours = parseInt(hoursStr ?? '8', 10) || 8;
-      if (hours <= 0) return; // disabled
-      const ms = hours * 60 * 60 * 1000;
-      console.log(`[AutoBackup] Scheduled every ${hours} hours`);
-      autoBackupTimer = setInterval(async () => {
-        try {
-          const entry = await services!.backup.create(0, 'auto');
-          console.log(`[AutoBackup] Created: ${entry.filename}`);
-        } catch (err) {
-          console.error('[AutoBackup] Failed:', err);
-        }
-      }, ms);
-    }
-
-    startAutoBackupTimer();
-
-    // Listen for setting changes to restart the timer
-    ipcMain.on('autoBackupTimerRestart', () => { startAutoBackupTimer(); });
-
-    createWindow();
-
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow();
-    });
   } catch (err) {
     console.error('[Startup] Fatal error:', err);
     app.quit();

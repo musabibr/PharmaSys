@@ -291,6 +291,36 @@ contextBridge.exposeInMainWorld('api', {
     },
 
     // ════════════════════════════════════════
+    //  RECURRING EXPENSES
+    // ════════════════════════════════════════
+
+    recurringExpenses: {
+        getAll: () =>
+            invoke('recurringExpenses:getAll'),
+
+        create: (data) =>
+            invoke('recurringExpenses:create', data),
+
+        update: (id, data) =>
+            invoke('recurringExpenses:update', { id, data }),
+
+        delete: (id) =>
+            invoke('recurringExpenses:delete', id),
+
+        toggleActive: (id) =>
+            invoke('recurringExpenses:toggleActive', id),
+
+        preview: () =>
+            invoke('recurringExpenses:preview'),
+
+        generate: (itemIds) =>
+            invoke('recurringExpenses:generate', itemIds),
+
+        restartTimer: () =>
+            ipcRenderer.send('recurringExpenseTimerRestart'),
+    },
+
+    // ════════════════════════════════════════
     //  SHIFTS
     //  Note: userId injected server-side
     // ════════════════════════════════════════
@@ -570,5 +600,16 @@ contextBridge.exposeInMainWorld('api', {
     discovery: {
         scan: () =>
             invoke('discovery:scan'),
+    },
+
+    // ════════════════════════════════════════
+    //  STARTUP NOTIFICATIONS
+    // ════════════════════════════════════════
+
+    notifyReady: () =>
+        ipcRenderer.send('app:ready'),
+
+    onStartupRecurringGenerated: (callback) => {
+        ipcRenderer.on('startup:recurringGenerated', (_event, data) => callback(data));
     },
 });
