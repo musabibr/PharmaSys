@@ -195,6 +195,41 @@ export interface TransactionItem {
   product_is_active?: number;
 }
 
+// ─── Sales History ───
+
+export interface ProductSaleRecord {
+  item_id:                    number;
+  transaction_id:             number;
+  transaction_number:         string;
+  transaction_type:           TransactionType;
+  created_at:                 string;
+  quantity_base:              number;
+  unit_type:                  UnitType;
+  unit_price:                 number;
+  line_total:                 number;
+  conversion_factor_snapshot: number;
+  username:                   string;
+  customer_name:              string | null;
+  payment_method:             PaymentMethod | null;
+  batch_id:                   number;
+  batch_number:               string | null;
+  product_id:                 number;
+  product_name:               string;
+  parent_unit:                string;
+  child_unit:                 string;
+}
+
+export interface ProductSaleFilters {
+  product_ids?:      number[];   // multi-product filter
+  batch_id?:         number;
+  user_id?:          number;
+  start_date?:       string;
+  end_date?:         string;
+  transaction_type?: 'sale' | 'return';
+  page?:             number;
+  limit?:            number;
+}
+
 // ─── Shift ───
 
 export interface Shift {
@@ -218,6 +253,7 @@ export interface Shift {
   total_bank_returns?: number;
   total_sales?: number;
   total_returns?: number;
+  total_expenses?: number;
 }
 
 // ─── Expense ───
@@ -238,6 +274,7 @@ export interface Expense {
   shift_id: number | null;
   is_recurring: number;
   recurring_expense_id: number | null;
+  is_revoked: number;
   created_at: string;
   // Joined fields
   category_name?: string;
@@ -254,6 +291,7 @@ export interface RecurringExpense {
   amount: number;
   payment_method: ExpensePaymentMethod;
   is_active: number;
+  day_of_month: number;   // 1–28; only used when amount_type = 'monthly'
   created_by: number;
   created_at: string;
   // Joined fields
@@ -271,6 +309,7 @@ export interface CreateRecurringExpenseInput {
   amount_type: RecurringAmountType;
   amount: number;
   payment_method?: ExpensePaymentMethod;
+  day_of_month?: number;  // 1–28; only used when amount_type = 'monthly'
 }
 
 export interface GenerationPreviewItem {

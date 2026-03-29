@@ -1,6 +1,6 @@
 import type { IpcRouter }        from '../ipc-router';
 import type { ServiceContainer } from '../../../core/services/index';
-import type { CreateTransactionInput, CreateReturnInput, TransactionFilters } from '../../../core/types/models';
+import type { CreateTransactionInput, CreateReturnInput, TransactionFilters, ProductSaleFilters } from '../../../core/types/models';
 import { resolvePermissions, hasPermission } from '../../../core/common/permissions';
 import { PermissionError } from '../../../core/types/errors';
 
@@ -69,6 +69,10 @@ export function registerTransactionHandlers(router: IpcRouter, services: Service
     const txn = await services.transaction.voidTransaction(payload.id, payload.reason, user!.id, payload.force);
     return { success: true, restored_items: txn.items?.length ?? 0 };
   }, { permission: 'finance.transactions.void' });
+
+  router.handle('transactions:getSalesByProduct', async (_user, filters: ProductSaleFilters) => {
+    return await services.transaction.getSalesByProduct(filters);
+  });
 
   // Frontend uses this to get returned quantities map for a given original transaction
   router.handle('transactions:getReturnedQty', async (user, originalTxnId: number) => {

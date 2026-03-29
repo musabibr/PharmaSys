@@ -129,7 +129,14 @@ export class ExpenseService {
 
   async delete(id: number, userId: number): Promise<void> {
     Validate.id(id);
-    await this.repo.delete(id);
+    const expense = await this.repo.getById(id);
+    if (!expense) throw new NotFoundError('Expense', id);
+    if (expense.is_recurring) {
+      // Soft-revoke: keeps the row so generation logic won't recreate this date
+      await this.repo.revoke(id);
+    } else {
+      await this.repo.delete(id);
+    }
     this.bus.emit('entity:mutated', {
       action: 'DELETE_EXPENSE', table: 'expenses',
       recordId: id, userId,

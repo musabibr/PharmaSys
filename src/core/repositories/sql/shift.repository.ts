@@ -55,7 +55,8 @@ export class ShiftRepository implements IShiftRepository {
          COALESCE((SELECT SUM(total_amount - cash_tendered) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'sale'), 0) as total_bank_sales,
          COALESCE((SELECT SUM(total_amount - cash_tendered) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'return'), 0) as total_bank_returns,
          COALESCE((SELECT SUM(total_amount) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'sale'), 0) as total_sales,
-         COALESCE((SELECT SUM(total_amount) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'return'), 0) as total_returns
+         COALESCE((SELECT SUM(total_amount) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'return'), 0) as total_returns,
+         COALESCE((SELECT SUM(amount) FROM expenses WHERE shift_id = s.id AND is_revoked = 0 AND id NOT IN (SELECT expense_id FROM purchase_payments WHERE expense_id IS NOT NULL)), 0) as total_expenses
        FROM shifts s JOIN users u ON s.user_id = u.id
        ${where}
        ORDER BY s.opened_at DESC
@@ -116,7 +117,7 @@ export class ShiftRepository implements IShiftRepository {
     );
     const cashExp = await this.base.getOne<{ total: number }>(
       `SELECT COALESCE(SUM(amount), 0) as total FROM expenses
-       WHERE shift_id = ? AND (payment_method = 'cash' OR payment_method IS NULL)
+       WHERE shift_id = ? AND is_revoked = 0 AND (payment_method = 'cash' OR payment_method IS NULL)
          AND id NOT IN (SELECT expense_id FROM purchase_payments WHERE expense_id IS NOT NULL)`,
       [shiftId]
     );

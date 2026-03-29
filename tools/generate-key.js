@@ -2,10 +2,12 @@
 /**
  * PharmaSys Activation Key Generator
  *
+ * Generates device-independent keys. The key works on ANY device.
+ * Machine binding happens at activation time (local license is salted with device ID).
+ *
  * Usage:
- *   node tools/generate-key.js -m <machineId> --window <days> --duration <days>
- *   node tools/generate-key.js -m A3F2B7C1-D4E5F6A7 -w 7 -d 365
- *   node tools/generate-key.js -m A3F2B7C1-D4E5F6A7 -w 1 -d 0   # forever
+ *   node tools/generate-key.js -w 7 -d 365
+ *   node tools/generate-key.js -w 1825 -d 0    # 5-year window, forever license
  */
 
 const crypto = require('crypto');
@@ -40,7 +42,7 @@ function base32Encode(buf) {
   return out;
 }
 
-function generateKey(machineId, windowDays, durationDays) {
+function generateKey(windowDays, durationDays) {
   const issuedAtHours = Math.floor(Date.now() / 3_600_000);
 
   const buf = Buffer.alloc(TOTAL_LEN);
@@ -49,10 +51,9 @@ function generateKey(machineId, windowDays, durationDays) {
   buf.writeUInt16BE(windowDays, 5);
   buf.writeUInt16BE(durationDays, 7);
 
-  // HMAC salted with machine ID — key only works on this device
+  // HMAC — no machine ID, key works on any device
   const hmac = crypto.createHmac('sha256', HMAC_SECRET)
     .update(buf.subarray(0, PAYLOAD_LEN))
-    .update(machineId.toUpperCase())
     .digest()
     .subarray(0, HMAC_LEN);
   hmac.copy(buf, PAYLOAD_LEN);
@@ -82,11 +83,11 @@ if (args.includes('--help') || args.includes('-h')) {
   console.log(`
 PharmaSys Activation Key Generator
 
-Usage:
-  node tools/generate-key.js -m <machineId> [options]
+Keys are device-independent — one key works on any device.
+Machine binding happens at activation time (local license).
 
-Required:
-  -m, --machine <id>      Device ID shown on activation screen (e.g., A3F2B7C1-D4E5F6A7)
+Usage:
+  node tools/generate-key.js [options]
 
 Options:
   -w, --window <days>     Activation window in days (default: 7)
@@ -95,18 +96,11 @@ Options:
   -h, --help              Show this help
 
 Examples:
-  node tools/generate-key.js -m A3F2B7C1-D4E5F6A7 -w 7 -d 365
-  node tools/generate-key.js -m A3F2B7C1-D4E5F6A7 -w 1 -d 0
-  node tools/generate-key.js -m A3F2B7C1-D4E5F6A7 -w 30 -d 180 -n 3
+  node tools/generate-key.js -w 7 -d 365      # 7-day window, 1-year license
+  node tools/generate-key.js -w 1825 -d 0      # 5-year window, forever
+  node tools/generate-key.js -w 30 -d 180 -n 5 # 5 keys, 30-day window, 6-month
 `);
   process.exit(0);
-}
-
-const machineId = getArg('-m', '--machine', null);
-if (!machineId) {
-  console.error('Error: Machine ID is required. Use -m <id> (shown on the device activation screen)');
-  console.error('Example: node tools/generate-key.js -m A3F2B7C1-D4E5F6A7 -w 7 -d 365');
-  process.exit(1);
 }
 
 const windowDays = parseInt(getArg('-w', '--window', '7'), 10);
@@ -125,14 +119,13 @@ if (durationDays < 0 || durationDays > 65535) {
 const windowExpiry = new Date(Date.now() + windowDays * 86_400_000);
 const durationLabel = durationDays === 0 ? 'FOREVER' : `${durationDays} days`;
 
-console.log(`\n  Device ID:         ${machineId.toUpperCase()}`);
-console.log(`  Activation Window: ${windowDays} day(s) (key expires: ${windowExpiry.toISOString().split('T')[0]})`);
+console.log(`\n  Activation Window: ${windowDays} day(s) (key expires: ${windowExpiry.toISOString().split('T')[0]})`);
 console.log(`  License Duration:  ${durationLabel}`);
 console.log(`  Keys to generate:  ${count}\n`);
 console.log('─'.repeat(60));
 
 for (let i = 0; i < count; i++) {
-  const key = generateKey(machineId, windowDays, durationDays);
+  const key = generateKey(windowDays, durationDays);
   console.log(`\n  ${key}`);
 }
 

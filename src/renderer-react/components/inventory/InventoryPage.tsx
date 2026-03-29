@@ -8,6 +8,7 @@ import {
   Calculator,
   TrendingUp,
   Skull,
+  History,
 } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ProductsTab } from './ProductsTab';
@@ -16,6 +17,7 @@ import { ExpiryTab } from './ExpiryTab';
 import { ValuationTab } from './ValuationTab';
 import { ReorderTab } from './ReorderTab';
 import { DeadCapitalTab } from './DeadCapitalTab';
+import { SalesHistoryTab } from './SalesHistoryTab';
 import { useAnyPermission, usePermission } from '@/hooks/usePermission';
 
 // ---------------------------------------------------------------------------
@@ -31,7 +33,8 @@ export function InventoryPage() {
   const canViewExpiry     = useAnyPermission(['inventory.batches.view', 'inventory.expiry_alerts']);
   const canViewValuation  = usePermission('inventory.valuation');
   const canViewReorder    = useAnyPermission(['inventory.reorder', 'inventory.low_stock']);
-  const canViewDeadCap    = usePermission('inventory.dead_capital');
+  const canViewDeadCap      = usePermission('inventory.dead_capital');
+  const canViewSalesHistory = usePermission('inventory.batches.view');
 
   // Read initial tab from route state (e.g., navigate('/inventory', { state: { tab: 'reorder' } }))
   const stateTab = (location.state as { tab?: string } | null)?.tab;
@@ -43,7 +46,8 @@ export function InventoryPage() {
     canViewExpiry    ? 'expiry' :
     canViewValuation ? 'valuation' :
     canViewReorder   ? 'reorder' :
-    canViewDeadCap   ? 'dead-capital' :
+    canViewDeadCap      ? 'dead-capital' :
+    canViewSalesHistory ? 'sales-history' :
     'products';
 
   const [tab, setTab] = useState(stateTab || defaultTab);
@@ -93,6 +97,12 @@ export function InventoryPage() {
               {t('Dead Capital')}
             </TabsTrigger>
           )}
+          {canViewSalesHistory && (
+            <TabsTrigger value="sales-history" className="gap-1.5">
+              <History className="h-4 w-4" />
+              {t('Sales History')}
+            </TabsTrigger>
+          )}
         </TabsList>
 
         {canViewProducts && (
@@ -123,6 +133,11 @@ export function InventoryPage() {
         {canViewDeadCap && (
           <TabsContent value="dead-capital" className="flex-1 overflow-hidden">
             <DeadCapitalTab />
+          </TabsContent>
+        )}
+        {canViewSalesHistory && (
+          <TabsContent value="sales-history" className="flex-1 overflow-hidden">
+            <SalesHistoryTab />
           </TabsContent>
         )}
       </Tabs>

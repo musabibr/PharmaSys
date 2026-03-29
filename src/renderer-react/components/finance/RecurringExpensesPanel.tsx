@@ -6,19 +6,14 @@ import {
   Pencil,
   Trash2,
   Loader2,
-  ChevronDown,
-  ChevronUp,
-  RefreshCw,
   CalendarClock,
-  Check,
-  AlertTriangle,
+  Info,
 } from 'lucide-react';
 import { api } from '@/api';
 import type {
   RecurringExpense,
   ExpenseCategory,
   CreateRecurringExpenseInput,
-  GenerationPreviewItem,
 } from '@/api/types';
 import { formatCurrency } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -26,7 +21,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
   TableBody,
@@ -60,10 +54,6 @@ function computeMonthly(amount: number, type: string): number {
   return type === 'daily' ? amount * 30 : amount;
 }
 
-function getToday(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 /** Determine per-item generation status */
 function getItemStatus(item: RecurringExpense): {
   color: 'green' | 'orange' | 'gray';
@@ -71,32 +61,68 @@ function getItemStatus(item: RecurringExpense): {
 } {
   if (!item.is_active) return { color: 'gray', label: 'Inactive' };
 
-  const today = getToday();
-  const lastGen = item.last_generated_date;
-
-  if (!lastGen) return { color: 'orange', label: 'Pending' };
+  const today = new Date().toISOString().slice(0, 10);
+  const lastGen = item.last_generated_date ?? '';
 
   if (item.amount_type === 'daily') {
-    if (lastGen === today) return { color: 'green', label: 'Today' };
-    return { color: 'orange', label: 'Pending' };
+    return lastGen === today
+      ? { color: 'green', label: 'Up to date' }
+      : { color: 'orange', label: 'Pending' };
   }
 
-  // Monthly: check if generated for current month
-  const [lastY, lastM] = lastGen.split('-').map(Number);
-  const [todayY, todayM] = today.split('-').map(Number);
-  if (lastY === todayY && lastM === todayM) {
-    return { color: 'green', label: lastGen };
-  }
-  // Find next month-end
-  const eom = new Date(todayY, todayM, 0);
-  const eomStr = eom.toISOString().slice(0, 10);
-  return { color: 'orange', label: eomStr };
+  // Monthly: check if generated for current period on the configured day
+  const day = item.day_of_month ?? 1;
+  const now = new Date(today + 'T00:00:00');
+  const y = now.getFullYear();
+  const m = now.getMonth() + 1; // 1-based
+  const lastDayThis = new Date(y, m, 0).getDate();
+  const dThis = Math.min(day, lastDayThis);
+  const thisMonthDate = `${y}-${String(m).padStart(2, '0')}-${String(dThis).padStart(2, '0')}`;
+
+  if (lastGen >= thisMonthDate) return { color: 'green', label: 'Up to date' };
+  if (today < thisMonthDate) return { color: 'orange', label: 'Upcoming' };
+  return { color: 'orange', label: 'Pending' };
 }
 
-const STATUS_DOT: Record<string, string> = {
-  green: 'bg-emerald-500',
-  orange: 'bg-amber-500',
-  gray: 'bg-muted-foreground/50',
+/** Compute the next due date for display */
+function computeNextDue(item: RecurringExpense): string {
+  if (!item.is_active) return '—';
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  if (item.amount_type === 'daily') {
+    const lastGen = item.last_generated_date ?? '';
+    if (!lastGen || lastGen < today) return today;
+    const next = new Date(today + 'T00:00:00');
+    next.setDate(next.getDate() + 1);
+    return next.toISOString().slice(0, 10);
+  }
+
+  // Monthly
+  const day = item.day_of_month ?? 1;
+  const now = new Date(today + 'T00:00:00');
+  const y = now.getFullYear();
+  const m = now.getMonth() + 1; // 1-based
+
+  const lastDayThis = new Date(y, m, 0).getDate();
+  const dThis = Math.min(day, lastDayThis);
+  const thisMonthDate = `${y}-${String(m).padStart(2, '0')}-${String(dThis).padStart(2, '0')}`;
+  const lastGen = item.last_generated_date ?? '';
+  if (thisMonthDate >= today && lastGen < thisMonthDate) return thisMonthDate;
+
+  // Next month
+  let nm = m + 1;
+  let ny = y;
+  if (nm > 12) { nm = 1; ny++; }
+  const lastDayNext = new Date(ny, nm, 0).getDate();
+  const dNext = Math.min(day, lastDayNext);
+  return `${ny}-${String(nm).padStart(2, '0')}-${String(dNext).padStart(2, '0')}`;
+}
+
+const STATUS_CLASSES: Record<string, string> = {
+  green:  'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
+  orange: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
+  gray:   'bg-muted text-muted-foreground',
 };
 
 // ---------------------------------------------------------------------------
@@ -116,14 +142,12 @@ interface RecurringExpensesPanelProps {
 export function RecurringExpensesPanel({
   categories,
   canManage,
-  onExpensesGenerated,
 }: RecurringExpensesPanelProps) {
   const { t } = useTranslation();
 
   // ── Data state ──────────────────────────────────────────────────────────
   const [items, setItems] = useState<RecurringExpense[]>([]);
   const [loading, setLoading] = useState(true);
-  const [expanded, setExpanded] = useState(false);
 
   // ── Dialog state ────────────────────────────────────────────────────────
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -133,24 +157,17 @@ export function RecurringExpensesPanel({
   const [formName, setFormName] = useState('');
   const [formCategoryId, setFormCategoryId] = useState('');
   const [formAmountType, setFormAmountType] = useState<'monthly' | 'daily'>('monthly');
+  const [formDayOfMonth, setFormDayOfMonth] = useState(1);
   const [formAmount, setFormAmount] = useState('');
   const [formPaymentMethod, setFormPaymentMethod] = useState<'cash' | 'bank_transfer'>('cash');
   const [formSubmitting, setFormSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  // ── Generate preview state ────────────────────────────────────────────
-  const [generating, setGenerating] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewItems, setPreviewItems] = useState<GenerationPreviewItem[]>([]);
-  const [previewCapped, setPreviewCapped] = useState(false);
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [selectedItemIds, setSelectedItemIds] = useState<Set<number>>(new Set());
-
-  // ── Computed preview ────────────────────────────────────────────────────
+  // ── Computed form preview ─────────────────────────────────────────────
   const amountNum = Math.floor(Number(formAmount)) || 0;
   const previewMonthly = amountNum > 0 ? computeMonthly(amountNum, formAmountType) : 0;
 
-  // ── Category options for searchable select ─────────────────────────────
+  // ── Category options ──────────────────────────────────────────────────
   const categoryOptions = categories.map(c => ({ value: String(c.id), label: c.name }));
 
   // ── Fetch ─────────────────────────────────────────────────────────────
@@ -160,11 +177,11 @@ export function RecurringExpensesPanel({
       const data = await api.recurringExpenses.getAll();
       setItems(Array.isArray(data) ? data : []);
     } catch {
-      // silent — panel is supplementary
+      toast.error(t('Failed to load recurring expenses'));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     fetchItems();
@@ -176,6 +193,7 @@ export function RecurringExpensesPanel({
     setFormName('');
     setFormCategoryId('');
     setFormAmountType('monthly');
+    setFormDayOfMonth(1);
     setFormAmount('');
     setFormPaymentMethod('cash');
     setFormError(null);
@@ -187,6 +205,7 @@ export function RecurringExpensesPanel({
     setFormName(item.name);
     setFormCategoryId(String(item.category_id));
     setFormAmountType(item.amount_type);
+    setFormDayOfMonth(item.day_of_month ?? 1);
     setFormAmount(String(item.amount));
     setFormPaymentMethod(item.payment_method ?? 'cash');
     setFormError(null);
@@ -199,18 +218,15 @@ export function RecurringExpensesPanel({
     setFormError(null);
 
     const name = formName.trim();
-    if (!name) {
-      setFormError(t('Name is required'));
-      return;
-    }
-    if (!formCategoryId) {
-      setFormError(t('Please select a category'));
-      return;
-    }
+    if (!name) { setFormError(t('Name is required')); return; }
+    if (!formCategoryId) { setFormError(t('Please select a category')); return; }
     const amount = Math.floor(Number(formAmount));
-    if (!amount || amount <= 0) {
-      setFormError(t('Amount must be a positive whole number'));
-      return;
+    if (!amount || amount <= 0) { setFormError(t('Amount must be a positive whole number')); return; }
+    if (formAmountType === 'monthly') {
+      if (!Number.isInteger(formDayOfMonth) || formDayOfMonth < 1 || formDayOfMonth > 28) {
+        setFormError(t('Day of month must be between 1 and 28'));
+        return;
+      }
     }
 
     const payload: CreateRecurringExpenseInput = {
@@ -219,6 +235,7 @@ export function RecurringExpensesPanel({
       amount_type: formAmountType,
       amount,
       payment_method: formPaymentMethod,
+      ...(formAmountType === 'monthly' ? { day_of_month: formDayOfMonth } : {}),
     };
 
     setFormSubmitting(true);
@@ -261,241 +278,147 @@ export function RecurringExpensesPanel({
     }
   }
 
-  // ── Generate preview ──────────────────────────────────────────────────
-  async function handleOpenPreview() {
-    setPreviewLoading(true);
-    setPreviewOpen(true);
-    try {
-      const result = await api.recurringExpenses.preview();
-      setPreviewItems(result.items);
-      setPreviewCapped(result.capped);
-      // Auto-select items that have pending dates
-      const pendingIds = new Set(
-        result.items.filter(i => i.dates.length > 0).map(i => i.itemId)
-      );
-      setSelectedItemIds(pendingIds);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t('Failed to load preview'));
-      setPreviewOpen(false);
-    } finally {
-      setPreviewLoading(false);
-    }
-  }
-
-  async function handleGenerateSelected() {
-    const ids = Array.from(selectedItemIds);
-    if (ids.length === 0) return;
-    setGenerating(true);
-    try {
-      const result = await api.recurringExpenses.generate(ids);
-      const count = result?.count ?? 0;
-      if (count > 0) {
-        toast.success(t('Generated {{count}} expense(s)', { count }));
-        onExpensesGenerated?.();
-        await fetchItems();
-      } else {
-        toast.info(t('No expenses to generate'));
-      }
-      setPreviewOpen(false);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t('Failed to generate'));
-    } finally {
-      setGenerating(false);
-    }
-  }
-
-  function togglePreviewItem(itemId: number) {
-    setSelectedItemIds(prev => {
-      const next = new Set(prev);
-      if (next.has(itemId)) next.delete(itemId);
-      else next.add(itemId);
-      return next;
-    });
-  }
-
-  // Preview computed totals
-  const previewPendingItems = previewItems.filter(i => i.dates.length > 0);
-  const previewDoneItems = previewItems.filter(i => i.dates.length === 0 && i.alreadyGenerated.length > 0);
-  const selectedTotal = previewItems
-    .filter(i => selectedItemIds.has(i.itemId))
-    .reduce((sum, i) => sum + i.amount * i.dates.length, 0);
-  const selectedEntryCount = previewItems
-    .filter(i => selectedItemIds.has(i.itemId))
-    .reduce((sum, i) => sum + i.dates.length, 0);
-
-  // ── Active count for collapsed view ───────────────────────────────────
-  const activeCount = items.filter((i) => i.is_active).length;
-
+  // ── Render ─────────────────────────────────────────────────────────────
   return (
     <>
-      <Card>
-        <CardHeader
-          className="cursor-pointer pb-3"
-          onClick={() => setExpanded((v) => !v)}
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <CalendarClock className="h-5 w-5 text-muted-foreground" />
-              <CardTitle className="text-base">{t('Recurring Expenses')}</CardTitle>
-              <Badge variant="secondary" className="text-xs">
-                {activeCount} {t('active')}
-              </Badge>
-            </div>
-            <div className="flex items-center gap-2">
-              {!expanded && canManage && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="gap-1.5"
-                  onClick={(e) => { e.stopPropagation(); openAdd(); }}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  {t('Add')}
-                </Button>
-              )}
-              {expanded ? (
-                <ChevronUp className="h-4 w-4 text-muted-foreground" />
-              ) : (
-                <ChevronDown className="h-4 w-4 text-muted-foreground" />
-              )}
-            </div>
+      <div className="space-y-4">
+        {/* ── Header row ─────────────────────────────────────────────────── */}
+        {canManage && (
+          <div className="flex justify-end">
+            <Button size="sm" className="gap-1.5" onClick={openAdd}>
+              <Plus className="h-3.5 w-3.5" />
+              {t('New Rule')}
+            </Button>
           </div>
-        </CardHeader>
-
-        {expanded && (
-          <CardContent className="pt-0">
-            {/* Actions row */}
-            {canManage && (
-              <div className="mb-2 flex items-center gap-2">
-                <Button size="sm" className="gap-1.5" onClick={openAdd}>
-                  <Plus className="h-3.5 w-3.5" />
-                  {t('Add Recurring Expense')}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="gap-1.5"
-                  onClick={handleOpenPreview}
-                  disabled={generating || previewLoading}
-                >
-                  {(generating || previewLoading) ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-3.5 w-3.5" />
-                  )}
-                  {t('Generate Now')}
-                </Button>
-              </div>
-            )}
-
-            {/* Table */}
-            {loading ? (
-              <div className="flex items-center justify-center py-4">
-                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-              </div>
-            ) : items.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-4 text-muted-foreground">
-                <CalendarClock className="mb-2 h-8 w-8" />
-                <p className="text-sm">{t('No recurring expenses configured')}</p>
-              </div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t('Name')}</TableHead>
-                    <TableHead className="hidden sm:table-cell">{t('Category')}</TableHead>
-                    <TableHead className="text-end">{t('Amount')}</TableHead>
-                    <TableHead className="hidden md:table-cell">{t('Payment')}</TableHead>
-                    <TableHead>{t('Status')}</TableHead>
-                    <TableHead>{t('Active')}</TableHead>
-                    {canManage && <TableHead className="w-20">{t('Actions')}</TableHead>}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {items.map((item) => {
-                    const status = getItemStatus(item);
-                    return (
-                      <TableRow key={item.id} className={!item.is_active ? 'opacity-50' : ''}>
-                        <TableCell className="font-medium">
-                          <div>
-                            {item.name}
-                            <span className="ms-1.5 text-xs text-muted-foreground">
-                              {item.amount_type === 'daily' ? t('/day') : t('/mo')}
-                            </span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="hidden sm:table-cell">
-                          {item.category_name ?? `#${item.category_id}`}
-                        </TableCell>
-                        <TableCell className="text-end tabular-nums">
-                          {formatCurrency(item.amount)}
-                        </TableCell>
-                        <TableCell className="hidden md:table-cell text-muted-foreground text-xs">
-                          {item.payment_method === 'bank_transfer' ? t('Bank Transfer') : t('Cash')}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-1.5">
-                            <span className={`inline-block h-2 w-2 rounded-full ${STATUS_DOT[status.color]}`} />
-                            <span className="text-xs text-muted-foreground">
-                              {status.color === 'gray' ? t('Inactive') :
-                               status.label === 'Today' ? t('Today') :
-                               status.label === 'Pending' ? t('Pending') :
-                               status.label}
-                            </span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          {canManage ? (
-                            <Switch
-                              checked={!!item.is_active}
-                              onCheckedChange={() => handleToggle(item)}
-                            />
-                          ) : (
-                            <Badge variant={item.is_active ? 'default' : 'secondary'}>
-                              {item.is_active ? t('Yes') : t('No')}
-                            </Badge>
-                          )}
-                        </TableCell>
-                        {canManage && (
-                          <TableCell>
-                            <div className="flex items-center gap-1">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7"
-                                title={t('Edit')}
-                                onClick={() => openEdit(item)}
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 text-destructive hover:text-destructive"
-                                title={t('Delete')}
-                                onClick={() => handleDelete(item)}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          </TableCell>
-                        )}
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
         )}
-      </Card>
+
+        {/* ── Auto-generation info note ─────────────────────────────────── */}
+        <div className="flex items-start gap-2 rounded-md border bg-muted/40 px-3 py-2.5">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">
+            {t('Recurring entries are generated automatically on startup.')}
+          </p>
+        </div>
+
+        {/* ── Table ────────────────────────────────────────────────────── */}
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : items.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+            <CalendarClock className="mb-2 h-10 w-10 opacity-30" />
+            <p className="text-sm">{t('No recurring rules defined')}</p>
+            {canManage && (
+              <Button size="sm" variant="outline" className="mt-3 gap-1.5" onClick={openAdd}>
+                <Plus className="h-3.5 w-3.5" />
+                {t('Add first rule')}
+              </Button>
+            )}
+          </div>
+        ) : (
+          <div className="rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t('Name')}</TableHead>
+                  <TableHead className="hidden sm:table-cell">{t('Category')}</TableHead>
+                  <TableHead>{t('Frequency')}</TableHead>
+                  <TableHead className="text-end">{t('Amount')}</TableHead>
+                  <TableHead className="hidden md:table-cell">{t('Payment')}</TableHead>
+                  <TableHead className="hidden lg:table-cell">{t('Last Generated')}</TableHead>
+                  <TableHead className="hidden lg:table-cell">{t('Next Due')}</TableHead>
+                  <TableHead>{t('Status')}</TableHead>
+                  <TableHead>{t('Active')}</TableHead>
+                  {canManage && <TableHead className="w-20">{t('Actions')}</TableHead>}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {items.map((item) => {
+                  const status = getItemStatus(item);
+                  const nextDue = computeNextDue(item);
+                  return (
+                    <TableRow key={item.id} className={!item.is_active ? 'opacity-50' : ''}>
+                      <TableCell className="font-medium">{item.name}</TableCell>
+                      <TableCell className="hidden sm:table-cell text-sm text-muted-foreground">
+                        {item.category_name ?? `#${item.category_id}`}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {item.amount_type === 'daily'
+                          ? t('Daily')
+                          : `${t('Monthly')} · ${t('Day')} ${item.day_of_month ?? 1}`}
+                      </TableCell>
+                      <TableCell className="text-end tabular-nums font-medium">
+                        {formatCurrency(item.amount)}
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
+                        {item.payment_method === 'bank_transfer' ? t('Bank Transfer') : t('Cash')}
+                      </TableCell>
+                      <TableCell className="hidden lg:table-cell text-sm text-muted-foreground">
+                        {item.last_generated_date ?? t('Never')}
+                      </TableCell>
+                      <TableCell className="hidden lg:table-cell text-sm tabular-nums">
+                        {nextDue}
+                      </TableCell>
+                      <TableCell>
+                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_CLASSES[status.color]}`}>
+                          {status.label === 'Up to date' ? t('Up to date') :
+                           status.label === 'Pending'    ? t('Pending')    :
+                           status.label === 'Upcoming'   ? t('Upcoming')   :
+                           t('Inactive')}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        {canManage ? (
+                          <Switch
+                            checked={!!item.is_active}
+                            onCheckedChange={() => handleToggle(item)}
+                          />
+                        ) : (
+                          <Badge variant={item.is_active ? 'default' : 'secondary'}>
+                            {item.is_active ? t('Yes') : t('No')}
+                          </Badge>
+                        )}
+                      </TableCell>
+                      {canManage && (
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              title={t('Edit')}
+                              onClick={() => openEdit(item)}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-destructive hover:text-destructive"
+                              title={t('Delete')}
+                              onClick={() => handleDelete(item)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </div>
 
       {/* ── Add / Edit Dialog ─────────────────────────────────────────────── */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>
-              {editing ? t('Edit Recurring Expense') : t('Add Recurring Expense')}
+              {editing ? t('Edit Recurring Expense') : t('New Recurring Rule')}
             </DialogTitle>
             <DialogDescription>
               {editing
@@ -508,9 +431,7 @@ export function RecurringExpensesPanel({
             <div className="space-y-4 py-2">
               {/* Name */}
               <div className="space-y-1.5">
-                <Label>
-                  {t('Name')} <span className="text-destructive">*</span>
-                </Label>
+                <Label>{t('Name')} <span className="text-destructive">*</span></Label>
                 <Input
                   placeholder={t('e.g. Shop Rent, Staff Salary')}
                   value={formName}
@@ -521,9 +442,7 @@ export function RecurringExpensesPanel({
 
               {/* Category */}
               <div className="space-y-1.5">
-                <Label>
-                  {t('Category')} <span className="text-destructive">*</span>
-                </Label>
+                <Label>{t('Category')} <span className="text-destructive">*</span></Label>
                 <SearchableSelect
                   value={formCategoryId}
                   onValueChange={setFormCategoryId}
@@ -534,12 +453,12 @@ export function RecurringExpensesPanel({
                 />
               </div>
 
-              {/* Amount Type + Payment Method row */}
+              {/* Amount Type + Payment Method */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label>{t('Amount Type')}</Label>
-                  <div className="flex gap-3">
-                    <label className="flex items-center gap-2 cursor-pointer">
+                  <div className="flex gap-3 pt-1">
+                    <label className="flex cursor-pointer items-center gap-2">
                       <input
                         type="radio"
                         name="amountType"
@@ -550,7 +469,7 @@ export function RecurringExpensesPanel({
                       />
                       <span className="text-sm">{t('Monthly')}</span>
                     </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
+                    <label className="flex cursor-pointer items-center gap-2">
                       <input
                         type="radio"
                         name="amountType"
@@ -566,7 +485,10 @@ export function RecurringExpensesPanel({
 
                 <div className="space-y-1.5">
                   <Label>{t('Payment Method')}</Label>
-                  <Select value={formPaymentMethod} onValueChange={(v) => setFormPaymentMethod(v as 'cash' | 'bank_transfer')}>
+                  <Select
+                    value={formPaymentMethod}
+                    onValueChange={(v) => setFormPaymentMethod(v as 'cash' | 'bank_transfer')}
+                  >
                     <SelectTrigger className="h-8">
                       <SelectValue />
                     </SelectTrigger>
@@ -577,6 +499,24 @@ export function RecurringExpensesPanel({
                   </Select>
                 </div>
               </div>
+
+              {/* Day of month — only for monthly */}
+              {formAmountType === 'monthly' && (
+                <div className="space-y-1.5">
+                  <Label>{t('Day of month')} <span className="text-destructive">*</span></Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={28}
+                    step={1}
+                    value={formDayOfMonth}
+                    onChange={(e) => setFormDayOfMonth(Math.floor(Number(e.target.value)))}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {t('1–28. If the month has fewer days, the last day is used.')}
+                  </p>
+                </div>
+              )}
 
               {/* Amount */}
               <div className="space-y-1.5">
@@ -611,7 +551,7 @@ export function RecurringExpensesPanel({
                     </>
                   ) : (
                     <div className="flex justify-between text-sm">
-                      <span>{t('Deducted once at end of month')}:</span>
+                      <span>{t('Deducted once on day {{day}} of each month', { day: formDayOfMonth })}:</span>
                       <span className="font-medium tabular-nums">{formatCurrency(amountNum)}</span>
                     </div>
                   )}
@@ -637,134 +577,6 @@ export function RecurringExpensesPanel({
               </Button>
             </DialogFooter>
           </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* ── Generation Preview Dialog ─────────────────────────────────────── */}
-      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <RefreshCw className="h-5 w-5" />
-              {t('Generate Recurring Expenses')}
-            </DialogTitle>
-            <DialogDescription>
-              {t('Review and select which expenses to generate.')}
-            </DialogDescription>
-          </DialogHeader>
-
-          {previewLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {/* Safety cap warning */}
-              {previewCapped && (
-                <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950">
-                  <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
-                  <p className="text-sm text-amber-800 dark:text-amber-200">
-                    {t('Daily backfill capped at 90 days. Older dates were skipped.')}
-                  </p>
-                </div>
-              )}
-
-              {/* Pending items */}
-              {previewPendingItems.length > 0 && (
-                <div className="space-y-1">
-                  {previewPendingItems.map(item => (
-                    <label
-                      key={item.itemId}
-                      className="flex items-center gap-3 rounded-md border p-2.5 cursor-pointer hover:bg-muted/50 transition-colors"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedItemIds.has(item.itemId)}
-                        onChange={() => togglePreviewItem(item.itemId)}
-                        className="accent-primary h-4 w-4"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium text-sm truncate">{item.itemName}</span>
-                          <span className="text-sm font-medium tabular-nums ms-2">
-                            {formatCurrency(item.amount * item.dates.length)}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
-                          <span>{item.categoryName}</span>
-                          <span>·</span>
-                          <span>
-                            {item.dates.length} {item.dates.length === 1 ? t('entry') : t('entries')}
-                          </span>
-                          <span>·</span>
-                          <span>{item.paymentMethod === 'bank_transfer' ? t('Bank Transfer') : t('Cash')}</span>
-                        </div>
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              )}
-
-              {/* Already generated items */}
-              {previewDoneItems.length > 0 && (
-                <div className="space-y-1">
-                  <p className="text-xs font-medium text-muted-foreground px-1">
-                    {t('Already generated')}
-                  </p>
-                  {previewDoneItems.map(item => (
-                    <div
-                      key={item.itemId}
-                      className="flex items-center gap-3 rounded-md border border-dashed p-2.5 opacity-50"
-                    >
-                      <Check className="h-4 w-4 text-emerald-500 shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm line-through truncate">{item.itemName}</span>
-                          <span className="text-sm tabular-nums ms-2">
-                            {formatCurrency(item.amount)}
-                          </span>
-                        </div>
-                        <span className="text-xs text-muted-foreground">{item.categoryName}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Nothing to generate */}
-              {previewPendingItems.length === 0 && previewDoneItems.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-6 text-muted-foreground">
-                  <Check className="mb-2 h-8 w-8 text-emerald-500" />
-                  <p className="text-sm">{t('All expenses are up to date')}</p>
-                </div>
-              )}
-
-              {/* Totals */}
-              {previewPendingItems.length > 0 && (
-                <div className="flex items-center justify-between border-t pt-3">
-                  <span className="text-sm text-muted-foreground">
-                    {t('Total')}: {selectedEntryCount} {selectedEntryCount === 1 ? t('entry') : t('entries')}
-                  </span>
-                  <span className="font-semibold tabular-nums">
-                    {formatCurrency(selectedTotal)}
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPreviewOpen(false)}>
-              {t('Cancel')}
-            </Button>
-            <Button
-              onClick={handleGenerateSelected}
-              disabled={generating || selectedItemIds.size === 0 || previewLoading}
-            >
-              {generating && <Loader2 className="me-2 h-4 w-4 animate-spin" />}
-              {t('Generate Selected')}
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>

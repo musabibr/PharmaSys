@@ -1,6 +1,6 @@
 import type { BaseRepository } from './base.repository';
 import type { ITransactionRepository, ITransactionInsertData, ITransactionItemInsertData } from '../../types/repositories';
-import type { Transaction, TransactionItem, TransactionFilters, PaginatedResult, ReturnedQuantityMap } from '../../types/models';
+import type { Transaction, TransactionItem, TransactionFilters, PaginatedResult, ReturnedQuantityMap, ProductSaleRecord, ProductSaleFilters } from '../../types/models';
 import { PAGINATION } from '../../common/constants';
 
 export class TransactionRepository implements ITransactionRepository {
@@ -109,6 +109,58 @@ export class TransactionRepository implements ITransactionRepository {
        WHERE ti.transaction_id = ?`,
       [transactionId]
     );
+  }
+
+  async getSalesByProduct(filters: ProductSaleFilters): Promise<PaginatedResult<ProductSaleRecord>> {
+    const conditions = ['t.is_voided = 0', "t.transaction_type IN ('sale','return')"];
+    const params: unknown[] = [];
+
+    if (filters.product_ids && filters.product_ids.length > 0) {
+      const placeholders = filters.product_ids.map(() => '?').join(',');
+      conditions.push(`ti.product_id IN (${placeholders})`);
+      params.push(...filters.product_ids);
+    }
+    if (filters.batch_id !== undefined)   { conditions.push('ti.batch_id = ?');          params.push(filters.batch_id); }
+    if (filters.user_id !== undefined)    { conditions.push('t.user_id = ?');             params.push(filters.user_id); }
+    if (filters.start_date)               { conditions.push("DATE(t.created_at) >= ?"); params.push(filters.start_date); }
+    if (filters.end_date)                 { conditions.push("DATE(t.created_at) <= ?"); params.push(filters.end_date); }
+    if (filters.transaction_type)         { conditions.push('t.transaction_type = ?');  params.push(filters.transaction_type); }
+
+    const where  = `WHERE ${conditions.join(' AND ')}`;
+    const page   = Math.max(1, filters.page  ?? 1);
+    const limit  = Math.min(100, filters.limit ?? 25);
+    const offset = (page - 1) * limit;
+
+    const countRow = await this.base.getOne<{ count: number }>(
+      `SELECT COUNT(*) as count
+       FROM transaction_items ti
+       JOIN transactions t ON ti.transaction_id = t.id
+       ${where}`,
+      [...params]
+    );
+    const total = countRow?.count ?? 0;
+
+    const data = await this.base.getAll<ProductSaleRecord>(
+      `SELECT ti.id as item_id, ti.transaction_id, ti.product_id,
+              ti.batch_id, ti.quantity_base, ti.unit_type,
+              ti.unit_price, ti.line_total, ti.conversion_factor_snapshot,
+              t.transaction_number, t.transaction_type, t.created_at,
+              t.customer_name, t.payment_method,
+              u.username,
+              p.name as product_name, p.parent_unit, p.child_unit,
+              b.batch_number
+       FROM transaction_items ti
+       JOIN transactions t ON ti.transaction_id = t.id
+       JOIN users        u ON t.user_id = u.id
+       JOIN products     p ON ti.product_id = p.id
+       LEFT JOIN batches b ON ti.batch_id = b.id
+       ${where}
+       ORDER BY t.created_at DESC
+       LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
+    );
+
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   async insert(data: ITransactionInsertData): Promise<number> {

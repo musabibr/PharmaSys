@@ -43,6 +43,7 @@ export class ExpenseRepository implements IExpenseRepository {
   async getCategoryUsageCount(id: number): Promise<number> {
     const row = await this.base.getOne<{ cnt: number }>(
       `SELECT COUNT(*) as cnt FROM expenses WHERE category_id = ?
+         AND is_revoked = 0
          AND id NOT IN (SELECT expense_id FROM purchase_payments WHERE expense_id IS NOT NULL)`,
       [id]
     );
@@ -84,6 +85,7 @@ export class ExpenseRepository implements IExpenseRepository {
     const conditions: string[] = [
       // Exclude supplier payment expenses — those are tracked in purchase_payments
       'e.id NOT IN (SELECT expense_id FROM purchase_payments WHERE expense_id IS NOT NULL)',
+      'e.is_revoked = 0',
     ];
     const params: unknown[] = [];
 
@@ -147,6 +149,13 @@ export class ExpenseRepository implements IExpenseRepository {
   async delete(id: number): Promise<void> {
     await this.base.runImmediate(
       `DELETE FROM expenses WHERE id = ?`,
+      [id]
+    );
+  }
+
+  async revoke(id: number): Promise<void> {
+    await this.base.runImmediate(
+      `UPDATE expenses SET is_revoked = 1 WHERE id = ?`,
       [id]
     );
   }

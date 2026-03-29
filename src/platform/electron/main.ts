@@ -456,9 +456,10 @@ function registerAllAppHandlers(): void {
 function checkLicense(): { valid: boolean; reason?: string; daysRemaining?: number } {
   const license = loadLicense();
   if (!license) return { valid: false, reason: 'No license found. Please activate.' };
-  const status = validateLicense(license);
+  const currentMachineId = getMachineId();
+  const status = validateLicense(license, currentMachineId);
   if (!status.valid) {
-    deleteLicense(); // Remove tampered/expired file
+    deleteLicense(); // Remove tampered/expired/wrong-device file
     return { valid: false, reason: status.reason };
   }
   return { valid: true, daysRemaining: status.daysRemaining };
@@ -491,10 +492,10 @@ function showActivationScreen(reason?: string): void {
   params.set('machineId', displayId);
   win.loadFile(htmlPath, { search: params.toString() });
 
-  // IPC: activate with key (machine ID used as HMAC salt)
+  // IPC: activate with key (device-independent), then bind to this machine
   const fullMachineId = getMachineId();
   ipcMain.handle('license:activate', async (_event, keyString: string) => {
-    const result = decodeKey(keyString, fullMachineId);
+    const result = decodeKey(keyString);
     if (!result.valid) {
       return { success: false, error: result.reason || 'Invalid key' };
     }
@@ -776,8 +777,6 @@ app.whenReady().then(async () => {
     });
 
     // ── License Gate ─────────────────────────────────────────────────────
-    // Skip license check in dev mode for convenience
-    // Only skip license in explicit --dev mode (not just !app.isPackaged)
     const skipLicense = process.argv.includes('--dev');
     const licenseCheck = skipLicense ? { valid: true } : checkLicense();
 

@@ -290,6 +290,18 @@ export class BatchRepository implements IBatchRepository {
     );
   }
 
+  /**
+   * Rescale all batch quantities for a product when its conversion factor changes.
+   * quantity_base * newCf / oldCf — SQLite integer division is floor (prevents ghost inventory).
+   */
+  async rescaleQuantitiesForProduct(productId: number, oldCf: number, newCf: number): Promise<void> {
+    if (oldCf === newCf) return;
+    await this.base.runImmediate(
+      `UPDATE batches SET quantity_base = quantity_base * ? / ? WHERE product_id = ?`,
+      [newCf, oldCf, productId]
+    );
+  }
+
   async getBatchDeleteInfo(id: number): Promise<{ quantity_base: number; txn_count: number; adj_count: number } | undefined> {
     const batch = await this.base.getOne<{ quantity_base: number }>(
       'SELECT quantity_base FROM batches WHERE id = ?', [id]

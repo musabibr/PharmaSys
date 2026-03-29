@@ -257,6 +257,10 @@ contextBridge.exposeInMainWorld('api', {
         // Create a return for some or all items from a sale
         createReturn: (returnData) =>
             invoke('transactions:return', returnData),
+
+        // Sales history per product / batch
+        getSalesByProduct: (filters) =>
+            invoke('transactions:getSalesByProduct', filters ?? {}),
     },
 
     // ════════════════════════════════════════

@@ -8,7 +8,8 @@
  *   [7-8]    duration     (uint16BE, license duration in days, 0=forever)
  *   [9-24]   hmac         (first 16 bytes of HMAC-SHA256)
  *
- * The HMAC is salted with the target machine ID, binding the key to a specific device.
+ * The key is device-independent — works on any machine.
+ * Machine binding happens at activation time in the local license file.
  * Encoded as Base32 (RFC 4648, no padding) → grouped as PH-XXXXX-XXXXX-...
  */
 
@@ -64,12 +65,11 @@ function base32Decode(str: string): Buffer | null {
   return Buffer.from(bytes);
 }
 
-// ─── HMAC (machine ID used as salt) ──────────────────────────────────────────
+// ─── HMAC (no machine ID — key is universal) ────────────────────────────────
 
-function computeHmac(payload: Buffer, machineId: string): Buffer {
+function computeHmac(payload: Buffer): Buffer {
   return crypto.createHmac('sha256', HMAC_SECRET)
     .update(payload)
-    .update(machineId.toUpperCase())
     .digest()
     .subarray(0, HMAC_LEN);
 }
@@ -91,10 +91,9 @@ export interface KeyResult {
 
 /**
  * Encode a key payload into a human-typeable activation key string.
- * The key is bound to the specified machineId via HMAC salt.
+ * Key is device-independent — works on any machine.
  */
 export function encodeKey(
-  machineId: string,
   activationWindowDays: number,
   licenseDurationDays: number
 ): { key: string; payload: KeyPayload } {
@@ -106,7 +105,7 @@ export function encodeKey(
   buf.writeUInt16BE(activationWindowDays, 5);
   buf.writeUInt16BE(licenseDurationDays, 7);
 
-  const hmac = computeHmac(buf.subarray(0, PAYLOAD_LEN), machineId);
+  const hmac = computeHmac(buf.subarray(0, PAYLOAD_LEN));
   hmac.copy(buf, PAYLOAD_LEN);
 
   const b32 = base32Encode(buf);
@@ -128,10 +127,10 @@ export function encodeKey(
 }
 
 /**
- * Decode and validate an activation key string against a machine ID.
- * The HMAC is verified using the machineId as salt — wrong device = invalid key.
+ * Decode and validate an activation key string.
+ * No machine ID needed — key works on any device.
  */
-export function decodeKey(keyString: string, machineId: string): KeyResult {
+export function decodeKey(keyString: string): KeyResult {
   // Strip prefix and dashes
   let raw = keyString.trim().toUpperCase();
   if (raw.startsWith(KEY_PREFIX + '-')) {
@@ -152,9 +151,9 @@ export function decodeKey(keyString: string, machineId: string): KeyResult {
     return { valid: false, reason: 'Unsupported key version' };
   }
 
-  // Verify HMAC (salted with machine ID)
+  // Verify HMAC
   const payloadBuf = buf.subarray(0, PAYLOAD_LEN);
-  const expectedHmac = computeHmac(payloadBuf, machineId);
+  const expectedHmac = computeHmac(payloadBuf);
   const actualHmac = buf.subarray(PAYLOAD_LEN, PAYLOAD_LEN + HMAC_LEN);
   if (!crypto.timingSafeEqual(expectedHmac, actualHmac)) {
     return { valid: false, reason: 'Invalid activation key' };

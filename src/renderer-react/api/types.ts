@@ -145,6 +145,7 @@ export interface Shift {
   total_bank_returns?: number;
   total_sales?: number;
   total_returns?: number;
+  total_expenses?: number;
 }
 
 export interface Expense {
@@ -178,6 +179,7 @@ export interface RecurringExpense {
   category_id: number;
   amount_type: RecurringAmountType;
   amount: number;
+  day_of_month: number;
   payment_method: ExpensePaymentMethod;
   is_active: number;
   created_by: number;
@@ -195,6 +197,7 @@ export interface CreateRecurringExpenseInput {
   amount_type: RecurringAmountType;
   amount: number;
   payment_method?: ExpensePaymentMethod;
+  day_of_month?: number;
 }
 
 export interface GenerationPreviewItem {
@@ -277,6 +280,39 @@ export interface DashboardStats {
   expiring_soon_count: number;
   expired_count: number;
   open_shifts: number;
+}
+
+export interface ProductSaleFilters {
+  product_ids?: number[];
+  batch_id?: number;
+  user_id?: number;
+  start_date?: string;
+  end_date?: string;
+  transaction_type?: 'sale' | 'return';
+  page?: number;
+  limit?: number;
+}
+
+export interface ProductSaleRecord {
+  item_id: number;
+  transaction_id: number;
+  transaction_number: string;
+  transaction_type: TransactionType;
+  created_at: string;
+  quantity_base: number;
+  unit_type: string;
+  unit_price: number;
+  line_total: number;
+  conversion_factor_snapshot: number;
+  username: string;
+  customer_name: string | null;
+  payment_method: PaymentMethod | null;
+  batch_id: number;
+  batch_number: string | null;
+  product_id: number;
+  product_name: string;
+  parent_unit: string;
+  child_unit: string;
 }
 
 export interface ReorderRecommendation {
@@ -637,6 +673,7 @@ export interface PharmaSysApi {
     void(id: number, reason: string, force?: boolean): Promise<{ success: boolean }>;
     getReturnedQty(originalTxnId: number): Promise<Record<string, number>>;
     createReturn(returnData: unknown): Promise<Transaction>;
+    getSalesByProduct(filters?: ProductSaleFilters): Promise<PaginatedResult<ProductSaleRecord>>;
   };
 
   expenses: {

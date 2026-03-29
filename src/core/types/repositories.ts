@@ -250,6 +250,7 @@ export interface IExpenseRepository {
   getAll(filters: ExpenseFilters): Promise<PaginatedResult<Expense>>;
   create(data: CreateExpenseInput, userId: number, shiftId: number | null): Promise<RunResult>;
   delete(id: number): Promise<void>;
+  revoke(id: number): Promise<void>;
   getCashDropById(id: number): Promise<CashDrop | undefined>;
   createCashDrop(data: CreateCashDropInput, userId: number, shiftId: number): Promise<RunResult>;
   getCashDrops(shiftId: number): Promise<CashDrop[]>;

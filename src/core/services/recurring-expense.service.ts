@@ -6,7 +6,7 @@ import type {
   RecurringExpense, CreateRecurringExpenseInput, GenerationPreviewItem,
 } from '../types/models';
 import { Validate }               from '../common/validation';
-import { NotFoundError, BusinessRuleError } from '../types/errors';
+import { NotFoundError, BusinessRuleError, ValidationError } from '../types/errors';
 
 function enrichItem(item: RecurringExpense): RecurringExpense {
   const daily  = item.amount_type === 'daily'   ? item.amount : null;
@@ -14,20 +14,27 @@ function enrichItem(item: RecurringExpense): RecurringExpense {
   return { ...item, daily_amount: daily ?? undefined, monthly_amount: monthly };
 }
 
-/** Get all month-end dates that fall within (startExclusive, endInclusive] */
-function monthEndsBetween(afterDate: string, upToDate: string): string[] {
+/**
+ * Get all dates of the form YYYY-MM-{day} that fall strictly after afterDate
+ * and on or before upToDate. If the month has fewer days than `day`,
+ * clamps to the last day of that month.
+ */
+function monthDaysBetween(afterDate: string, upToDate: string, day: number): string[] {
   const results: string[] = [];
   const after = new Date(afterDate + 'T00:00:00');
-  const end   = new Date(upToDate + 'T00:00:00');
+  const end   = new Date(upToDate  + 'T00:00:00');
 
   let y = after.getFullYear();
   let m = after.getMonth(); // 0-based
+
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const eom = new Date(y, m + 1, 0);
-    if (eom > end) break;
-    if (eom > after) {
-      results.push(eom.toISOString().slice(0, 10));
+    const lastDayOfMonth = new Date(y, m + 1, 0).getDate();
+    const actualDay = Math.min(day, lastDayOfMonth);
+    const candidate = new Date(y, m, actualDay);
+    if (candidate > end) break;
+    if (candidate > after) {
+      results.push(candidate.toISOString().slice(0, 10));
     }
     m++;
     if (m > 11) { m = 0; y++; }
@@ -66,6 +73,11 @@ export class RecurringExpenseService {
     if (data.payment_method) {
       Validate.enum(data.payment_method, ['cash', 'bank_transfer'] as const, 'Payment method');
     }
+    if (data.amount_type === 'monthly' && data.day_of_month !== undefined) {
+      if (!Number.isInteger(data.day_of_month) || data.day_of_month < 1 || data.day_of_month > 28) {
+        throw new ValidationError('Day of month must be between 1 and 28', 'day_of_month');
+      }
+    }
 
     const result = await this.repo.create({ ...data, name }, userId);
     const newId = result.lastInsertRowid as number;
@@ -90,6 +102,11 @@ export class RecurringExpenseService {
     Validate.enum(data.amount_type, ['monthly', 'daily'] as const, 'Amount type');
     if (data.payment_method) {
       Validate.enum(data.payment_method, ['cash', 'bank_transfer'] as const, 'Payment method');
+    }
+    if (data.amount_type === 'monthly' && data.day_of_month !== undefined) {
+      if (!Number.isInteger(data.day_of_month) || data.day_of_month < 1 || data.day_of_month > 28) {
+        throw new ValidationError('Day of month must be between 1 and 28', 'day_of_month');
+      }
     }
 
     await this.repo.update(id, { ...data, name });
@@ -197,7 +214,7 @@ export class RecurringExpenseService {
       const sinceDate = this._getItemSinceDate(item);
       const targetDates = item.amount_type === 'daily'
         ? this._getDailyDates(sinceDate, today)
-        : monthEndsBetween(sinceDate, today);
+        : monthDaysBetween(sinceDate, today, item.day_of_month ?? 1);
 
       // Check if this item's daily dates were capped
       if (item.amount_type === 'daily' && !capped) {
@@ -270,7 +287,7 @@ export class RecurringExpenseService {
       const sinceDate = this._getItemSinceDate(item);
       const dates = item.amount_type === 'daily'
         ? this._getDailyDates(sinceDate, today)
-        : monthEndsBetween(sinceDate, today);
+        : monthDaysBetween(sinceDate, today, item.day_of_month ?? 1);
 
       if (dates.length === 0) continue;
 

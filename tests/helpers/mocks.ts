@@ -160,6 +160,7 @@ export function createMockBatchRepo() {
     deleteBatch: jest.fn().mockResolvedValue(undefined),
     restoreDeletedBatch: jest.fn().mockResolvedValue(1),
     recalculateChildPricesForProduct: jest.fn().mockResolvedValue(0),
+    rescaleQuantitiesForProduct: jest.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -175,6 +176,7 @@ export function createMockTransactionRepo() {
     markVoided: jest.fn().mockResolvedValue(undefined),
     getReturnedQuantities: jest.fn().mockResolvedValue({}),
     getNextNumber: jest.fn().mockResolvedValue('TXN-20260225-0001'),
+    getSalesByProduct: jest.fn().mockResolvedValue({ data: [], total: 0, page: 1, limit: 25, totalPages: 0 }),
   };
 }
 
@@ -205,10 +207,14 @@ export function createMockExpenseRepo() {
   return {
     getCategories: jest.fn().mockResolvedValue([]),
     createCategory: jest.fn().mockResolvedValue(runResult(1)),
+    updateCategory: jest.fn().mockResolvedValue(undefined),
+    deleteCategory: jest.fn().mockResolvedValue(undefined),
+    getCategoryUsageCount: jest.fn().mockResolvedValue(0),
     getAll: jest.fn().mockResolvedValue({ data: [], total: 0, page: 1, limit: 20, totalPages: 1 }),
     getById: jest.fn().mockResolvedValue(undefined),
     create: jest.fn().mockResolvedValue(runResult(1)),
     delete: jest.fn().mockResolvedValue(undefined),
+    revoke: jest.fn().mockResolvedValue(undefined),
     getCashDrops: jest.fn().mockResolvedValue([]),
     getCashDropById: jest.fn().mockResolvedValue(undefined),
     createCashDrop: jest.fn().mockResolvedValue(runResult(1)),

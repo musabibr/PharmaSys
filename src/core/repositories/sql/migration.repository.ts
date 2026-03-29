@@ -499,6 +499,14 @@ export class MigrationRepository {
     await this._migrateColumn('recurring_expenses', 'payment_method',
       "ALTER TABLE recurring_expenses ADD COLUMN payment_method TEXT DEFAULT 'cash'");
 
+    // Soft-delete flag for recurring expense entries (prevents regeneration after user revokes)
+    await this._migrateColumn('expenses', 'is_revoked',
+      'ALTER TABLE expenses ADD COLUMN is_revoked INTEGER NOT NULL DEFAULT 0');
+
+    // Day of month for monthly recurring expenses (1–28; daily rules ignore this)
+    await this._migrateColumn('recurring_expenses', 'day_of_month',
+      'ALTER TABLE recurring_expenses ADD COLUMN day_of_month INTEGER NOT NULL DEFAULT 1');
+
     this.base.save();
   }
 

@@ -32,6 +32,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table,
   TableBody,
@@ -110,136 +111,8 @@ function defaultFilters(): Filters {
     endDate: todayStr(),
     categoryId: ALL_CATEGORIES,
     search: '',
-    recurringFilter: 'all',
+    recurringFilter: 'manual',
   };
-}
-
-// ---------------------------------------------------------------------------
-// Category Management Panel (scalable)
-// ---------------------------------------------------------------------------
-
-function CategoryManagementPanel({
-  categories,
-  onAddCategory,
-  newCategoryName,
-  setNewCategoryName,
-  addingCategory,
-  fetchCategories,
-}: {
-  categories: ExpenseCategory[];
-  onAddCategory: () => void;
-  newCategoryName: string;
-  setNewCategoryName: (v: string) => void;
-  addingCategory: boolean;
-  fetchCategories: () => Promise<void>;
-}) {
-  const { t } = useTranslation();
-  const [catSearch, setCatSearch] = useState('');
-
-  const filteredCats = useMemo(() => {
-    if (!catSearch.trim()) return categories;
-    const q = catSearch.toLowerCase();
-    return categories.filter(c => c.name.toLowerCase().includes(q));
-  }, [categories, catSearch]);
-
-  return (
-    <Card>
-      <CardContent className="p-3">
-        <div className="flex items-center gap-2 mb-2">
-          <Tag className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-medium">{t('Expense Categories')}</span>
-          <Badge variant="secondary" className="text-xs">{categories.length}</Badge>
-        </div>
-
-        {/* Search + Add row */}
-        <div className="flex items-center gap-2 mb-2">
-          <Input
-            className="h-7 flex-1 text-sm"
-            placeholder={t('Search categories...')}
-            value={catSearch}
-            onChange={(e) => setCatSearch(e.target.value)}
-          />
-          <Input
-            className="h-7 w-36 text-sm"
-            placeholder={t('New category name')}
-            value={newCategoryName}
-            onChange={(e) => setNewCategoryName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                onAddCategory();
-              }
-            }}
-          />
-          <Button
-            size="sm"
-            className="h-7 gap-1 px-2"
-            onClick={onAddCategory}
-            disabled={!newCategoryName.trim() || addingCategory}
-          >
-            {addingCategory ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <FolderPlus className="h-3 w-3" />
-            )}
-            {t('Add')}
-          </Button>
-        </div>
-
-        {/* Category list */}
-        {categories.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-2">{t('No categories yet')}</p>
-        ) : (
-          <div className="max-h-48 overflow-auto space-y-0.5">
-            {filteredCats.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-2 text-center">{t('No categories found')}</p>
-            ) : (
-              filteredCats.map((cat) => (
-                <div
-                  key={cat.id}
-                  className="flex items-center justify-between rounded px-2 py-1 hover:bg-muted/50 group text-sm"
-                >
-                  <span>{cat.name}</span>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6"
-                      title={t('Rename')}
-                      onClick={() => {
-                        const newName = window.prompt(t('Rename category'), cat.name);
-                        if (newName && newName.trim() && newName.trim() !== cat.name) {
-                          api.expenses.updateCategory(cat.id, newName.trim())
-                            .then(() => { toast.success(t('Category updated')); fetchCategories(); })
-                            .catch((err: unknown) => toast.error(err instanceof Error ? err.message : t('Failed')));
-                        }
-                      }}
-                    >
-                      <Pencil className="h-3 w-3" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 text-destructive hover:text-destructive"
-                      title={t('Delete category')}
-                      onClick={() => {
-                        if (!window.confirm(t('Delete category "{{name}}"?', { name: cat.name }))) return;
-                        api.expenses.deleteCategory(cat.id)
-                          .then(() => { toast.success(t('Category deleted')); fetchCategories(); })
-                          .catch((err: unknown) => toast.error(err instanceof Error ? err.message : t('Failed')));
-                      }}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -282,7 +155,6 @@ function ExpensesSkeleton() {
 export function ExpensesPage() {
   const { t, i18n } = useTranslation();
   const currentUser = useAuthStore((s) => s.currentUser);
-  const isAdmin = currentUser?.role === 'admin';
   const canManageExpenses = usePermission('finance.expenses.manage');
   const canDeleteExpenses = usePermission('finance.expenses.delete');
   const canManageCategories = usePermission('finance.expense_categories');
@@ -320,19 +192,25 @@ export function ExpensesPage() {
   const [formSubmitting, setFormSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  // ── Category management state (admin panel) ───────────────────────────────
+  // ── Category management state ─────────────────────────────────────────────
+  const [catSearch, setCatSearch] = useState('');
   const [newCategoryName, setNewCategoryName] = useState('');
   const [addingCategory, setAddingCategory] = useState(false);
 
-  // ── Derived stats (uses API-level totalAmount, not page sum) ──────────────
+  // ── Derived stats ──────────────────────────────────────────────────────────
   const stats = useMemo(() => {
-    // Monthly average: totalAmount / number of months in the date range
     const s = new Date(filters.startDate);
     const e = new Date(filters.endDate);
     const months = Math.max(1, (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth()) + 1);
     const monthlyAvg = totalAmount > 0 ? Math.round(totalAmount / months) : 0;
-    return { total: totalAmount, count: total, monthlyAvg, months };
+    return { total: totalAmount, count: total, monthlyAvg };
   }, [totalAmount, total, filters.startDate, filters.endDate]);
+
+  const filteredCats = useMemo(() => {
+    if (!catSearch.trim()) return categories;
+    const q = catSearch.toLowerCase();
+    return categories.filter(c => c.name.toLowerCase().includes(q));
+  }, [categories, catSearch]);
 
   // ── Data fetching ─────────────────────────────────────────────────────────
   const fetchCategories = useCallback(async () => {
@@ -340,7 +218,7 @@ export function ExpensesPage() {
       const data = await api.expenses.getCategories();
       setCategories(Array.isArray(data) ? data : []);
     } catch {
-      // Non-critical — category dropdowns will be empty
+      // Non-critical
     }
   }, []);
 
@@ -348,10 +226,7 @@ export function ExpensesPage() {
     setLoading(true);
     setError(null);
     try {
-      const apiFilters: Record<string, string | number> = {
-        page: p,
-        limit: PAGE_SIZE,
-      };
+      const apiFilters: Record<string, string | number> = { page: p, limit: PAGE_SIZE };
       if (f.startDate) apiFilters.start_date = f.startDate;
       if (f.endDate) apiFilters.end_date = f.endDate;
       if (f.categoryId !== ALL_CATEGORIES) apiFilters.category_id = Number(f.categoryId);
@@ -364,9 +239,7 @@ export function ExpensesPage() {
       setTotal(result.total);
       setTotalAmount(result.totalAmount ?? 0);
       setTotalPages(result.totalPages);
-      if (p > result.totalPages && result.totalPages > 0) {
-        setPage(result.totalPages);
-      }
+      if (p > result.totalPages && result.totalPages > 0) setPage(result.totalPages);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('Failed to load expenses'));
     } finally {
@@ -378,7 +251,6 @@ export function ExpensesPage() {
   const initialLoadDone = useRef(false);
   useEffect(() => {
     let cancelled = false;
-
     (async () => {
       await fetchCategories();
       if (!cancelled) {
@@ -386,12 +258,10 @@ export function ExpensesPage() {
         initialLoadDone.current = true;
       }
     })();
-
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Re-fetch on page change (skip initial render) ──────────────────────────
   useEffect(() => {
     if (!initialLoadDone.current) return;
     fetchExpenses(filters, page);
@@ -427,16 +297,14 @@ export function ExpensesPage() {
     setDialogOpen(true);
   }
 
-  // ── Create inline category (from dialog) ──────────────────────────────────
+  // ── Create inline category ────────────────────────────────────────────────
   async function handleCreateInlineCategory() {
     const name = formNewCategoryName.trim();
     if (!name) return;
     setCreatingCategory(true);
     try {
       const created = await api.expenses.createCategory(name);
-      // Refresh full categories list
       await fetchCategories();
-      // Auto-select the newly created category
       setFormCategoryId(String(created.id));
       setFormNewCategoryName('');
       toast.success(t('Category created'));
@@ -447,18 +315,15 @@ export function ExpensesPage() {
     }
   }
 
-  // ── Submit new expense ────────────────────────────────────────────────────
+  // ── Submit expense ────────────────────────────────────────────────────────
   async function handleSubmitExpense(e: React.FormEvent) {
     e.preventDefault();
     setFormError(null);
 
-    // Validate category
     if (!formCategoryId || formCategoryId === NEW_CATEGORY_SENTINEL) {
       setFormError(t('Please select a category'));
       return;
     }
-
-    // Validate amount
     const amount = Math.floor(Number(formAmount));
     if (!amount || amount <= 0) {
       setFormError(t('Amount must be a positive whole number'));
@@ -508,19 +373,17 @@ export function ExpensesPage() {
     setDialogOpen(true);
   }
 
-  // ── Delete expense ────────────────────────────────────────────────────────
+  // ── Delete / revoke expense ───────────────────────────────────────────────
   async function handleDelete(expense: Expense) {
     const isRecurring = !!(expense as Record<string, unknown>).is_recurring;
     const message = isRecurring
-      ? `${t('This expense was auto-generated by a recurring rule. Deleting it may cause it to regenerate on next startup.')}\n\n${t('To stop generation permanently, deactivate the recurring item instead.')}\n\n${t('Delete anyway?')}`
+      ? `${t('Revoke this recurring entry?')}\n\n${expense.category_name ?? t('Expense')} — ${formatCurrency(expense.amount)} (${expense.expense_date})\n\n${t('This entry will be removed and will not regenerate.')}`
       : `${t('Are you sure you want to delete this expense?')}\n\n${expense.category_name ?? t('Expense')} — ${formatCurrency(expense.amount)}`;
-    const confirmed = window.confirm(message);
-    if (!confirmed) return;
+    if (!window.confirm(message)) return;
 
     try {
       await api.expenses.delete(expense.id);
-      toast.success(t('Expense deleted'));
-      // If last item on page, go back one page
+      toast.success(isRecurring ? t('Entry revoked') : t('Expense deleted'));
       if (expenses.length === 1 && page > 1) {
         setPage(page - 1);
       } else {
@@ -531,7 +394,7 @@ export function ExpensesPage() {
     }
   }
 
-  // ── Add category (admin panel) ────────────────────────────────────────────
+  // ── Add category ──────────────────────────────────────────────────────────
   async function handleAddCategory() {
     const name = newCategoryName.trim();
     if (!name) return;
@@ -548,33 +411,25 @@ export function ExpensesPage() {
     }
   }
 
-  // ── Print handler ─────────────────────────────────────────────────────────
+  // ── Print ─────────────────────────────────────────────────────────────────
   async function handlePrint() {
     if (expenses.length === 0) return;
 
-    // Fetch ALL expenses for print (not just the current page)
     let allExpenses = expenses;
     if (total > PAGE_SIZE) {
       try {
-        const apiFilters: Record<string, string | number> = {
-          page: 1,
-          limit: total, // fetch all
-        };
+        const apiFilters: Record<string, string | number> = { page: 1, limit: total };
         if (filters.startDate) apiFilters.start_date = filters.startDate;
         if (filters.endDate) apiFilters.end_date = filters.endDate;
         if (filters.categoryId !== ALL_CATEGORIES) apiFilters.category_id = Number(filters.categoryId);
         if (filters.search.trim()) apiFilters.search = filters.search.trim();
         if (filters.recurringFilter === 'recurring') apiFilters.is_recurring = 1;
         else if (filters.recurringFilter === 'manual') apiFilters.is_recurring = 0;
-
         const result = await api.expenses.getAll(apiFilters);
         allExpenses = Array.isArray(result.data) ? result.data : expenses;
-      } catch {
-        // Fall back to current page if fetch fails
-      }
+      } catch { /* fallback to current page */ }
     }
 
-    // Category breakdown
     const catMap = new Map<string, number>();
     for (const e of allExpenses) {
       const catName = e.category_name ?? `#${e.category_id}`;
@@ -582,29 +437,23 @@ export function ExpensesPage() {
     }
     const categoryBreakdownRows = Array.from(catMap.entries())
       .sort((a, b) => b[1] - a[1])
-      .map(
-        ([name, amt]) =>
-          `<p><strong>${name}:</strong> ${formatCurrency(amt)}</p>`
-      )
+      .map(([name, amt]) => `<p><strong>${name}:</strong> ${formatCurrency(amt)}</p>`)
       .join('');
 
-    const rows = allExpenses
-      .map((expense) => {
-        let paymentLabel = expense.payment_method ?? '\u2014';
-        if (expense.payment_method === 'cash') paymentLabel = t('Cash');
-        else if (expense.payment_method === 'bank_transfer') paymentLabel = t('Bank Transfer');
+    const rows = allExpenses.map((expense) => {
+      let paymentLabel = expense.payment_method ?? '\u2014';
+      if (expense.payment_method === 'cash') paymentLabel = t('Cash');
+      else if (expense.payment_method === 'bank_transfer') paymentLabel = t('Bank Transfer');
+      return `<tr>
+        <td>${formatDate(expense.expense_date || expense.created_at, i18n.language)}</td>
+        <td>${expense.category_name ?? '#' + expense.category_id}</td>
+        <td>${expense.description || '\u2014'}</td>
+        <td class="num">${formatCurrency(expense.amount)}</td>
+        <td>${paymentLabel}</td>
+      </tr>`;
+    }).join('');
 
-        return `<tr>
-          <td>${formatDate(expense.expense_date || expense.created_at, i18n.language)}</td>
-          <td>${expense.category_name ?? '#' + expense.category_id}</td>
-          <td>${expense.description || '\u2014'}</td>
-          <td class="num">${formatCurrency(expense.amount)}</td>
-          <td>${paymentLabel}</td>
-        </tr>`;
-      })
-      .join('');
-
-    const html = `
+    printHtml(`
       <div class="header">
         <div>
           <h2>${t('Expenses')}</h2>
@@ -616,311 +465,394 @@ export function ExpensesPage() {
         <p><strong>${t('Expense Count')}:</strong> ${stats.count}</p>
         <p><strong>${t('Monthly Average')}:</strong> ${formatCurrency(stats.monthlyAvg)}</p>
       </div>
-      <div class="summary">
-        <h3>${t('By Category')}</h3>
-        ${categoryBreakdownRows}
-      </div>
+      <div class="summary"><h3>${t('By Category')}</h3>${categoryBreakdownRows}</div>
       <table>
-        <thead>
-          <tr>
-            <th>${t('Date')}</th>
-            <th>${t('Category')}</th>
-            <th>${t('Description')}</th>
-            <th>${t('Amount')}</th>
-            <th>${t('Payment Method')}</th>
-          </tr>
-        </thead>
+        <thead><tr>
+          <th>${t('Date')}</th><th>${t('Category')}</th>
+          <th>${t('Description')}</th><th>${t('Amount')}</th><th>${t('Payment Method')}</th>
+        </tr></thead>
         <tbody>${rows}</tbody>
       </table>
-    `;
-
-    printHtml(html);
+    `);
   }
 
-  // ── Loading state ─────────────────────────────────────────────────────────
-  if (loading && expenses.length === 0) {
-    return <ExpensesSkeleton />;
-  }
-
-  // ── Error state ───────────────────────────────────────────────────────────
-  if (error && expenses.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-        <AlertTriangle className="mb-3 h-12 w-12 text-destructive" />
-        <p className="text-lg font-medium">{error}</p>
-        <button
-          onClick={() => fetchExpenses(filters)}
-          className="mt-4 text-sm text-primary underline hover:no-underline"
-        >
-          {t('Try again')}
-        </button>
-      </div>
-    );
-  }
-
-  // ── Whether the "New Category" sentinel is selected in the dialog ─────────
+  // ── Derived ───────────────────────────────────────────────────────────────
   const isNewCategorySelected = formCategoryId === NEW_CATEGORY_SENTINEL;
   const canSubmitExpense =
-    formCategoryId &&
-    formCategoryId !== NEW_CATEGORY_SENTINEL &&
-    Number(formAmount) > 0;
+    formCategoryId && formCategoryId !== NEW_CATEGORY_SENTINEL && Number(formAmount) > 0;
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-4">
-      {/* ── Page Header ───────────────────────────────────────────────── */}
+      {/* Page header */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold tracking-tight">{t('Expenses')}</h1>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handlePrint}
-            disabled={expenses.length === 0}
-            className="gap-1.5"
-          >
-            <Printer className="h-4 w-4" />
-            {t('Print')}
-          </Button>
-          {canManageExpenses && (
-            <Button size="sm" onClick={openNewExpenseDialog} className="gap-1.5" data-tour="expense-add">
-              <Plus className="h-4 w-4" />
-              {t('New Expense')}
-            </Button>
+      </div>
+
+      <Tabs defaultValue="expenses">
+        <TabsList>
+          <TabsTrigger value="expenses" className="gap-1.5">
+            <Receipt className="h-4 w-4" />
+            {t('Expenses')}
+          </TabsTrigger>
+          <TabsTrigger value="recurring" className="gap-1.5">
+            <CalendarClock className="h-4 w-4" />
+            {t('Recurring')}
+          </TabsTrigger>
+          {canManageCategories && (
+            <TabsTrigger value="categories" className="gap-1.5">
+              <Tag className="h-4 w-4" />
+              {t('Categories')}
+            </TabsTrigger>
           )}
-        </div>
-      </div>
+        </TabsList>
 
-      {/* ── Summary Stats ─────────────────────────────────────────────── */}
-      <div className="flex items-center gap-6 text-sm">
-        <div className="flex items-center gap-1.5">
-          <span className="text-muted-foreground">{t('Total Expenses')}</span>
-          <span className="font-semibold tabular-nums">{formatCurrency(stats.total)}</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="text-muted-foreground">{t('Expense Count')}</span>
-          <span className="font-semibold tabular-nums">{total}</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="text-muted-foreground">{t('Monthly Average')}</span>
-          <span className="font-semibold tabular-nums">{formatCurrency(stats.monthlyAvg)}</span>
-        </div>
-      </div>
-
-      {/* ── Main Card: Filters + Table ────────────────────────────────── */}
-      <Card data-tour="expense-list">
-        <CardContent className="p-0">
-          {/* Filter toolbar */}
-          <div className="flex flex-wrap items-end gap-2 border-b p-3">
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">{t('From')}</Label>
-              <Input
-                type="date"
-                className="h-8 w-36"
-                value={pendingFilters.startDate}
-                onChange={(e) =>
-                  setPendingFilters((prev) => ({ ...prev, startDate: e.target.value }))
-                }
-              />
+        {/* ── Expenses Tab ───────────────────────────────────────────────── */}
+        <TabsContent value="expenses" className="mt-4 space-y-4">
+          {/* Stats */}
+          <div className="flex items-center gap-6 text-sm">
+            <div className="flex items-center gap-1.5">
+              <span className="text-muted-foreground">{t('Total Expenses')}</span>
+              <span className="font-semibold tabular-nums">{formatCurrency(stats.total)}</span>
             </div>
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">{t('To')}</Label>
-              <Input
-                type="date"
-                className="h-8 w-36"
-                value={pendingFilters.endDate}
-                onChange={(e) =>
-                  setPendingFilters((prev) => ({ ...prev, endDate: e.target.value }))
-                }
-              />
+            <div className="flex items-center gap-1.5">
+              <span className="text-muted-foreground">{t('Expense Count')}</span>
+              <span className="font-semibold tabular-nums">{total}</span>
             </div>
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">{t('Category')}</Label>
-              <SearchableSelect
-                value={pendingFilters.categoryId}
-                onValueChange={(val) =>
-                  setPendingFilters((prev) => ({ ...prev, categoryId: val }))
-                }
-                options={categories.map(c => ({ value: String(c.id), label: c.name }))}
-                placeholder={t('All Categories')}
-                searchPlaceholder={t('Search categories...')}
-                emptyMessage={t('No categories found')}
-                allOption={t('All Categories')}
-                allValue={ALL_CATEGORIES}
-                triggerClassName="h-8 w-40"
-              />
+            <div className="flex items-center gap-1.5">
+              <span className="text-muted-foreground">{t('Monthly Average')}</span>
+              <span className="font-semibold tabular-nums">{formatCurrency(stats.monthlyAvg)}</span>
             </div>
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">{t('Type')}</Label>
-              <Select
-                value={pendingFilters.recurringFilter}
-                onValueChange={(val) =>
-                  setPendingFilters((prev) => ({ ...prev, recurringFilter: val as Filters['recurringFilter'] }))
-                }
-              >
-                <SelectTrigger className="h-8 w-32">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{t('All')}</SelectItem>
-                  <SelectItem value="manual">{t('Manual')}</SelectItem>
-                  <SelectItem value="recurring">{t('Recurring')}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">{t('Search')}</Label>
-              <div className="relative">
-                <Search className="absolute start-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  className="h-8 w-40 ps-7"
-                  placeholder={t('Description or amount...')}
-                  value={pendingFilters.search}
-                  onChange={(e) =>
-                    setPendingFilters((prev) => ({ ...prev, search: e.target.value }))
-                  }
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleApplyFilters(); }}
-                />
-              </div>
-            </div>
-            <Button onClick={handleApplyFilters} size="sm" className="h-8 gap-1.5">
-              <Filter className="h-3.5 w-3.5" />
-              {t('Apply')}
-            </Button>
-            <Button onClick={handleResetFilters} variant="ghost" size="sm" className="h-8 gap-1.5">
-              <RotateCcw className="h-3.5 w-3.5" />
-              {t('Reset')}
-            </Button>
-            {loading && <Loader2 className="ms-auto h-4 w-4 animate-spin text-muted-foreground" />}
           </div>
 
-          {/* Table or empty state */}
-          {expenses.length === 0 && !loading ? (
-            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-              <Receipt className="mb-2 h-8 w-8" />
-              <p className="text-sm font-medium">{t('No expenses found')}</p>
-              <p className="mt-1 text-xs">{t('Try adjusting your filters or add a new expense')}</p>
-            </div>
-          ) : (
-            <Table className="sticky-col">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t('Date')}</TableHead>
-                  <TableHead>{t('Category')}</TableHead>
-                  <TableHead className="hidden lg:table-cell">{t('Description')}</TableHead>
-                  <TableHead>{t('Payment')}</TableHead>
-                  <TableHead className="text-end">{t('Amount')}</TableHead>
-                  <TableHead className="hidden md:table-cell">{t('User')}</TableHead>
-                  {(canManageExpenses || canDeleteExpenses) && <TableHead className="w-20">{t('Actions')}</TableHead>}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {expenses.map((expense) => (
-                  <TableRow
-                    key={expense.id}
-                    className="cursor-pointer hover:bg-muted/50"
-                    onClick={() => { setDetailExpense(expense); setDetailOpen(true); }}
+          <Card data-tour="expense-list">
+            <CardContent className="p-0">
+              {/* Toolbar */}
+              <div className="flex flex-wrap items-end gap-2 border-b p-3">
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">{t('From')}</Label>
+                  <Input
+                    type="date"
+                    className="h-8 w-36"
+                    value={pendingFilters.startDate}
+                    onChange={(e) => setPendingFilters((prev) => ({ ...prev, startDate: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">{t('To')}</Label>
+                  <Input
+                    type="date"
+                    className="h-8 w-36"
+                    value={pendingFilters.endDate}
+                    onChange={(e) => setPendingFilters((prev) => ({ ...prev, endDate: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">{t('Category')}</Label>
+                  <SearchableSelect
+                    value={pendingFilters.categoryId}
+                    onValueChange={(val) => setPendingFilters((prev) => ({ ...prev, categoryId: val }))}
+                    options={categories.map(c => ({ value: String(c.id), label: c.name }))}
+                    placeholder={t('All Categories')}
+                    searchPlaceholder={t('Search categories...')}
+                    emptyMessage={t('No categories found')}
+                    allOption={t('All Categories')}
+                    allValue={ALL_CATEGORIES}
+                    triggerClassName="h-8 w-40"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">{t('Type')}</Label>
+                  <Select
+                    value={pendingFilters.recurringFilter}
+                    onValueChange={(val) => setPendingFilters((prev) => ({ ...prev, recurringFilter: val as Filters['recurringFilter'] }))}
                   >
-                    <TableCell className="whitespace-nowrap text-muted-foreground tabular-nums">
-                      {formatDate(expense.expense_date || expense.created_at, i18n.language)}
-                    </TableCell>
-                    <TableCell className="font-medium">
-                      <span className="flex items-center gap-1.5">
-                        {expense.category_name ?? `#${expense.category_id}`}
-                        {!!expense.is_recurring && (
-                          <Badge variant="outline" className="text-[10px] gap-0.5 px-1 py-0">
-                            <CalendarClock className="h-3 w-3" />
-                            {t('Recurring')}
+                    <SelectTrigger className="h-8 w-32">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">{t('All')}</SelectItem>
+                      <SelectItem value="manual">{t('Manual')}</SelectItem>
+                      <SelectItem value="recurring">{t('Recurring')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">{t('Search')}</Label>
+                  <div className="relative">
+                    <Search className="absolute start-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      className="h-8 w-40 ps-7"
+                      placeholder={t('Description or amount...')}
+                      value={pendingFilters.search}
+                      onChange={(e) => setPendingFilters((prev) => ({ ...prev, search: e.target.value }))}
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleApplyFilters(); }}
+                    />
+                  </div>
+                </div>
+                <Button onClick={handleApplyFilters} size="sm" className="h-8 gap-1.5">
+                  <Filter className="h-3.5 w-3.5" />
+                  {t('Apply')}
+                </Button>
+                <Button onClick={handleResetFilters} variant="ghost" size="sm" className="h-8 gap-1.5">
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  {t('Reset')}
+                </Button>
+                <div className="ms-auto flex items-center gap-2">
+                  {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handlePrint}
+                    disabled={expenses.length === 0}
+                    className="gap-1.5"
+                  >
+                    <Printer className="h-4 w-4" />
+                    {t('Print')}
+                  </Button>
+                  {canManageExpenses && (
+                    <Button size="sm" onClick={openNewExpenseDialog} className="gap-1.5" data-tour="expense-add">
+                      <Plus className="h-4 w-4" />
+                      {t('New Expense')}
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {/* Error */}
+              {error && expenses.length === 0 && (
+                <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+                  <AlertTriangle className="mb-2 h-8 w-8 text-destructive" />
+                  <p className="text-sm font-medium">{error}</p>
+                  <button
+                    onClick={() => fetchExpenses(filters)}
+                    className="mt-3 text-xs text-primary underline hover:no-underline"
+                  >
+                    {t('Try again')}
+                  </button>
+                </div>
+              )}
+
+              {/* Skeleton */}
+              {loading && expenses.length === 0 && (
+                <div className="p-3 space-y-2">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <Skeleton key={i} className="h-9 w-full" />
+                  ))}
+                </div>
+              )}
+
+              {/* Empty */}
+              {!loading && !error && expenses.length === 0 && (
+                <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+                  <Receipt className="mb-2 h-8 w-8" />
+                  <p className="text-sm font-medium">{t('No expenses found')}</p>
+                  <p className="mt-1 text-xs">{t('Try adjusting your filters or add a new expense')}</p>
+                </div>
+              )}
+
+              {/* Table */}
+              {expenses.length > 0 && (
+                <Table className="sticky-col">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('Date')}</TableHead>
+                      <TableHead>{t('Category')}</TableHead>
+                      <TableHead className="hidden lg:table-cell">{t('Description')}</TableHead>
+                      <TableHead>{t('Payment')}</TableHead>
+                      <TableHead className="text-end">{t('Amount')}</TableHead>
+                      <TableHead className="hidden md:table-cell">{t('User')}</TableHead>
+                      {(canManageExpenses || canDeleteExpenses) && <TableHead className="w-20">{t('Actions')}</TableHead>}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {expenses.map((expense) => (
+                      <TableRow
+                        key={expense.id}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => { setDetailExpense(expense); setDetailOpen(true); }}
+                      >
+                        <TableCell className="whitespace-nowrap text-muted-foreground tabular-nums">
+                          {formatDate(expense.expense_date || expense.created_at, i18n.language)}
+                        </TableCell>
+                        <TableCell className="font-medium">
+                          <span className="flex items-center gap-1.5">
+                            {expense.category_name ?? `#${expense.category_id}`}
+                            {!!expense.is_recurring && (
+                              <Badge variant="outline" className="text-[10px] gap-0.5 px-1 py-0">
+                                <CalendarClock className="h-3 w-3" />
+                                {t('Recurring')}
+                              </Badge>
+                            )}
+                          </span>
+                        </TableCell>
+                        <TableCell className="hidden lg:table-cell max-w-[200px] truncate text-muted-foreground">
+                          {expense.description || '\u2014'}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={expense.payment_method === 'cash' ? 'secondary' : 'outline'}>
+                            {expense.payment_method === 'cash'
+                              ? t('Cash')
+                              : expense.payment_method === 'bank_transfer'
+                                ? t('Bank Transfer')
+                                : expense.payment_method ?? '\u2014'}
                           </Badge>
+                        </TableCell>
+                        <TableCell className="text-end tabular-nums font-semibold">
+                          {formatCurrency(expense.amount)}
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell text-muted-foreground">
+                          {expense.username ?? `#${expense.user_id}`}
+                        </TableCell>
+                        {(canManageExpenses || canDeleteExpenses) && (
+                          <TableCell>
+                            <div className="flex items-center gap-0.5">
+                              {canManageExpenses && (
+                                <Button
+                                  variant="ghost" size="icon" className="h-7 w-7"
+                                  title={t('Edit')}
+                                  onClick={(e) => { e.stopPropagation(); handleEdit(expense); }}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              {canDeleteExpenses && (
+                                <Button
+                                  variant="ghost" size="icon"
+                                  className="h-7 w-7 text-destructive hover:text-destructive"
+                                  title={expense.is_recurring ? t('Revoke') : t('Delete')}
+                                  onClick={(e) => { e.stopPropagation(); handleDelete(expense); }}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                            </div>
+                          </TableCell>
                         )}
-                      </span>
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell max-w-[200px] truncate text-muted-foreground">
-                      {expense.description || '\u2014'}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={expense.payment_method === 'cash' ? 'secondary' : 'outline'}>
-                        {expense.payment_method === 'cash'
-                          ? t('Cash')
-                          : expense.payment_method === 'bank_transfer'
-                            ? t('Bank Transfer')
-                            : expense.payment_method ?? '\u2014'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-end tabular-nums font-semibold">
-                      {formatCurrency(expense.amount)}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-muted-foreground">
-                      {expense.username ?? `#${expense.user_id}`}
-                    </TableCell>
-                    {(canManageExpenses || canDeleteExpenses) && (
-                      <TableCell>
-                        <div className="flex items-center gap-0.5">
-                          {canManageExpenses && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7"
-                              title={t('Edit')}
-                              onClick={(e) => { e.stopPropagation(); handleEdit(expense); }}
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </Button>
-                          )}
-                          {canDeleteExpenses && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-destructive hover:text-destructive"
-                              title={t('Delete')}
-                              onClick={(e) => { e.stopPropagation(); handleDelete(expense); }}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          )}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+
+              {/* Pagination */}
+              {expenses.length > 0 && (
+                <div className="border-t p-3">
+                  <DataPagination
+                    page={page}
+                    totalPages={totalPages}
+                    total={total}
+                    pageSize={PAGE_SIZE}
+                    onPageChange={setPage}
+                  />
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ── Recurring Tab ──────────────────────────────────────────────── */}
+        <TabsContent value="recurring" className="mt-4">
+          <RecurringExpensesPanel
+            categories={categories}
+            canManage={canManageExpenses}
+            onExpensesGenerated={() => fetchExpenses(filters, page)}
+          />
+        </TabsContent>
+
+        {/* ── Categories Tab ─────────────────────────────────────────────── */}
+        {canManageCategories && (
+          <TabsContent value="categories" className="mt-4">
+            <Card>
+              <CardContent className="p-4 space-y-4">
+                <div className="flex items-center gap-2">
+                  <Tag className="h-4 w-4 text-muted-foreground" />
+                  <span className="font-medium">{t('Expense Categories')}</span>
+                  <Badge variant="secondary" className="text-xs">{categories.length}</Badge>
+                </div>
+
+                {/* Add + search row */}
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1 max-w-xs">
+                    <Search className="absolute start-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      className="h-8 ps-7"
+                      placeholder={t('Search categories...')}
+                      value={catSearch}
+                      onChange={(e) => setCatSearch(e.target.value)}
+                    />
+                  </div>
+                  <Input
+                    className="h-8 w-44"
+                    placeholder={t('New category name')}
+                    value={newCategoryName}
+                    onChange={(e) => setNewCategoryName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddCategory(); } }}
+                  />
+                  <Button
+                    size="sm"
+                    className="h-8 gap-1"
+                    onClick={handleAddCategory}
+                    disabled={!newCategoryName.trim() || addingCategory}
+                  >
+                    {addingCategory ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderPlus className="h-3.5 w-3.5" />}
+                    {t('Add')}
+                  </Button>
+                </div>
+
+                {/* Category list */}
+                {categories.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">{t('No categories yet')}</p>
+                ) : (
+                  <div className="rounded-md border divide-y">
+                    {filteredCats.length === 0 ? (
+                      <p className="p-3 text-sm text-muted-foreground text-center">{t('No categories found')}</p>
+                    ) : filteredCats.map((cat) => (
+                      <div
+                        key={cat.id}
+                        className="flex items-center justify-between px-3 py-2 hover:bg-muted/50 group text-sm"
+                      >
+                        <span>{cat.name}</span>
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Button
+                            variant="ghost" size="icon" className="h-7 w-7"
+                            title={t('Rename')}
+                            onClick={() => {
+                              const newName = window.prompt(t('Rename category'), cat.name);
+                              if (newName && newName.trim() && newName.trim() !== cat.name) {
+                                api.expenses.updateCategory(cat.id, newName.trim())
+                                  .then(() => { toast.success(t('Category updated')); fetchCategories(); })
+                                  .catch((err: unknown) => toast.error(err instanceof Error ? err.message : t('Failed')));
+                              }
+                            }}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost" size="icon"
+                            className="h-7 w-7 text-destructive hover:text-destructive"
+                            title={t('Delete category')}
+                            onClick={() => {
+                              if (!window.confirm(t('Delete category "{{name}}"?', { name: cat.name }))) return;
+                              api.expenses.deleteCategory(cat.id)
+                                .then(() => { toast.success(t('Category deleted')); fetchCategories(); })
+                                .catch((err: unknown) => toast.error(err instanceof Error ? err.message : t('Failed')));
+                            }}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
                         </div>
-                      </TableCell>
-                    )}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
+      </Tabs>
 
-          {/* Pagination */}
-          {expenses.length > 0 && (
-            <div className="border-t p-3">
-              <DataPagination
-                page={page}
-                totalPages={totalPages}
-                total={total}
-                pageSize={PAGE_SIZE}
-                onPageChange={setPage}
-              />
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* ── Recurring Expenses (secondary) ────────────────────────────── */}
-      <RecurringExpensesPanel
-        categories={categories}
-        canManage={canManageExpenses}
-        onExpensesGenerated={() => fetchExpenses(filters, page)}
-      />
-
-      {/* ── Category Management (admin) ───────────────────────────────── */}
-      {canManageCategories && (
-        <CategoryManagementPanel
-          categories={categories}
-          onAddCategory={handleAddCategory}
-          newCategoryName={newCategoryName}
-          setNewCategoryName={setNewCategoryName}
-          addingCategory={addingCategory}
-          fetchCategories={fetchCategories}
-        />
-      )}
-
-      {/* ── New Expense Dialog ────────────────────────────────────────────── */}
+      {/* ── New / Edit Expense Dialog ───────────────────────────────────────── */}
       <Dialog open={dialogOpen} onOpenChange={(v) => { setDialogOpen(v); if (!v) setEditingExpense(null); }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -932,11 +864,8 @@ export function ExpensesPage() {
 
           <form onSubmit={handleSubmitExpense}>
             <div className="space-y-4 py-2">
-              {/* ── Category select ─────────────────────────────────────── */}
               <div className="space-y-1.5">
-                <Label>
-                  {t('Category')} <span className="text-destructive">*</span>
-                </Label>
+                <Label>{t('Category')} <span className="text-destructive">*</span></Label>
                 <SearchableSelect
                   value={formCategoryId}
                   onValueChange={setFormCategoryId}
@@ -950,7 +879,6 @@ export function ExpensesPage() {
                 />
               </div>
 
-              {/* ── Inline new category creator ─────────────────────────── */}
               {isNewCategorySelected && (
                 <div className="flex items-center gap-2 rounded-md border border-dashed p-3">
                   <Input
@@ -958,65 +886,42 @@ export function ExpensesPage() {
                     placeholder={t('Category name')}
                     value={formNewCategoryName}
                     onChange={(e) => setFormNewCategoryName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleCreateInlineCategory();
-                      }
-                    }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCreateInlineCategory(); } }}
                     autoFocus
                   />
                   <Button
-                    type="button"
-                    size="sm"
+                    type="button" size="sm"
                     onClick={handleCreateInlineCategory}
                     disabled={!formNewCategoryName.trim() || creatingCategory}
                   >
-                    {creatingCategory ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      t('Create')
-                    )}
+                    {creatingCategory ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : t('Create')}
                   </Button>
                 </div>
               )}
 
-              {/* ── Amount ──────────────────────────────────────────────── */}
               <div className="space-y-1.5">
-                <Label htmlFor="exp-amount">
-                  {t('Amount')} (SDG) <span className="text-destructive">*</span>
-                </Label>
+                <Label htmlFor="exp-amount">{t('Amount')} (SDG) <span className="text-destructive">*</span></Label>
                 <Input
-                  id="exp-amount"
-                  type="number"
-                  min={1}
-                  step={1}
+                  id="exp-amount" type="number" min={1} step={1}
                   placeholder={t('e.g. 500')}
                   value={formAmount}
                   onChange={(e) => setFormAmount(e.target.value)}
                 />
               </div>
 
-              {/* ── Expense Date ────────────────────────────────────────── */}
               <div className="space-y-1.5">
-                <Label htmlFor="exp-date">
-                  {t('Date')} <span className="text-destructive">*</span>
-                </Label>
+                <Label htmlFor="exp-date">{t('Date')} <span className="text-destructive">*</span></Label>
                 <Input
-                  id="exp-date"
-                  type="date"
+                  id="exp-date" type="date"
                   value={formExpenseDate}
                   onChange={(e) => setFormExpenseDate(e.target.value)}
                 />
               </div>
 
-              {/* ── Payment Method ──────────────────────────────────────── */}
               <div className="space-y-1.5">
                 <Label>{t('Payment Method')}</Label>
                 <Select value={formPaymentMethod} onValueChange={setFormPaymentMethod}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="cash">{t('Cash')}</SelectItem>
                     <SelectItem value="bank_transfer">{t('Bank Transfer')}</SelectItem>
@@ -1024,30 +929,21 @@ export function ExpensesPage() {
                 </Select>
               </div>
 
-              {/* ── Description ─────────────────────────────────────────── */}
               <div className="space-y-1.5">
                 <Label htmlFor="exp-desc">{t('Description')}</Label>
                 <Textarea
-                  id="exp-desc"
-                  rows={2}
+                  id="exp-desc" rows={2}
                   placeholder={t('Optional description')}
                   value={formDescription}
                   onChange={(e) => setFormDescription(e.target.value)}
                 />
               </div>
 
-              {/* ── Inline error ────────────────────────────────────────── */}
-              {formError && (
-                <p className="text-sm text-destructive">{formError}</p>
-              )}
+              {formError && <p className="text-sm text-destructive">{formError}</p>}
             </div>
 
             <DialogFooter className="pt-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setDialogOpen(false)}
-              >
+              <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
                 {t('Cancel')}
               </Button>
               <Button type="submit" disabled={!canSubmitExpense || formSubmitting}>
@@ -1059,7 +955,7 @@ export function ExpensesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Expense Detail Dialog ──────────────────────────────────────────── */}
+      {/* ── Expense Detail Dialog ───────────────────────────────────────────── */}
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -1076,9 +972,7 @@ export function ExpensesPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-xs text-muted-foreground">{t('Category')}</p>
-                  <p className="font-medium">
-                    {detailExpense.category_name ?? `#${detailExpense.category_id}`}
-                  </p>
+                  <p className="font-medium">{detailExpense.category_name ?? `#${detailExpense.category_id}`}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">{t('Amount')}</p>
@@ -1086,9 +980,7 @@ export function ExpensesPage() {
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">{t('Payment')}</p>
-                  <Badge
-                    variant={detailExpense.payment_method === 'cash' ? 'secondary' : 'outline'}
-                  >
+                  <Badge variant={detailExpense.payment_method === 'cash' ? 'secondary' : 'outline'}>
                     {detailExpense.payment_method === 'cash'
                       ? t('Cash')
                       : detailExpense.payment_method === 'bank_transfer'
@@ -1104,9 +996,7 @@ export function ExpensesPage() {
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">{t('User')}</p>
-                  <p className="font-medium">
-                    {detailExpense.username ?? `#${detailExpense.user_id}`}
-                  </p>
+                  <p className="font-medium">{detailExpense.username ?? `#${detailExpense.user_id}`}</p>
                 </div>
                 {detailExpense.shift_id && (
                   <div>
@@ -1132,13 +1022,8 @@ export function ExpensesPage() {
             <div className="flex gap-1">
               {canManageExpenses && detailExpense && (
                 <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1"
-                  onClick={() => {
-                    setDetailOpen(false);
-                    handleEdit(detailExpense);
-                  }}
+                  variant="outline" size="sm" className="gap-1"
+                  onClick={() => { setDetailOpen(false); handleEdit(detailExpense); }}
                 >
                   <Pencil className="h-3.5 w-3.5" />
                   {t('Edit')}
@@ -1146,16 +1031,12 @@ export function ExpensesPage() {
               )}
               {canDeleteExpenses && detailExpense && (
                 <Button
-                  variant="outline"
-                  size="sm"
+                  variant="outline" size="sm"
                   className="gap-1 text-destructive hover:text-destructive"
-                  onClick={() => {
-                    setDetailOpen(false);
-                    handleDelete(detailExpense);
-                  }}
+                  onClick={() => { setDetailOpen(false); handleDelete(detailExpense); }}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
-                  {t('Delete')}
+                  {detailExpense.is_recurring ? t('Revoke') : t('Delete')}
                 </Button>
               )}
             </div>

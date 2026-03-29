@@ -89,10 +89,15 @@ export function deleteLicense(): void {
   } catch { /* ignore if not found */ }
 }
 
-/** Validate a loaded local license. */
-export function validateLicense(license: LocalLicense): LicenseStatus {
-  // Tamper check (includes machineId — moving license to another device fails)
-  const expectedHmac = computeLicenseHmac(license.activatedAt, license.durationDays, license.machineId || '');
+/** Validate a loaded local license against the current device's machine ID. */
+export function validateLicense(license: LocalLicense, currentMachineId: string): LicenseStatus {
+  // Device binding: license machineId must match current device
+  if (license.machineId !== currentMachineId) {
+    return { valid: false, daysRemaining: 0, reason: 'License is not valid for this device' };
+  }
+
+  // Tamper check (HMAC includes machineId as salt)
+  const expectedHmac = computeLicenseHmac(license.activatedAt, license.durationDays, license.machineId);
   if (license.hmac !== expectedHmac) {
     return { valid: false, daysRemaining: 0, reason: 'License file has been tampered with' };
   }

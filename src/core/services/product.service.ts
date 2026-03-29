@@ -89,8 +89,9 @@ export class ProductService {
 
     await this.repo.update(id, data);
 
-    // Cascade CF change: recalculate all active batch child prices with new CF
+    // Cascade CF change: rescale quantities and recalculate child prices with new CF
     if (data.conversion_factor !== undefined && data.conversion_factor !== existing.conversion_factor) {
+      await this.batchRepo.rescaleQuantitiesForProduct(id, existing.conversion_factor, data.conversion_factor);
       await this.batchRepo.recalculateChildPricesForProduct(id, data.conversion_factor);
 
       this.bus.emit('entity:mutated', {

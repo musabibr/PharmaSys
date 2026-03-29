@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import type { ServiceContainer } from '../../../core/services/index';
+import type { ProductSaleFilters } from '../../../core/types/models';
 import { requireAuth, requireMicroPerm, requireAnyMicroPerm } from '../../middleware/auth.middleware';
 import { handle }          from '../../middleware/route-helpers';
 import { resolvePermissions, hasPermission } from '../../../core/common/permissions';
@@ -58,6 +59,21 @@ export function transactionRoutes(services: ServiceContainer): Router {
 
   router.post('/:id/void', requireMicroPerm('finance.transactions.void'), handle(async (req, res) => {
     res.json({ data: await services.transaction.voidTransaction(Number(req.params.id), req.body.reason, req.user!.id) });
+  }));
+
+  router.get('/by-product', requireAuth, handle(async (req, res) => {
+    const rawIds = req.query.product_ids ? String(req.query.product_ids) : undefined;
+    const filters: ProductSaleFilters = {
+      product_ids:      rawIds ? rawIds.split(',').map(Number).filter(Boolean) : undefined,
+      batch_id:         req.query.batch_id          ? Number(req.query.batch_id)        : undefined,
+      user_id:          req.query.user_id            ? Number(req.query.user_id)         : undefined,
+      start_date:       req.query.start_date         ? String(req.query.start_date)     : undefined,
+      end_date:         req.query.end_date           ? String(req.query.end_date)       : undefined,
+      transaction_type: req.query.transaction_type  as 'sale' | 'return' | undefined,
+      page:             req.query.page               ? Number(req.query.page)           : undefined,
+      limit:            req.query.limit              ? Number(req.query.limit)          : undefined,
+    };
+    res.json({ data: await services.transaction.getSalesByProduct(filters) });
   }));
 
   return router;

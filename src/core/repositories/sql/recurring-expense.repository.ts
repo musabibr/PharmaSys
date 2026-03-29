@@ -42,19 +42,21 @@ export class RecurringExpenseRepository {
   }
 
   async create(data: CreateRecurringExpenseInput, userId: number) {
+    const dayOfMonth = data.amount_type === 'monthly' ? (data.day_of_month ?? 1) : 1;
     return await this.base.runImmediate(
-      `INSERT INTO recurring_expenses (name, category_id, amount_type, amount, payment_method, created_by)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [data.name, data.category_id, data.amount_type, data.amount, data.payment_method ?? 'cash', userId]
+      `INSERT INTO recurring_expenses (name, category_id, amount_type, amount, payment_method, day_of_month, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [data.name, data.category_id, data.amount_type, data.amount, data.payment_method ?? 'cash', dayOfMonth, userId]
     );
   }
 
   async update(id: number, data: CreateRecurringExpenseInput): Promise<void> {
+    const dayOfMonth = data.amount_type === 'monthly' ? (data.day_of_month ?? 1) : 1;
     await this.base.runImmediate(
       `UPDATE recurring_expenses
-       SET name = ?, category_id = ?, amount_type = ?, amount = ?, payment_method = ?
+       SET name = ?, category_id = ?, amount_type = ?, amount = ?, payment_method = ?, day_of_month = ?
        WHERE id = ?`,
-      [data.name, data.category_id, data.amount_type, data.amount, data.payment_method ?? 'cash', id]
+      [data.name, data.category_id, data.amount_type, data.amount, data.payment_method ?? 'cash', dayOfMonth, id]
     );
   }
 

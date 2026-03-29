@@ -10,6 +10,7 @@ const sampleExpense  = {
   id: 1, category_id: 1, amount: 5000,
   expense_date: '2026-02-25', description: 'Electric bill',
   payment_method: 'cash' as const, user_id: 1, shift_id: 1,
+  is_recurring: 0, is_revoked: 0,
   category_name: 'Utilities', username: 'admin',
   created_at: '2026-02-25',
 };
@@ -164,6 +165,7 @@ describe('ExpenseService', () => {
   describe('delete', () => {
     it('deletes expense by id', async () => {
       const { svc, expenseRepo } = createService();
+      expenseRepo.getById.mockResolvedValue(sampleExpense);
       await svc.delete(1, 1);
       expect(expenseRepo.delete).toHaveBeenCalledWith(1);
     });
@@ -174,7 +176,8 @@ describe('ExpenseService', () => {
     });
 
     it('emits entity:mutated on delete', async () => {
-      const { svc, bus } = createService();
+      const { svc, expenseRepo, bus } = createService();
+      expenseRepo.getById.mockResolvedValue(sampleExpense);
       await svc.delete(1, 1);
       expect(bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
         action: 'DELETE_EXPENSE',

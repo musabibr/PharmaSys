@@ -1147,7 +1147,8 @@ function ShiftHistorySection({ onSelectShift, refreshKey }: ShiftHistorySectionP
         <td class="num">${formatCurrency(s.opening_amount)}</td>
         <td class="num">${formatCurrency((s.total_cash_sales ?? 0) - (s.total_cash_returns ?? 0))}</td>
         <td class="num">${formatCurrency((s.total_bank_sales ?? 0) - (s.total_bank_returns ?? 0))}</td>
-        <td class="num">${formatCurrency(s.opening_amount + (s.total_sales ?? 0) - (s.total_returns ?? 0))}</td>
+        <td class="num">${s.total_expenses ? `(${formatCurrency(s.total_expenses)})` : '—'}</td>
+        <td class="num">${formatCurrency(s.status === 'closed' && s.expected_cash != null ? s.expected_cash : s.opening_amount + (s.total_sales ?? 0) - (s.total_returns ?? 0))}</td>
         <td class="num">${variance}</td>
         <td>${s.status === 'open' ? t('Open') : t('Closed')}</td>
       </tr>`;
@@ -1171,6 +1172,7 @@ function ShiftHistorySection({ onSelectShift, refreshKey }: ShiftHistorySectionP
             <th>${t('Opening')}</th>
             <th>${t('Cash')}</th>
             <th>${t('Bank')}</th>
+            <th>${t('Expenses')}</th>
             <th>${t('Total')}</th>
             <th>${t('Variance')}</th>
             <th>${t('Status')}</th>
@@ -1284,6 +1286,7 @@ function ShiftHistorySection({ onSelectShift, refreshKey }: ShiftHistorySectionP
                   <TableHead className="text-end">{t('Opening')}</TableHead>
                   <TableHead className="text-end">{t('Cash')}</TableHead>
                   <TableHead className="text-end hidden md:table-cell">{t('Bank')}</TableHead>
+                  <TableHead className="text-end hidden md:table-cell">{t('Expenses')}</TableHead>
                   <TableHead className="text-end">{t('Total')}</TableHead>
                   <TableHead className="text-end">{t('Variance')}</TableHead>
                   <TableHead>{t('Status')}</TableHead>
@@ -1334,8 +1337,11 @@ function ShiftHistorySection({ onSelectShift, refreshKey }: ShiftHistorySectionP
                     <TableCell className="text-end tabular-nums hidden md:table-cell">
                       {formatCurrency((shift.total_bank_sales ?? 0) - (shift.total_bank_returns ?? 0))}
                     </TableCell>
+                    <TableCell className="text-end tabular-nums hidden md:table-cell text-destructive">
+                      {shift.total_expenses ? `(${formatCurrency(shift.total_expenses)})` : '—'}
+                    </TableCell>
                     <TableCell className="text-end tabular-nums font-medium">
-                      {formatCurrency(shift.opening_amount + (shift.total_sales ?? 0) - (shift.total_returns ?? 0))}
+                      {formatCurrency(shift.status === 'closed' && shift.expected_cash != null ? shift.expected_cash : shift.opening_amount + (shift.total_sales ?? 0) - (shift.total_returns ?? 0))}
                     </TableCell>
                     <TableCell className="text-end">
                       {varianceBadge(shift.variance_type, shift.variance, t)}

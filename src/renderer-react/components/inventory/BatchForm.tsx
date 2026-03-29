@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { api, throwIfError } from '@/api';
 import type { Batch } from '@/api/types';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, formatQuantity } from '@/lib/utils';
 import { usePermission } from '@/hooks/usePermission';
 import { useSettingsStore } from '@/stores/settings.store';
 
@@ -100,14 +100,14 @@ export function BatchForm({
 
     setError('');
     setLoading(false);
-    setSellParentTouched(false);
-    setCostChildTouched(false);
-    setSellChildTouched(false);
-
     setUpdateExistingPrices(false);
 
     if (batch) {
-      // Edit mode: populate from existing batch
+      // Edit mode: populate from existing batch.
+      // Mark all price fields as touched so auto-calculate effects don't overwrite the batch's existing prices.
+      setSellParentTouched(true);
+      setCostChildTouched(true);
+      setSellChildTouched(true);
       setBatchNumber(batch.batch_number ?? '');
       setExpiryDate(batch.expiry_date);
       // Edit mode: show raw base units to avoid truncation (e.g., 105 strips, not 10 boxes)
@@ -123,7 +123,10 @@ export function BatchForm({
         batch.selling_price_child_override || batch.selling_price_child || 0
       );
     } else {
-      // Create mode: auto-generate batch number
+      // Create mode: reset touched flags so auto-calculate applies default markup
+      setSellParentTouched(false);
+      setCostChildTouched(false);
+      setSellChildTouched(false);
       setBatchNumber(generateBatchNumber());
       setExpiryDate('');
       setQuantity(1);
@@ -355,7 +358,13 @@ export function BatchForm({
               onChange={(e) => setQuantity(Math.max(isEditMode ? 0 : 1, parseInt(e.target.value, 10) || (isEditMode ? 0 : 1)))}
               disabled={loading}
             />
-            {isEditMode && (
+            {isEditMode && hasChildUnit && conversionFactor > 1 && (
+              <p className="text-xs text-muted-foreground">
+                {t('Enter in {{unit}} — equivalent to', { unit: childUnit })}{' '}
+                {formatQuantity(quantity, parentUnit, childUnit, conversionFactor)}
+              </p>
+            )}
+            {isEditMode && (!hasChildUnit || conversionFactor <= 1) && (
               <p className="text-xs text-muted-foreground">
                 {t('Whole numbers only — adjust for physical count corrections')}
               </p>

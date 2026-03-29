@@ -10,6 +10,7 @@ import type {
   CreateTransactionInput, CreateTransactionItemInput,
   CreateReturnInput,
   PaymentMethod, UnitType, BatchStatus, AdjustmentType,
+  ProductSaleRecord, ProductSaleFilters,
 } from '../types/models';
 import type { IFIFOBatch } from '../types/repositories';
 import { Validate }        from '../common/validation';
@@ -383,6 +384,14 @@ export class TransactionService {
   async getReturnedQuantities(originalTxnId: number): Promise<Record<string, number>> {
     Validate.id(originalTxnId, 'Original transaction');
     return await this.repo.getReturnedQuantities(originalTxnId);
+  }
+
+  async getSalesByProduct(filters: ProductSaleFilters): Promise<PaginatedResult<ProductSaleRecord>> {
+    if (filters.product_ids) {
+      for (const id of filters.product_ids) Validate.id(id, 'Product');
+    }
+    if (filters.user_id !== undefined) Validate.id(filters.user_id, 'User');
+    return await this.repo.getSalesByProduct(filters);
   }
 
   async voidTransaction(id: number, reason: string, voidedBy: number, force?: boolean): Promise<Transaction> {
