@@ -45,6 +45,7 @@
     "@radix-ui/react-switch": "^1.2.6",
     "@radix-ui/react-tabs": "^1.1.13",
     "@radix-ui/react-tooltip": "^1.2.8",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",
@@ -85,6 +86,7 @@
     "zustand": "^5.0.11"
   },
   "dependencies": {
+    "better-sqlite3": "^12.9.0",
     "bytenode": "^1.5.7",
     "cors": "^2.8.6",
     "express": "^5.2.1",
@@ -139,10 +141,6 @@
     ],
     "extraResources": [
       {
-        "from": "node_modules/sql.js/dist/sql-wasm.wasm",
-        "to": "sql-wasm.wasm"
-      },
-      {
         "from": "build/pdf_invoice_parser.exe",
         "to": "pdf_invoice_parser.exe",
         "filter": [
@@ -192,7 +190,7 @@
     "compression": "maximum",
     "asar": true,
     "asarUnpack": [
-      "node_modules/sql.js/dist/**"
+      "node_modules/better-sqlite3/**"
     ],
     "removePackageScripts": true
   }

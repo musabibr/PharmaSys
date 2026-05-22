@@ -9,6 +9,7 @@ import {
   TrendingUp,
   Skull,
   History,
+  Search,
 } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ProductsTab } from './ProductsTab';
@@ -18,6 +19,7 @@ import { ValuationTab } from './ValuationTab';
 import { ReorderTab } from './ReorderTab';
 import { DeadCapitalTab } from './DeadCapitalTab';
 import { SalesHistoryTab } from './SalesHistoryTab';
+import { SupplierProductsTab } from './SupplierProductsTab';
 import { useAnyPermission, usePermission } from '@/hooks/usePermission';
 
 // ---------------------------------------------------------------------------
@@ -35,6 +37,7 @@ export function InventoryPage() {
   const canViewReorder    = useAnyPermission(['inventory.reorder', 'inventory.low_stock']);
   const canViewDeadCap      = usePermission('inventory.dead_capital');
   const canViewSalesHistory = usePermission('inventory.batches.view');
+  const canViewBySupplier   = usePermission('inventory.products.view');
 
   // Read initial tab from route state (e.g., navigate('/inventory', { state: { tab: 'reorder' } }))
   const stateTab = (location.state as { tab?: string } | null)?.tab;
@@ -48,6 +51,7 @@ export function InventoryPage() {
     canViewReorder   ? 'reorder' :
     canViewDeadCap      ? 'dead-capital' :
     canViewSalesHistory ? 'sales-history' :
+    canViewBySupplier   ? 'by-supplier' :
     'products';
 
   const [tab, setTab] = useState(stateTab || defaultTab);
@@ -103,6 +107,12 @@ export function InventoryPage() {
               {t('Sales History')}
             </TabsTrigger>
           )}
+          {canViewBySupplier && (
+            <TabsTrigger value="by-supplier" className="gap-1.5">
+              <Search className="h-4 w-4" />
+              {t('Product Sources')}
+            </TabsTrigger>
+          )}
         </TabsList>
 
         {canViewProducts && (
@@ -138,6 +148,11 @@ export function InventoryPage() {
         {canViewSalesHistory && (
           <TabsContent value="sales-history" className="flex-1 overflow-hidden">
             <SalesHistoryTab />
+          </TabsContent>
+        )}
+        {canViewBySupplier && (
+          <TabsContent value="by-supplier" className="flex-1 overflow-hidden">
+            <SupplierProductsTab />
           </TabsContent>
         )}
       </Tabs>

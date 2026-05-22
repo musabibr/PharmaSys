@@ -27,6 +27,7 @@ export function useTour() {
   const { currentUser, hasPermission, isAdmin } = useAuthStore();
   const { getSetting, setSetting } = useSettingsStore();
   const tourRef = useRef<TourType | null>(null);
+  const startTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /** Check if user can see this tour/step based on role + permission */
   const canAccess = useCallback(
@@ -72,8 +73,13 @@ export function useTour() {
 
   /** Cancel any running tour */
   const cancelTour = useCallback(() => {
+    if (startTimerRef.current) {
+      clearTimeout(startTimerRef.current);
+      startTimerRef.current = null;
+    }
     if (tourRef.current) {
       tourRef.current.cancel();
+      tourRef.current.destroy();
       tourRef.current = null;
     }
   }, []);
@@ -95,7 +101,9 @@ export function useTour() {
       navigate(tourDef.route);
 
       // Small delay to let the page render
-      setTimeout(() => {
+      if (startTimerRef.current) clearTimeout(startTimerRef.current);
+      startTimerRef.current = setTimeout(() => {
+        startTimerRef.current = null;
         const totalSteps = filteredSteps.length;
         const isRtl = document.documentElement.dir === 'rtl';
 
@@ -161,10 +169,12 @@ export function useTour() {
         tour.on('complete', () => {
           markCompleted(tourId);
           toast.success(t('Tour completed!'));
+          tour.destroy();
           tourRef.current = null;
         });
 
         tour.on('cancel', () => {
+          tour.destroy();
           tourRef.current = null;
         });
 

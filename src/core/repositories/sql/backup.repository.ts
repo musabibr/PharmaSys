@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import type { BaseRepository, SqlJsDatabase } from './base.repository';
+import type { BaseRepository } from './base.repository';
 import type { IBackupRepository, BackupEntry } from '../../types/repositories';
 
 const MAX_BACKUPS = 50;
@@ -16,12 +16,14 @@ export class BackupRepository implements IBackupRepository {
   constructor(
     private readonly base: BaseRepository,
     private readonly dataPath: string,
-    private readonly getSQLDatabase: () => SqlJsDatabase,
-    private readonly onRestored: (db: SqlJsDatabase) => void
   ) {}
 
   private get backupDir(): string {
     return path.join(this.dataPath, 'backups');
+  }
+
+  private get dbFile(): string {
+    return path.join(this.dataPath, 'pharmasys.db');
   }
 
   private _ensureBackupDir(): void {
@@ -141,20 +143,19 @@ export class BackupRepository implements IBackupRepository {
 
   async create(label?: string): Promise<BackupEntry> {
     this._ensureBackupDir();
-    this.base.save(); // flush in-memory state first
+
+    // Checkpoint WAL to ensure all data is in the main db file
+    this.base.db.pragma('wal_checkpoint(PASSIVE)');
 
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const suffix = label ? `-${label.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
     const filename  = `pharmasys-backup-${ts}${suffix}.bak`;
     const filePath  = path.join(this.backupDir, filename);
 
-    // Write raw SQLite bytes — async file I/O to avoid blocking main thread
-    const raw = Buffer.from(this.base.db.export());
+    // Copy the database file directly (it's a real file on disk now)
+    fs.copyFileSync(this.dbFile, filePath);
 
-    const tmp = filePath + '.tmp';
-    await fsp.writeFile(tmp, raw);
-    await fsp.rename(tmp, filePath);
-
+    const raw = fs.readFileSync(filePath);
     const checksum = crypto.createHash('sha256').update(raw).digest('hex');
     await fsp.writeFile(filePath + '.sha256', `${checksum}  ${filename}\n`);
 
@@ -211,35 +212,22 @@ export class BackupRepository implements IBackupRepository {
     // Detect format and extract raw SQLite bytes
     const dbBuffer = this._extractSqlite(fileBuffer);
 
-    // Create new sql.js Database from restored buffer
-    const initSqlJs = (await import('sql.js')).default;
-    const SQL = await initSqlJs();
-    const newDb = new SQL.Database(new Uint8Array(dbBuffer));
-
-    // Set pragmas on new DB (match initDatabase settings)
-    newDb.run('PRAGMA journal_mode=WAL;');
-    newDb.run('PRAGMA foreign_keys=ON;');
-
-    // Persist restored database to disk FIRST (before swapping in-memory)
-    const dbPath = path.join(this.dataPath, 'pharmasys.db');
-    const tmp    = dbPath + '.restore.tmp';
-    await fsp.writeFile(tmp, Buffer.from(dbBuffer));
-    await fsp.rename(tmp, dbPath);
+    // Write restored database to a temp file
+    const tmp = this.dbFile + '.restore.tmp';
+    fs.writeFileSync(tmp, dbBuffer);
 
     // Verify the file was written correctly
-    const written = await fsp.readFile(dbPath);
+    const written = fs.readFileSync(tmp);
     if (written.length !== dbBuffer.length) {
       throw new Error(`Restore verification failed: wrote ${dbBuffer.length} bytes but file is ${written.length} bytes`);
     }
-    console.log(`[BackupRepo] Restored DB written to disk: ${written.length} bytes`);
 
-    // Swap in-memory database — all repos now query restored data
-    this.onRestored(newDb);
+    // Close current database, swap file, reopen
+    this.base.db.close();
+    fs.renameSync(tmp, this.dbFile);
+    this.base.replaceDb();
 
-    // Save again to ensure the in-memory DB matches disk
-    this.base.save();
-
-    console.log('[BackupRepo] Restore complete — database swapped in-memory and persisted to disk.');
+    console.log(`[BackupRepo] Restore complete — database reopened from restored file (${dbBuffer.length} bytes).`);
   }
 
   /**

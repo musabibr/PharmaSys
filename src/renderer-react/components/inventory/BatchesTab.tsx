@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { api } from '@/api';
@@ -143,6 +143,7 @@ export function BatchesTab() {
   // ---- Batch data ----
   const [batches, setBatches] = useState<Batch[]>([]);
   const [batchesLoading, setBatchesLoading] = useState(false);
+  const batchRequestCounterRef = useRef(0);
 
   // ---- Filters ----
   const [batchSearch, setBatchSearch] = useState('');
@@ -209,18 +210,27 @@ export function BatchesTab() {
   }, [selectedProduct]);
 
   // ---- Load batches for selected product ----
-  const loadBatches = useCallback(() => {
+  const loadBatches = useCallback(async () => {
     if (!selectedProduct) {
       setBatches([]);
       return;
     }
 
+    const currentRequest = ++batchRequestCounterRef.current;
     setBatchesLoading(true);
-    api.batches.getByProduct(selectedProduct.id)
-      .then(setBatches)
-      .catch(() => toast.error(t('Failed to load batches')))
-      .finally(() => setBatchesLoading(false));
-  }, [selectedProduct]); // eslint-disable-line react-hooks/exhaustive-deps
+    try {
+      const data = await api.batches.getByProduct(selectedProduct.id);
+      if (currentRequest !== batchRequestCounterRef.current) return;
+      setBatches(Array.isArray(data) ? data : []);
+    } catch {
+      if (currentRequest !== batchRequestCounterRef.current) return;
+      toast.error(t('Failed to load batches'));
+    } finally {
+      if (currentRequest === batchRequestCounterRef.current) {
+        setBatchesLoading(false);
+      }
+    }
+  }, [selectedProduct, t]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     loadBatches();

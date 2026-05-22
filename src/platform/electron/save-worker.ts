@@ -11,7 +11,16 @@ parentPort?.on('message', (msg: { data: Uint8Array; dbFile: string }) => {
   let attempts = 0;
   const tryWrite = (): void => {
     try {
-      fs.writeFileSync(tmp, msg.data);
+      // Use open/write/fsync/close instead of writeFileSync so we can fsync before rename.
+      // fsync ensures the OS write buffer is flushed to disk before we rename, preventing
+      // database corruption if power is lost between the rename and the actual disk write.
+      const fd = fs.openSync(tmp, 'w');
+      try {
+        fs.writeSync(fd, msg.data);
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
       fs.renameSync(tmp, msg.dbFile);
       parentPort?.postMessage({ ok: true });
     } catch (err: any) {

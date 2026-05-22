@@ -4,6 +4,7 @@ import type {
   CreateSupplierInput, UpdateSupplierInput,
   CreatePurchaseInput, CreatePurchaseItemInput, UpdatePurchaseInput, PurchaseFilters,
   ExpensePaymentMethod, PaymentAdjustmentStrategy,
+  SupplierProductFilters,
 } from '../../../core/types/models';
 
 export function registerPurchaseHandlers(router: IpcRouter, services: ServiceContainer): void {
@@ -157,4 +158,16 @@ export function registerPurchaseHandlers(router: IpcRouter, services: ServiceCon
   router.handle('purchases:getAllPendingItems', async (_user, filters: unknown) => {
     return services.purchase.getAllPendingItems((filters ?? {}) as { search?: string; supplier_id?: number; page?: number; limit?: number });
   }, { permission: 'purchases.view' });
+
+  // ─── Products by Supplier (smart inventory view) ─────────────────────────────
+
+  router.handle('purchases:getProductsBySupplier', async (_user, supplierId: number, filters?: SupplierProductFilters) => {
+    return await services.purchase.getProductsBySupplier(supplierId, filters ?? {});
+  }, { permission: 'inventory.products.view' });
+
+  // ─── Suppliers by Product (reverse lookup — product-first view) ───────────
+
+  router.handle('purchases:getSuppliersByProduct', async (_user, productId: number, page?: number, limit?: number) => {
+    return await services.purchase.getSuppliersByProduct(productId, page, limit);
+  }, { permission: 'inventory.products.view' });
 }

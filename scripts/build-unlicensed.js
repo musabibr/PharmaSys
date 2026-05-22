@@ -59,7 +59,15 @@ src = src.replace(LICENSED_LINE, UNLICENSED_LINE);
 fs.writeFileSync(MAIN_JS, src, 'utf-8');
 console.log('[build:unlicensed] License gate patched in dist-ts/platform/electron/main.js');
 
-// ── 4. Package ────────────────────────────────────────────────────────────
+// ── 4. Rebuild native modules for Electron ───────────────────────────────
+console.log('[build:unlicensed] Rebuilding native modules for Electron...');
+try {
+  run('npx electron-rebuild -f -w better-sqlite3');
+} catch (e) {
+  console.warn('[build:unlicensed] electron-rebuild failed (module may already be built for Electron). Continuing...');
+}
+
+// ── 5. Package ────────────────────────────────────────────────────────────
 console.log('[build:unlicensed] Packaging with electron-builder → dist-unlicensed/...');
 run('npx electron-builder --win --config.directories.output=dist-unlicensed');
 

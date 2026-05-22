@@ -25,8 +25,6 @@ export class AuditRepository implements IAuditRepository {
         newValues ? JSON.stringify(newValues) : null,
       ]
     );
-    // Fire-and-forget: don't block on save for audit logs
-    this.base['scheduleSaveFn']?.();
   }
 
   async getAll(filters: AuditLogFilters): Promise<PaginatedResult<AuditLog>> {

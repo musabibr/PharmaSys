@@ -880,6 +880,7 @@ export interface UpdatePurchaseInput {
 
 export interface CreatePurchaseItemInput {
   product_id?: number;
+  barcode?: string;
   new_product?: {
     name: string;
     generic_name?: string;
@@ -956,6 +957,91 @@ export interface PurchaseFilters {
   has_pending?: boolean;
   page?: number;
   limit?: number;
+}
+
+// ─── Products by Supplier (smart inventory view) ───
+
+export type SupplierProductStockStatus = 'all' | 'in_stock' | 'low_stock' | 'out_of_stock' | 'expired';
+
+export type SupplierProductPreset =
+  | 'all'
+  | 'out_of_stock'
+  | 'low_stock'
+  | 'never_reordered'
+  | 'sole_source'
+  | 'price_increased'
+  | 'price_decreased'
+  | 'slow_movers'
+  | 'best_margin'
+  | 'approaching_expiry';
+
+export type SupplierProductSort =
+  | 'last_purchased_desc'
+  | 'name_asc'
+  | 'total_qty_desc'
+  | 'total_spent_desc'
+  | 'avg_cost_desc'
+  | 'last_cost_desc';
+
+export interface SupplierProductFilters {
+  start_date?: string;          // YYYY-MM-DD; omit for "all time"
+  end_date?: string;            // YYYY-MM-DD; omit for today
+  search?: string;              // matches name / generic_name / barcode
+  stock_status?: SupplierProductStockStatus;
+  preset?: SupplierProductPreset;
+  min_cost?: number;            // last_cost lower bound
+  max_cost?: number;            // last_cost upper bound
+  include_inactive?: boolean;   // default false
+  sort_by?: SupplierProductSort;
+  page?: number;
+  limit?: number;
+}
+
+export interface SupplierProductRecord {
+  product_id: number;
+  product_name: string;
+  generic_name: string | null;
+  barcode: string | null;
+  parent_unit: string;
+  child_unit: string | null;
+  conversion_factor: number;
+  min_stock_level: number;
+  is_active: 0 | 1;
+
+  // Aggregates from this supplier within the recency window
+  first_purchase_date: string;
+  last_purchase_date: string;
+  total_qty_bought: number;
+  total_spent: number;
+  purchase_count: number;
+  last_cost: number;
+  previous_cost: number | null;
+
+  // Lifetime / cross-supplier signals (window-independent)
+  purchase_count_total: number;
+  supplier_count: number;
+
+  // Cross-system signals
+  current_stock: number;
+  last_sale_date: string | null;
+  batch_min_expiry: string | null;
+  current_sell_price: number;
+}
+
+// ─── Suppliers by Product (reverse lookup — product-first view) ───
+
+export interface ProductSupplierRecord {
+  supplier_id: number;
+  supplier_name: string;
+  supplier_phone: string | null;
+  first_purchase_date: string;
+  last_purchase_date: string;
+  total_qty_bought: number;
+  total_spent: number;
+  purchase_count: number;
+  last_cost: number;
+  previous_cost: number | null;
+  avg_cost: number;
 }
 
 export interface PurchaseReportFilters {

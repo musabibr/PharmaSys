@@ -2,7 +2,7 @@
  * Electron main process entry point.
  *
  * Responsibilities:
- *  - Boot the database (sql.js)
+ *  - Boot the database (better-sqlite3)
  *  - Initialise repositories + services (ServiceContainer)
  *  - Register all IPC handlers
  *  - Create and manage the BrowserWindow (React frontend)
@@ -13,10 +13,9 @@ import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import * as path   from 'path';
 import * as fs     from 'fs';
 import { execFile } from 'child_process';
-import { Worker }   from 'worker_threads';
-import initSqlJs   from 'sql.js';
+import Database     from 'better-sqlite3';
 
-import { BaseRepository }        from '../../core/repositories/sql/base.repository';
+import type { BaseRepository }   from '../../core/repositories/sql/base.repository';
 import { MigrationRepository }  from '../../core/repositories/sql/migration.repository';
 import { createRepositories }   from '../../core/repositories/sql/index';
 import { ServiceContainer }     from '../../core/services/index';
@@ -196,97 +195,92 @@ let isReconfiguringWindow = false; // Guard: prevent app.quit() during window re
 const getCurrentUser = (): UserPublic | null => currentUser;
 const setCurrentUser = (u: UserPublic | null): void => { currentUser = u; };
 
-let flushDbToDisk: (() => void) | null = null;
+let baseRepo: BaseRepository | null = null;
+let pendingCorruptionAlert: string | null = null;
 
 // ─── Database Initialisation ─────────────────────────────────────────────────
 
 async function initDatabase(): Promise<ServiceContainer> {
   fs.mkdirSync(dataPath, { recursive: true });
 
-  const SQL   = await initSqlJs();
   const dbFile = path.join(dataPath, 'pharmasys.db');
 
-  let db: ReturnType<typeof SQL.Database.prototype.constructor>;
+  // ── Corruption recovery ────────────────────────────────────────────────
+  // Try to open the database file. If it's corrupted, attempt auto-restore
+  // from the most recent backup.
   if (fs.existsSync(dbFile)) {
-    const data = fs.readFileSync(dbFile);
-    console.log(`[DB] Loading existing database: ${dbFile} (${data.length} bytes)`);
-    db = new SQL.Database(data);
-    // Quick sanity check — count users to see if data is present
     try {
-      const rows = db.exec('SELECT COUNT(*) as cnt FROM users');
-      const userCount = rows[0]?.values[0]?.[0] ?? 0;
-      console.log(`[DB] Database loaded — ${userCount} user(s) found`);
-    } catch { /* table may not exist yet */ }
-  } else {
-    console.log(`[DB] No database file found at ${dbFile} — creating new database`);
-    db = new SQL.Database();
-  }
-
-  // Enable WAL mode and foreign keys
-  db.run('PRAGMA journal_mode=WAL;');
-  db.run('PRAGMA foreign_keys=ON;');
-
-  // Mutable reference — saveFn always exports the current DB (survives backup restore swap)
-  const dbRef = { current: db };
-
-  // Worker thread for non-blocking file I/O (db.export() is still sync but fast;
-  // the file write is the slow part and now runs off the main thread)
-  const workerPath = path.join(__dirname, 'save-worker.js');
-  let saveWorker: Worker | null = null;
-  let saveInFlight = false;
-
-  function ensureSaveWorker(): Worker {
-    if (!saveWorker) {
-      saveWorker = new Worker(workerPath);
-      saveWorker.on('message', (msg: { ok: boolean; error?: string }) => {
-        saveInFlight = false;
-        if (!msg.ok) console.error('[DB] Worker save failed:', msg.error);
-      });
-      saveWorker.on('error', (e: Error) => {
-        saveInFlight = false;
-        console.error('[DB] Worker error:', e.message);
-        saveWorker = null; // Recreate on next save
-      });
-    }
-    return saveWorker;
-  }
-
-  // Save function — export DB on main thread (fast), write to disk on worker (non-blocking)
-  const saveFn = (): void => {
-    if (saveInFlight) return; // Skip if previous save still writing
-    const data = dbRef.current.export();
-    try {
-      const worker = ensureSaveWorker();
-      saveInFlight = true;
-      // Transfer the buffer to avoid copying (zero-copy)
-      worker.postMessage({ data, dbFile }, [data.buffer]);
-    } catch {
-      // Fallback: synchronous save if worker fails
-      saveInFlight = false;
+      // Quick open + sanity check
+      const testDb = new Database(dbFile, { readonly: true });
       try {
-        const tmp = dbFile + '.tmp';
-        fs.writeFileSync(tmp, data);
-        fs.renameSync(tmp, dbFile);
-      } catch (err: any) {
-        console.error('[DB] Fallback save failed:', err.message);
+        const row = testDb.prepare('SELECT COUNT(*) as cnt FROM users').get() as any;
+        console.log(`[DB] Database loaded — ${row?.cnt ?? 0} user(s) found`);
+      } catch { /* table may not exist yet — that's OK */ }
+      testDb.close();
+    } catch (loadErr) {
+      // Database file is corrupted — preserve it and attempt recovery
+      const corruptPath = `${dbFile}.corrupted.${Date.now()}`;
+      try { fs.renameSync(dbFile, corruptPath); } catch { /* best effort */ }
+      console.error(`[DB] Corrupted database file — renamed to ${path.basename(corruptPath)}`);
+      console.error(`[DB] Load error: ${(loadErr as Error).message}`);
+
+      let restored = false;
+      const backupDir = path.join(dataPath, 'backups');
+      if (fs.existsSync(backupDir)) {
+        const baks = fs.readdirSync(backupDir)
+          .filter(f => f.startsWith('pharmasys-backup-') && f.endsWith('.bak'))
+          .sort().reverse();
+        for (const bak of baks) {
+          try {
+            const bakPath = path.join(backupDir, bak);
+            // Validate backup is a valid SQLite file
+            const bakDb = new Database(bakPath, { readonly: true });
+            bakDb.close();
+            // Copy backup to db path
+            fs.copyFileSync(bakPath, dbFile);
+            console.log(`[DB] Restored from backup: ${bak}`);
+            const tsMatch = bak.match(/pharmasys-backup-([\dT:.\-]+Z?)/);
+            let ageDescription = '';
+            if (tsMatch) {
+              const isoLike = tsMatch[1].replace(/-(\d{2})-(\d{2})-(\d{3}Z?)$/, ':$1:$2.$3');
+              const bakDate = new Date(isoLike);
+              if (!isNaN(bakDate.getTime())) {
+                const ageMs = Date.now() - bakDate.getTime();
+                const hours = Math.floor(ageMs / 3_600_000);
+                const minutes = Math.floor((ageMs % 3_600_000) / 60_000);
+                ageDescription = hours > 0
+                  ? `Backup is ${hours}h ${minutes}m old (taken ${bakDate.toLocaleString()}). `
+                  : `Backup is ${minutes}m old (taken ${bakDate.toLocaleString()}). `;
+              }
+            }
+            pendingCorruptionAlert =
+              `Restored from: ${bak}\n` +
+              `${ageDescription}\n` +
+              `The corrupted file has been preserved at:\n${path.basename(corruptPath)}`;
+            restored = true;
+            break;
+          } catch { /* backup unreadable — try next */ }
+        }
+      }
+
+      if (!restored) {
+        console.log('[DB] No usable backup found — starting with fresh empty database');
+        pendingCorruptionAlert =
+          'Database was corrupted and no backup was available to restore from.\n\n' +
+          'A fresh empty database has been created. Previous data has been lost.\n\n' +
+          `The corrupted file has been preserved at:\n${corruptPath}`;
       }
     }
-  };
+  } else {
+    console.log(`[DB] No database file found at ${dbFile} — creating new database`);
+  }
 
-  flushDbToDisk = saveFn;
-
-  let saveTimer: ReturnType<typeof setTimeout> | null = null;
-  const scheduleSaveFn = (): void => {
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(saveFn, 2000);
-  };
-
-  const repos    = createRepositories(db as any, dataPath, saveFn, scheduleSaveFn,
-    (newDb) => { dbRef.current = newDb; }
-  );
+  // ── Open database (better-sqlite3 creates the file if it doesn't exist) ──
+  // WAL mode + foreign keys are set inside BaseRepository constructor.
+  const repos = createRepositories(dbFile, dataPath);
+  baseRepo = repos.base;
 
   // Run schema creation, migrations, seed data — safe to call on every startup
-  // Only seed demo data in dev mode; production starts with a clean database
   const migration = new MigrationRepository(repos.base, dataPath);
   await migration.initialise(isDev);
 
@@ -295,8 +289,8 @@ async function initDatabase(): Promise<ServiceContainer> {
     console.warn('[Startup] Backup migration warning:', (err as Error).message);
   }
 
-  const bus      = new EventBus();
-  const svc      = new ServiceContainer(repos, bus);
+  const bus = new EventBus();
+  const svc = new ServiceContainer(repos, bus);
 
   return svc;
 }
@@ -548,14 +542,6 @@ async function bootMainApp(): Promise<void> {
   // ── Standalone / Server mode — local database ───────────────────────
   services = await initDatabase();
 
-  // ── Auto-close stale shifts ────────────────────────────────────────
-  try {
-    const staleCount = await services.shift.autoCloseStale(24);
-    if (staleCount > 0) console.log(`[Startup] Auto-closed ${staleCount} stale shift(s)`);
-  } catch (err) {
-    console.warn('[Startup] Failed to auto-close stale shifts:', (err as Error).message);
-  }
-
   // ── Auto-generate recurring expenses ───────────────────────────────
   let startupGeneratedCount = 0;
   const generationMode = await services.settings.get('recurring_generation_mode') ?? 'startup';
@@ -643,7 +629,9 @@ async function bootMainApp(): Promise<void> {
   let autoBackupTimer: ReturnType<typeof setInterval> | null = null;
   async function startAutoBackupTimer() {
     if (autoBackupTimer) clearInterval(autoBackupTimer);
-    const hours = parseInt(await services!.settings.get('auto_backup_hours') ?? '8', 10) || 8;
+    // Default 1 hour (halved from 2h) so the maximum data-loss window after an
+    // auto-restore is shorter. User can override via the auto_backup_hours setting.
+    const hours = parseInt(await services!.settings.get('auto_backup_hours') ?? '1', 10) || 1;
     if (hours <= 0) return;
     console.log(`[AutoBackup] Scheduled every ${hours} hours`);
     autoBackupTimer = setInterval(async () => {
@@ -682,6 +670,35 @@ async function bootMainApp(): Promise<void> {
   ipcMain.on('recurringExpenseTimerRestart', () => { startRecurringExpenseTimer(); });
 
   createWindow();
+
+  // Show deferred corruption alert (if database was corrupted on startup).
+  // Use the SYNC variant — the user must acknowledge that data may be missing
+  // before they start working. A non-blocking toast was previously dismissed by
+  // accident and the user only realized days later that recent data was gone.
+  if (pendingCorruptionAlert) {
+    const msg = pendingCorruptionAlert;
+    pendingCorruptionAlert = null;
+    setTimeout(() => {
+      try {
+        dialog.showMessageBoxSync(mainWindow!, {
+          type: 'warning',
+          title: 'Database Recovered — Data Loss Possible',
+          message: 'Database was recovered from a backup. Some recent data may be missing.',
+          detail: msg,
+          buttons: ['I understand'],
+          defaultId: 0,
+          noLink: true,
+        });
+      } catch {
+        /* mainWindow may have been destroyed during a reconfigure — best effort */
+      }
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.focus();
+        mainWindow.webContents.focus();
+      }
+    }, 1500); // brief delay so the main window has time to render first
+  }
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -690,6 +707,29 @@ async function bootMainApp(): Promise<void> {
 // ─── Application Lifecycle ────────────────────────────────────────────────────
 
 app.setAppUserModelId('com.pharmasys.app');
+
+// ── Single-instance lock ─────────────────────────────────────────────────────
+// Without this, a second launch (desktop shortcut + start menu, or portable +
+// installer) opens a SECOND process that loads the same SQLite file into its
+// own memory. Both processes write back independently — last writer wins —
+// silently destroying the other process's transactions, sales, and inventory
+// changes. This is the most likely root cause of "everything gone by end of
+// day" and "shift suddenly closed with all sales lost".
+const gotInstanceLock = app.requestSingleInstanceLock();
+if (!gotInstanceLock) {
+  console.log('[Startup] Another PharmaSys instance is already running — exiting');
+  app.exit(0);
+}
+
+app.on('second-instance', () => {
+  // User clicked the icon while we're already running — focus the existing
+  // window instead of letting Windows think nothing happened.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
 
 app.whenReady().then(async () => {
   try {
@@ -751,14 +791,15 @@ app.whenReady().then(async () => {
     });
 
     ipcMain.handle('app:restart', () => {
-      // Flush database to disk before exiting
+      // Close database connection cleanly before exiting.
+      // With better-sqlite3, all data is already on disk — no flush needed.
       try {
-        if (flushDbToDisk) {
-          flushDbToDisk();
-          console.log('[Restart] Database flushed to disk before exit');
+        if (baseRepo) {
+          baseRepo.close();
+          console.log('[Restart] Database connection closed before exit');
         }
       } catch (err) {
-        console.error('[Restart] Failed to flush DB before exit:', (err as Error).message);
+        console.error('[Restart] Failed to close DB:', (err as Error).message);
       }
 
       // electron-builder portable sets PORTABLE_EXECUTABLE_FILE to the outer
@@ -795,4 +836,15 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin' && !isReconfiguringWindow) app.quit();
+});
+
+// Close the database connection cleanly before the process exits.
+// With better-sqlite3, all committed data is already on disk (WAL mode).
+// This just ensures the WAL is checkpointed and the connection is released.
+app.on('will-quit', () => {
+  if (baseRepo) {
+    try { baseRepo.close(); } catch (err) {
+      console.error('[Quit] DB close error:', (err as Error).message);
+    }
+  }
 });

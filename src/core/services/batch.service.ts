@@ -70,6 +70,19 @@ export class BatchService {
     });
 
     const newId = result.lastInsertRowid as number;
+
+    // Auto-propagate: new batch's selling prices → all older batches of the same product
+    if (sellParent > 0) {
+      const sellChildBase = sellParent ? Money.divideToChild(sellParent, cf) : 0;
+      const propagated = await this.repo.propagateSellingPrices(
+        data.product_id, newId,
+        sellParent, sellChildBase, sellParent, sellChild
+      );
+      if (propagated > 0) {
+        console.log(`[BatchService] Propagated selling prices from new batch #${newId} to ${propagated} older batch(es)`);
+      }
+    }
+
     this.bus.emit('entity:mutated', {
       action: 'CREATE_BATCH', table: 'batches',
       recordId: newId, userId,
@@ -121,6 +134,34 @@ export class BatchService {
     }
 
     await this.repo.update(id, data);
+
+    // Auto-propagate: if selling prices changed AND this is the latest batch,
+    // push the new selling prices to all older batches of the same product.
+    const sellingPriceChanged = (
+      data.selling_price_parent !== undefined ||
+      data.selling_price_parent_override !== undefined ||
+      data.selling_price_child !== undefined ||
+      data.selling_price_child_override !== undefined
+    );
+    if (sellingPriceChanged) {
+      const latestId = await this.repo.getLatestBatchId(existing.product_id!);
+      if (latestId === id) {
+        // Re-read the updated batch to get the final prices
+        const updated = await this.repo.getById(id);
+        if (updated) {
+          const propagated = await this.repo.propagateSellingPrices(
+            existing.product_id!, id,
+            updated.selling_price_parent ?? 0,
+            updated.selling_price_child ?? 0,
+            updated.selling_price_parent_override ?? updated.selling_price_parent ?? 0,
+            updated.selling_price_child_override ?? updated.selling_price_child ?? 0
+          );
+          if (propagated > 0) {
+            console.log(`[BatchService] Propagated selling prices from batch #${id} to ${propagated} older batch(es)`);
+          }
+        }
+      }
+    }
 
     this.bus.emit('entity:mutated', {
       action: 'UPDATE_BATCH', table: 'batches',

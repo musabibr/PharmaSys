@@ -568,6 +568,83 @@ export interface AgingPayment {
   purchase_date: string;
 }
 
+// ─── Products by Supplier (smart inventory view) ────────────────────────────
+
+export type SupplierProductStockStatus = 'all' | 'in_stock' | 'low_stock' | 'out_of_stock' | 'expired';
+
+export type SupplierProductPreset =
+  | 'all'
+  | 'out_of_stock'
+  | 'low_stock'
+  | 'never_reordered'
+  | 'sole_source'
+  | 'price_increased'
+  | 'price_decreased'
+  | 'slow_movers'
+  | 'best_margin'
+  | 'approaching_expiry';
+
+export type SupplierProductSort =
+  | 'last_purchased_desc'
+  | 'name_asc'
+  | 'total_qty_desc'
+  | 'total_spent_desc'
+  | 'avg_cost_desc'
+  | 'last_cost_desc';
+
+export interface SupplierProductFilters {
+  start_date?: string;
+  end_date?: string;
+  search?: string;
+  stock_status?: SupplierProductStockStatus;
+  preset?: SupplierProductPreset;
+  min_cost?: number;
+  max_cost?: number;
+  include_inactive?: boolean;
+  sort_by?: SupplierProductSort;
+  page?: number;
+  limit?: number;
+}
+
+export interface SupplierProductRecord {
+  product_id: number;
+  product_name: string;
+  generic_name: string | null;
+  barcode: string | null;
+  parent_unit: string;
+  child_unit: string | null;
+  conversion_factor: number;
+  min_stock_level: number;
+  is_active: 0 | 1;
+  first_purchase_date: string;
+  last_purchase_date: string;
+  total_qty_bought: number;
+  total_spent: number;
+  purchase_count: number;
+  last_cost: number;
+  previous_cost: number | null;
+  purchase_count_total: number;
+  supplier_count: number;
+  current_stock: number;
+  last_sale_date: string | null;
+  batch_min_expiry: string | null;
+  current_sell_price: number;
+}
+
+export interface ProductSupplierRecord {
+  supplier_id: number;
+  supplier_name: string;
+  supplier_phone: string | null;
+  first_purchase_date: string;
+  last_purchase_date: string;
+  total_qty_bought: number;
+  total_spent: number;
+  purchase_count: number;
+  last_cost: number;
+  previous_cost: number | null;
+  avg_cost: number;
+}
+
 export interface ProductMatchResult {
   importedName: string;
   status: 'matched' | 'candidates' | 'new';
@@ -789,6 +866,8 @@ export interface PharmaSysApi {
     deleteItem(itemId: number): Promise<{ ok: boolean }>;
     merge(targetId: number, sourceIds: number[]): Promise<Purchase>;
     getAllPendingItems(filters?: { search?: string; supplier_id?: number; page?: number; limit?: number }): Promise<PaginatedResult<EnrichedPendingItem>>;
+    getProductsBySupplier(supplierId: number, filters?: SupplierProductFilters): Promise<PaginatedResult<SupplierProductRecord>>;
+    getSuppliersByProduct(productId: number, page?: number, limit?: number): Promise<PaginatedResult<ProductSupplierRecord>>;
   };
 
   pdf: {

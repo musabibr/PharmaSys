@@ -5,6 +5,11 @@ node_modules/
 dist/
 dist-ts/
 dist-renderer/
+dist-ts/
+dist-licensed/
+dist-unlicensed/
+dist-licensed-renderer/ 
+dist-release/
 
 # Data & backups (user data, never commit)
 data/
@@ -35,3 +40,15 @@ coverage/
 
 # Temp
 *.tmp
+
+# Compiled binaries & installers (never commit build artifacts)
+*.exe
+*.msi
+*.dmg
+*.deb
+*.rpm
+*.AppImage
+*.snap
+*.pkg
+release/
+out/

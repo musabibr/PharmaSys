@@ -21,6 +21,13 @@ run('npx vite build');
 console.log('[build:licensed] Compiling TypeScript...');
 run('npm run compile');
 
+console.log('[build:licensed] Rebuilding native modules for Electron...');
+try {
+  run('npx electron-rebuild -f -w better-sqlite3');
+} catch (e) {
+  console.warn('[build:licensed] electron-rebuild failed (module may already be built for Electron). Continuing...');
+}
+
 console.log('[build:licensed] Packaging with electron-builder → dist-licensed/...');
 run('npx electron-builder --win --config.directories.output=dist-licensed');
 

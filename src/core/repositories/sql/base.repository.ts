@@ -1,138 +1,105 @@
 /**
- * BaseRepository — wraps sql.js Database with typed query helpers.
+ * BaseRepository — wraps better-sqlite3 Database with typed query helpers.
  * All domain repositories are composed with a shared BaseRepository instance
  * so they all operate on the same connection and participate in the same
  * BEGIN/COMMIT transaction block.
  *
- * All methods are async (Promise-returning) to support swapping to an async
- * backend like PostgreSQL. Since sql.js is synchronous under the hood,
- * the Promises resolve immediately.
+ * better-sqlite3 writes directly to disk on every COMMIT (WAL mode).
+ * There is NO in-memory buffer, NO periodic flush, and NO data-loss window.
+ * If a transaction commits, the data is guaranteed on disk.
+ *
+ * All methods are async (Promise-returning) to maintain API compatibility
+ * with the rest of the codebase and to support future async backends.
  */
 
+import Database from 'better-sqlite3';
 import type { IBaseRepository, RunResult } from '../../types/repositories';
 import { InternalError } from '../../types/errors';
 
-// Minimal sql.js interfaces (no @types/sql.js available)
-export interface SqlJsStatement {
-  bind(params?: unknown[]): void;
-  step(): boolean;
-  getAsObject(): Record<string, unknown>;
-  free(): void;
-  reset(): void;
-}
-
-export interface SqlJsDatabase {
-  prepare(sql: string): SqlJsStatement;
-  run(sql: string, params?: unknown[]): void;
-  exec(sql: string): Array<{ columns: string[]; values: unknown[][] }>;
-  export(): Uint8Array;
-  close(): void;
-  getRowsModified(): number;
-}
+// Re-export for consumers that need the type
+export type BetterDatabase = Database.Database;
 
 export class BaseRepository implements IBaseRepository {
-  private _txDepth = 0;
+  public db: BetterDatabase;
+  private readonly dbPath: string;
 
-  constructor(
-    public db: SqlJsDatabase,
-    private readonly saveFn: () => void,
-    private readonly scheduleSaveFn: () => void
-  ) {}
+  /**
+   * Serial transaction queue. Each inTransaction() chains onto this so transactions
+   * never interleave — even though better-sqlite3 is synchronous, our interface is
+   * async so callers may await between calls.
+   */
+  private _txQueue: Promise<unknown> = Promise.resolve();
 
-  /** Read last_insert_rowid and changes() after a write operation. */
-  private _readLastResult(): RunResult {
-    const lastId = this.db.exec('SELECT last_insert_rowid()')[0]?.values[0]?.[0] as number || 0;
-    const changes = this.db.exec('SELECT changes()')[0]?.values[0]?.[0] as number || 0;
-    return { lastInsertRowid: lastId, changes };
+  constructor(dbPath: string) {
+    this.dbPath = dbPath;
+    this.db = new Database(dbPath);
+    this.db.pragma('journal_mode = WAL');
+    this.db.pragma('foreign_keys = ON');
   }
 
   async getOne<T>(sql: string, params: unknown[] = []): Promise<T | undefined> {
-    const stmt = this.db.prepare(sql);
-    stmt.bind(params);
-    let row: T | undefined;
-    if (stmt.step()) {
-      row = stmt.getAsObject() as T;
-    }
-    stmt.free();
-    return row;
+    return this.db.prepare(sql).get(...params) as T | undefined;
   }
 
   async getAll<T>(sql: string, params: unknown[] = []): Promise<T[]> {
-    const stmt = this.db.prepare(sql);
-    stmt.bind(params);
-    const results: T[] = [];
-    while (stmt.step()) {
-      results.push(stmt.getAsObject() as T);
-    }
-    stmt.free();
-    return results;
+    return this.db.prepare(sql).all(...params) as T[];
   }
 
   async run(sql: string, params: unknown[] = []): Promise<RunResult> {
-    this.db.run(sql, params);
-    const result = this._readLastResult();
-    this.scheduleSaveFn();
-    return result;
+    const result = this.db.prepare(sql).run(...params);
+    return {
+      lastInsertRowid: Number(result.lastInsertRowid),
+      changes: result.changes,
+    };
   }
 
   async runImmediate(sql: string, params: unknown[] = []): Promise<RunResult> {
-    this.db.run(sql, params);
-    const result = this._readLastResult();
-    // Skip immediate save when inside a transaction — inTransaction() saves on COMMIT
-    if (this._txDepth === 0) {
-      this.saveFn();
-    } else {
-      this.scheduleSaveFn();
-    }
-    return result;
+    // With better-sqlite3, every write is immediate (disk-backed).
+    // No difference from run() — kept for API compatibility.
+    return this.run(sql, params);
   }
 
   async inTransaction<T>(fn: () => Promise<T>): Promise<T> {
-    this._txDepth++;
-    if (this._txDepth === 1) {
-      this.db.run('BEGIN TRANSACTION');
-    }
+    // Wait for any in-flight transaction to fully commit/rollback
+    const prev = this._txQueue.catch(() => { /* prior tx errors are not ours */ });
+    let releaseQueue!: () => void;
+    const done = new Promise<void>((resolve) => { releaseQueue = resolve; });
+    this._txQueue = done;
+    await prev;
+
+    this.db.exec('BEGIN TRANSACTION');
     try {
       const result = await fn();
-      this._txDepth--;
-      if (this._txDepth === 0) {
-        this.db.run('COMMIT');
-        this.saveFn();
-      }
+      this.db.exec('COMMIT');
       return result;
     } catch (error) {
-      this._txDepth--;
-      if (this._txDepth === 0) {
-        try {
-          this.db.run('ROLLBACK');
-        } catch (rollbackError) {
-          console.error('[BaseRepository] ROLLBACK failed:', (rollbackError as Error).message);
-          console.error('[BaseRepository] Original error:', (error as Error).message);
-          throw new InternalError(
-            `Transaction failed with rollback error. ` +
-            `Original: ${(error as Error).message}. ` +
-            `Rollback: ${(rollbackError as Error).message}.`
-          );
-        }
+      try {
+        this.db.exec('ROLLBACK');
+      } catch (rollbackError) {
+        console.error('[BaseRepository] ROLLBACK failed:', (rollbackError as Error).message);
+        console.error('[BaseRepository] Original error:', (error as Error).message);
+        throw new InternalError(
+          `Transaction failed with rollback error. ` +
+          `Original: ${(error as Error).message}. ` +
+          `Rollback: ${(rollbackError as Error).message}.`
+        );
       }
       throw error;
+    } finally {
+      releaseQueue();
     }
   }
 
   /** Run an INSERT and return the new row's ID. */
   async runReturningId(sql: string, params: unknown[] = []): Promise<number> {
-    this.db.run(sql, params);
-    const { lastInsertRowid } = this._readLastResult();
-    this.scheduleSaveFn();
-    return lastInsertRowid as number;
+    const result = this.db.prepare(sql).run(...params);
+    return Number(result.lastInsertRowid);
   }
 
   /** Run an UPDATE/DELETE and return the number of affected rows. */
   async runAndGetChanges(sql: string, params: unknown[] = []): Promise<number> {
-    this.db.run(sql, params);
-    const { changes } = this._readLastResult();
-    this.scheduleSaveFn();
-    return changes;
+    const result = this.db.prepare(sql).run(...params);
+    return result.changes;
   }
 
   /** Execute raw SQL (no params, no save). For schema / migration use. */
@@ -142,25 +109,37 @@ export class BaseRepository implements IBaseRepository {
 
   /** Execute a raw run without tracking save. For schema use. */
   async rawRun(sql: string, params: unknown[] = []): Promise<void> {
-    this.db.run(sql, params);
+    if (params.length === 0) {
+      this.db.exec(sql);
+    } else {
+      this.db.prepare(sql).run(...params);
+    }
   }
 
   /** Run an INSERT without scheduling a save; return new row ID. For bulk seeding use. */
   async rawRunReturningId(sql: string, params: unknown[] = []): Promise<number> {
-    this.db.run(sql, params);
-    return this._readLastResult().lastInsertRowid as number;
+    const result = this.db.prepare(sql).run(...params);
+    return Number(result.lastInsertRowid);
   }
 
-  save(): void {
-    this.saveFn();
+  /**
+   * No-op with better-sqlite3 — data is already on disk after every COMMIT.
+   * Kept for API compatibility (callers like backup.create() call this).
+   */
+  save(): Promise<void> {
+    return Promise.resolve();
   }
 
-  /** Replace the underlying database (used by backup restore). */
-  replaceDb(newDb: SqlJsDatabase): void {
-    if (this._txDepth > 0) {
-      throw new InternalError('Cannot replace database while a transaction is active');
-    }
+  /** Close and reopen the database (used after backup restore replaces the file). */
+  replaceDb(): void {
     try { this.db.close(); } catch { /* already closed */ }
-    this.db = newDb;
+    this.db = new Database(this.dbPath);
+    this.db.pragma('journal_mode = WAL');
+    this.db.pragma('foreign_keys = ON');
+  }
+
+  /** Close the database connection. */
+  close(): void {
+    try { this.db.close(); } catch { /* already closed */ }
   }
 }

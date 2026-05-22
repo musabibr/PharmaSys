@@ -7,6 +7,15 @@ import type {
 export class BatchRepository implements IBatchRepository {
   constructor(private readonly base: BaseRepository) {}
 
+  /** Return the ID of the most recently created batch for a product (highest id). */
+  async getLatestBatchId(productId: number): Promise<number | null> {
+    const row = await this.base.getOne<{ id: number }>(
+      `SELECT id FROM batches WHERE product_id = ? ORDER BY id DESC LIMIT 1`,
+      [productId]
+    );
+    return row?.id ?? null;
+  }
+
   async getByProduct(productId: number): Promise<Batch[]> {
     return await this.base.getAll<Batch>(
       `SELECT b.*, p.name as product_name, p.parent_unit, p.child_unit, p.conversion_factor
@@ -269,6 +278,33 @@ export class BatchRepository implements IBatchRepository {
       [sellingPriceParent, sellingPriceChildBase, sellingPriceChildOverride ?? 0, sellingPriceChildOverride ?? 0, productId]
     );
     return result;
+  }
+
+  /**
+   * Propagate selling prices from a source batch to all OTHER active batches
+   * of the same product. Only selling prices are updated — cost prices are
+   * batch-specific and left untouched.
+   */
+  async propagateSellingPrices(
+    productId: number,
+    excludeBatchId: number,
+    sellingPriceParent: number,
+    sellingPriceChild: number,
+    sellingPriceParentOverride: number,
+    sellingPriceChildOverride: number
+  ): Promise<number> {
+    return await this.base.runAndGetChanges(
+      `UPDATE batches SET
+         selling_price_parent = ?,
+         selling_price_child = ?,
+         selling_price_parent_override = ?,
+         selling_price_child_override = ?,
+         version = version + 1,
+         updated_at = datetime('now', 'localtime')
+       WHERE product_id = ? AND id != ?
+         AND status IN ('active', 'quarantine')`,
+      [sellingPriceParent, sellingPriceChild, sellingPriceParentOverride, sellingPriceChildOverride, productId, excludeBatchId]
+    );
   }
 
   /**

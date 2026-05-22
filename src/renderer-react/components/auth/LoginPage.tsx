@@ -133,6 +133,15 @@ export function LoginPage() {
   const forgotAnswerRef = useRef<HTMLInputElement>(null);
   const forgotNewPasswordRef = useRef<HTMLInputElement>(null);
 
+  // Defensive cleanup — a prior Radix portal (e.g. the header DropdownMenu that
+  // triggered logout) can leave `pointer-events: none` on <body> if it unmounts
+  // mid-close, freezing the login inputs. Reset on mount.
+  useEffect(() => {
+    document.body.style.pointerEvents = '';
+    document.body.style.removeProperty('pointer-events');
+    document.body.removeAttribute('data-scroll-locked');
+  }, []);
+
   // Focus management when switching views / steps
   // Use window.focus() + delayed input focus to reclaim Electron focus after logout navigation
   useEffect(() => {

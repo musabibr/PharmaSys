@@ -228,6 +228,13 @@ export function resolvePermissions(user: PermissionUser): Set<PermissionKey> {
   perms.add('pos.discounts');
   perms.add('pos.bank_transfer');
 
+  // Every POS user should see their own transactions and manage their shifts
+  perms.add('finance.transactions.view_own');
+  perms.add('finance.transactions.return_own');
+  perms.add('finance.shifts.view_own');
+  perms.add('finance.shifts.manage');
+  perms.add('finance.shifts.close');
+
   return perms;
 }
 

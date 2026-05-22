@@ -10,12 +10,13 @@
 ; installer regardless of elevation context.
 
 !macro customInstall
-  ; ── Clean up previous installation data ──────────────────────────────────
-  ; Delete database and config (reset to clean state)
-  ; PRESERVE: data/backups/ and data/.backup-key so old backups remain restorable
-  Delete "$APPDATA\PharmaSys\data\pharmasys.db"
-  Delete "$APPDATA\PharmaSys\data\device-config.json"
-  Delete "$APPDATA\PharmaSys\data\.fresh_install_processed"
+  ; ── Clean up caches only — NEVER delete the database or guard ───────────
+  ; Previously this deleted pharmasys.db, device-config.json, and
+  ; .fresh_install_processed on every install/update, which caused TOTAL DATA
+  ; LOSS whenever the user updated the app. Removed 2026-04-29.
+  ;
+  ; The fresh_install marker (written below) + app-side guard safely handles
+  ; admin password resets without wiping user data.
   RMDir /r "$APPDATA\PharmaSys\data\tmp"
   ; Remove Electron caches and session storage
   RMDir /r "$APPDATA\PharmaSys\Cache"

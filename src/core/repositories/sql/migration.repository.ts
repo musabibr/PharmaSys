@@ -731,7 +731,7 @@ export class MigrationRepository {
       currency: 'SDG',
       currency_symbol: 'SDG',
       business_name: 'PharmaSys Pharmacy',
-      backup_interval_hours: '6',
+      auto_backup_hours: '2',
       expiry_warning_days: '90',
       default_markup_percent: '20',
       shifts_enabled: 'true',

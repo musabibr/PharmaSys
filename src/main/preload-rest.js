@@ -36,7 +36,7 @@ async function request(method, path, body) {
     const res = await fetch(`${SERVER_URL}${path}`, opts);
     const json = await res.json();
     if (!res.ok) {
-      return { error: json.error || 'Request failed', code: json.code || 'UNKNOWN' };
+      return { success: false, error: json.error || 'Request failed', code: json.code || 'UNKNOWN' };
     }
     return json.data;
   } catch (err) {
@@ -45,11 +45,12 @@ async function request(method, path, body) {
     const detail = err.message || 'Network error';
     if (detail.includes('fetch') || detail.includes('ECONNREFUSED') || detail.includes('network')) {
       return {
+        success: false,
         error: `Cannot reach server at ${host}. Make sure the server is running and both devices are on the same network.`,
         code: 'NETWORK_ERROR',
       };
     }
-    return { error: `Server error (${host}): ${detail}`, code: 'NETWORK_ERROR' };
+    return { success: false, error: `Server error (${host}): ${detail}`, code: 'NETWORK_ERROR' };
   }
 }
 
@@ -250,11 +251,14 @@ contextBridge.exposeInMainWorld('api', {
   // ════════════════════════════════════════
 
   expenses: {
-    getCategories:  async ()           => get('/api/v1/expenses/categories'),
-    createCategory: async (name)       => post('/api/v1/expenses/categories', { name }),
-    getAll:         async (filters)    => get(`/api/v1/expenses${qs(filters)}`),
-    create:         async (expenseData) => post('/api/v1/expenses', expenseData),
-    delete:         async (id)         => del(`/api/v1/expenses/${id}`),
+    getCategories:  async ()              => get('/api/v1/expenses/categories'),
+    createCategory: async (name)          => post('/api/v1/expenses/categories', { name }),
+    updateCategory: async (id, name)      => put(`/api/v1/expenses/categories/${id}`, { name }),
+    deleteCategory: async (id)            => del(`/api/v1/expenses/categories/${id}`),
+    getAll:         async (filters)       => get(`/api/v1/expenses${qs(filters)}`),
+    create:         async (expenseData)   => post('/api/v1/expenses', expenseData),
+    update:         async (id, data)      => put(`/api/v1/expenses/${id}`, data),
+    delete:         async (id)            => del(`/api/v1/expenses/${id}`),
   },
 
   // ════════════════════════════════════════
@@ -425,6 +429,7 @@ contextBridge.exposeInMainWorld('api', {
     deleteItem:             async (itemId)                 => del(`/api/v1/purchases/items/${itemId}`),
     merge:                  async (targetId, sourceIds)    => post(`/api/v1/purchases/${targetId}/merge`, { sourceIds }),
     getAllPendingItems:     async (filters)                => get(`/api/v1/purchases/pending-items${qs(filters)}`),
+    getProductsBySupplier:  async (supplierId, filters)    => get(`/api/v1/purchases/suppliers/${supplierId}/products${qs(filters)}`),
   },
 
   // ════════════════════════════════════════

@@ -115,14 +115,19 @@ function calcDuration(openedAt: string, closedAt: string | null, t: (key: string
   return t('{{minutes}}m', { minutes });
 }
 
+function localDateStr(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 function defaultStartDate(): string {
   const d = new Date();
   d.setDate(d.getDate() - 30);
-  return d.toISOString().split('T')[0];
+  return localDateStr(d);
 }
 
 function defaultEndDate(): string {
-  return new Date().toISOString().split('T')[0];
+  return localDateStr(new Date());
 }
 
 function varianceBadge(

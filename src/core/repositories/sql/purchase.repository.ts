@@ -4,6 +4,8 @@ import type {
   Purchase, PurchaseItem, PurchasePayment, PurchaseFilters,
   PaginatedResult, PurchasePaymentStatus, AgingPayment, UpcomingPayment,
   UpdatePurchaseInput, PurchasePendingItem, EnrichedPendingItem,
+  SupplierProductFilters, SupplierProductRecord,
+  ProductSupplierRecord,
 } from '../../types/models';
 import { PAGINATION } from '../../common/constants';
 
@@ -584,5 +586,322 @@ export class PurchaseRepository implements IPurchaseRepository {
       [...params, limit, offset]
     );
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  // ─── Products by Supplier (smart inventory view) ───────────────────────────
+
+  async getProductsBySupplier(
+    supplierId: number,
+    filters: SupplierProductFilters,
+  ): Promise<PaginatedResult<SupplierProductRecord>> {
+    const startDate = filters.start_date ?? '0001-01-01';
+    const endDate   = filters.end_date   ?? '9999-12-31';
+
+    const conditions: string[] = ['1=1'];
+    const havingConditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (!filters.include_inactive) {
+      conditions.push('p.is_active = 1');
+    }
+
+    if (filters.search) {
+      const escaped = String(filters.search).replace(/[%_\\]/g, '\\$&').slice(0, 100);
+      const like = `%${escaped}%`;
+      conditions.push("(p.name LIKE ? OR p.generic_name LIKE ? OR p.barcode LIKE ?)");
+      params.push(like, like, like);
+    }
+
+    if (filters.min_cost != null && Number.isFinite(filters.min_cost)) {
+      conditions.push('COALESCE(lc.cost_per_parent, 0) >= ?');
+      params.push(Math.round(filters.min_cost));
+    }
+    if (filters.max_cost != null && Number.isFinite(filters.max_cost)) {
+      conditions.push('COALESCE(lc.cost_per_parent, 0) <= ?');
+      params.push(Math.round(filters.max_cost));
+    }
+
+    // Stock-status filter — applied as HAVING/WHERE on derived columns
+    switch (filters.stock_status) {
+      case 'in_stock':
+        conditions.push('COALESCE(cs.stock, 0) > 0');
+        break;
+      case 'out_of_stock':
+        conditions.push('COALESCE(cs.stock, 0) = 0');
+        break;
+      case 'low_stock':
+        conditions.push('COALESCE(cs.stock, 0) > 0 AND COALESCE(cs.stock, 0) < p.min_stock_level');
+        break;
+      case 'expired':
+        // Product has stock in expired-only batches: lifetime-stock > active-stock
+        conditions.push(`EXISTS (
+          SELECT 1 FROM batches bx
+          WHERE bx.product_id = p.id AND bx.quantity_base > 0 AND bx.expiry_date < date('now')
+        )`);
+        break;
+      default:
+        break;
+    }
+
+    // Smart presets — compound conditions
+    switch (filters.preset) {
+      case 'out_of_stock':
+        conditions.push('COALESCE(cs.stock, 0) = 0');
+        break;
+      case 'low_stock':
+        conditions.push('COALESCE(cs.stock, 0) > 0 AND COALESCE(cs.stock, 0) < p.min_stock_level');
+        break;
+      case 'never_reordered':
+        conditions.push('COALESCE(sl.cnt, 0) = 1');
+        break;
+      case 'sole_source':
+        conditions.push('COALESCE(scp.cnt, 0) = 1');
+        break;
+      case 'price_increased':
+        conditions.push('lc.cost_per_parent IS NOT NULL AND pc.cost_per_parent IS NOT NULL AND lc.cost_per_parent > pc.cost_per_parent');
+        break;
+      case 'price_decreased':
+        conditions.push('lc.cost_per_parent IS NOT NULL AND pc.cost_per_parent IS NOT NULL AND pc.cost_per_parent > 0 AND lc.cost_per_parent < pc.cost_per_parent');
+        break;
+      case 'slow_movers':
+        conditions.push("COALESCE(cs.stock, 0) > 0 AND (ls.last_sale_date IS NULL OR ls.last_sale_date < datetime('now', '-90 days'))");
+        break;
+      case 'best_margin':
+        // Margin > 30% — surfaces products where this supplier's last cost gives a healthy markup
+        conditions.push("COALESCE(lc.cost_per_parent, 0) > 0 AND COALESCE(fs.price, 0) > 0 AND ((COALESCE(fs.price, 0) - COALESCE(lc.cost_per_parent, 0)) * 100.0 / COALESCE(lc.cost_per_parent, 1)) >= 30");
+        break;
+      case 'approaching_expiry':
+        conditions.push("bme.expiry IS NOT NULL AND bme.expiry <= date('now', '+90 days')");
+        break;
+      default:
+        break;
+    }
+
+    // Sort
+    let orderBy: string;
+    switch (filters.sort_by) {
+      case 'name_asc':           orderBy = 'p.name ASC'; break;
+      case 'total_qty_desc':     orderBy = 'wa.total_qty_bought DESC'; break;
+      case 'total_spent_desc':   orderBy = 'wa.total_spent DESC'; break;
+      case 'avg_cost_desc':      orderBy = '(wa.total_spent * 1.0 / NULLIF(wa.total_qty_bought, 0)) DESC'; break;
+      case 'last_cost_desc':     orderBy = 'COALESCE(lc.cost_per_parent, 0) DESC'; break;
+      case 'last_purchased_desc':
+      default:                   orderBy = 'wa.last_purchase_date DESC'; break;
+    }
+
+    const page  = Math.max(1, filters.page  ?? 1);
+    const limit = Math.min(PAGINATION.MAX_LIMIT, Math.max(PAGINATION.MIN_LIMIT, filters.limit ?? PAGINATION.DEFAULT_LIMIT));
+    const offset = (page - 1) * limit;
+
+    const where = `WHERE ${conditions.join(' AND ')}` + (havingConditions.length ? ' AND ' + havingConditions.join(' AND ') : '');
+
+    // CTE block — prepared once, parameter list determines runtime values.
+    // Three placeholders for the supplier_id (used in 3 different CTEs).
+    const cteBlock = `
+      WITH supplier_window AS (
+        SELECT pi.product_id, pi.cost_per_parent, pi.quantity_received, pi.line_total, pu.purchase_date
+        FROM purchase_items pi
+        JOIN purchases pu ON pu.id = pi.purchase_id
+        WHERE pu.supplier_id = ?
+          AND pu.purchase_date >= ?
+          AND pu.purchase_date <= ?
+      ),
+      supplier_lifetime AS (
+        SELECT pi.product_id, COUNT(*) as cnt
+        FROM purchase_items pi
+        JOIN purchases pu ON pu.id = pi.purchase_id
+        WHERE pu.supplier_id = ?
+        GROUP BY pi.product_id
+      ),
+      window_aggs AS (
+        SELECT product_id,
+               MIN(purchase_date) as first_purchase_date,
+               MAX(purchase_date) as last_purchase_date,
+               SUM(quantity_received) as total_qty_bought,
+               SUM(line_total) as total_spent,
+               COUNT(*) as purchase_count
+        FROM supplier_window
+        GROUP BY product_id
+      ),
+      costs_ranked AS (
+        SELECT product_id, cost_per_parent, purchase_date,
+               ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY purchase_date DESC, ROWID DESC) as rn
+        FROM supplier_window
+      ),
+      last_cost AS (SELECT product_id, cost_per_parent FROM costs_ranked WHERE rn = 1),
+      prev_cost AS (SELECT product_id, cost_per_parent FROM costs_ranked WHERE rn = 2),
+      supplier_count_per_product AS (
+        SELECT pi.product_id, COUNT(DISTINCT pu.supplier_id) as cnt
+        FROM purchase_items pi
+        JOIN purchases pu ON pu.id = pi.purchase_id
+        WHERE pu.supplier_id IS NOT NULL
+        GROUP BY pi.product_id
+      ),
+      last_sale AS (
+        SELECT ti.product_id, MAX(t.created_at) as last_sale_date
+        FROM transaction_items ti
+        JOIN transactions t ON t.id = ti.transaction_id
+        WHERE t.is_voided = 0 AND t.transaction_type = 'sale'
+        GROUP BY ti.product_id
+      ),
+      current_stock AS (
+        SELECT product_id, SUM(quantity_base) as stock
+        FROM batches
+        WHERE status = 'active' AND quantity_base > 0 AND expiry_date >= date('now')
+        GROUP BY product_id
+      ),
+      batch_min_expiry AS (
+        SELECT pi.product_id, MIN(b.expiry_date) as expiry
+        FROM purchase_items pi
+        JOIN purchases pu ON pu.id = pi.purchase_id
+        JOIN batches b ON b.id = pi.batch_id
+        WHERE pu.supplier_id = ? AND b.status = 'active' AND b.quantity_base > 0
+        GROUP BY pi.product_id
+      ),
+      fifo_sell AS (
+        SELECT b.product_id,
+               MAX(CASE WHEN b.selling_price_parent_override > 0
+                        THEN b.selling_price_parent_override
+                        ELSE b.selling_price_parent END) as price
+        FROM batches b
+        WHERE b.status = 'active' AND b.quantity_base > 0 AND b.expiry_date >= date('now')
+        GROUP BY b.product_id
+      )
+    `;
+
+    // Three supplier_id substitutions for: supplier_window, supplier_lifetime, batch_min_expiry
+    const cteParams: unknown[] = [supplierId, startDate, endDate, supplierId, supplierId];
+
+    // --- Count query ---
+    const countSql = `${cteBlock}
+      SELECT COUNT(*) as count
+      FROM products p
+      JOIN window_aggs wa ON wa.product_id = p.id
+      LEFT JOIN supplier_lifetime sl ON sl.product_id = p.id
+      LEFT JOIN last_cost lc ON lc.product_id = p.id
+      LEFT JOIN prev_cost pc ON pc.product_id = p.id
+      LEFT JOIN supplier_count_per_product scp ON scp.product_id = p.id
+      LEFT JOIN last_sale ls ON ls.product_id = p.id
+      LEFT JOIN current_stock cs ON cs.product_id = p.id
+      LEFT JOIN batch_min_expiry bme ON bme.product_id = p.id
+      LEFT JOIN fifo_sell fs ON fs.product_id = p.id
+      ${where}`;
+
+    const countRow = await this.base.getOne<{ count: number }>(countSql, [...cteParams, ...params]);
+    const total = countRow?.count ?? 0;
+
+    // --- Data query ---
+    const dataSql = `${cteBlock}
+      SELECT
+        p.id as product_id, p.name as product_name, p.generic_name, p.barcode,
+        p.parent_unit, p.child_unit, p.conversion_factor, p.min_stock_level, p.is_active,
+        wa.first_purchase_date, wa.last_purchase_date,
+        wa.total_qty_bought, wa.total_spent, wa.purchase_count,
+        COALESCE(lc.cost_per_parent, 0) as last_cost,
+        pc.cost_per_parent as previous_cost,
+        COALESCE(sl.cnt, 0) as purchase_count_total,
+        COALESCE(scp.cnt, 0) as supplier_count,
+        COALESCE(cs.stock, 0) as current_stock,
+        ls.last_sale_date,
+        bme.expiry as batch_min_expiry,
+        COALESCE(fs.price, 0) as current_sell_price
+      FROM products p
+      JOIN window_aggs wa ON wa.product_id = p.id
+      LEFT JOIN supplier_lifetime sl ON sl.product_id = p.id
+      LEFT JOIN last_cost lc ON lc.product_id = p.id
+      LEFT JOIN prev_cost pc ON pc.product_id = p.id
+      LEFT JOIN supplier_count_per_product scp ON scp.product_id = p.id
+      LEFT JOIN last_sale ls ON ls.product_id = p.id
+      LEFT JOIN current_stock cs ON cs.product_id = p.id
+      LEFT JOIN batch_min_expiry bme ON bme.product_id = p.id
+      LEFT JOIN fifo_sell fs ON fs.product_id = p.id
+      ${where}
+      ORDER BY ${orderBy}
+      LIMIT ? OFFSET ?`;
+
+    const data = await this.base.getAll<SupplierProductRecord>(
+      dataSql,
+      [...cteParams, ...params, limit, offset],
+    );
+
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) || 1 };
+  }
+
+  // ─── Suppliers by Product (reverse lookup — product-first view) ─────────────
+
+  async getSuppliersByProduct(
+    productId: number,
+    page = 1,
+    limit = 20,
+  ): Promise<PaginatedResult<ProductSupplierRecord>> {
+    page  = Math.max(1, page);
+    limit = Math.min(PAGINATION.MAX_LIMIT, Math.max(PAGINATION.MIN_LIMIT, limit));
+    const offset = (page - 1) * limit;
+
+    const cteBlock = `
+      WITH product_purchases AS (
+        SELECT pi.purchase_id, pi.cost_per_parent, pi.quantity_received, pi.line_total,
+               pu.purchase_date, pu.supplier_id
+        FROM purchase_items pi
+        JOIN purchases pu ON pu.id = pi.purchase_id
+        WHERE pi.product_id = ?
+          AND pu.supplier_id IS NOT NULL
+      ),
+      supplier_aggs AS (
+        SELECT supplier_id,
+               MIN(purchase_date) as first_purchase_date,
+               MAX(purchase_date) as last_purchase_date,
+               SUM(quantity_received) as total_qty_bought,
+               SUM(line_total) as total_spent,
+               COUNT(*) as purchase_count,
+               ROUND(SUM(line_total) * 1.0 / NULLIF(SUM(quantity_received), 0)) as avg_cost
+        FROM product_purchases
+        GROUP BY supplier_id
+      ),
+      costs_ranked AS (
+        SELECT supplier_id, cost_per_parent, purchase_date,
+               ROW_NUMBER() OVER (PARTITION BY supplier_id ORDER BY purchase_date DESC, purchase_id DESC) as rn
+        FROM product_purchases
+      ),
+      last_cost AS (SELECT supplier_id, cost_per_parent FROM costs_ranked WHERE rn = 1),
+      prev_cost AS (SELECT supplier_id, cost_per_parent FROM costs_ranked WHERE rn = 2)
+    `;
+
+    const cteParams = [productId];
+
+    const countSql = `${cteBlock}
+      SELECT COUNT(*) as count
+      FROM supplier_aggs sa
+      JOIN suppliers s ON s.id = sa.supplier_id`;
+
+    const countRow = await this.base.getOne<{ count: number }>(countSql, [...cteParams]);
+    const total = countRow?.count ?? 0;
+
+    const dataSql = `${cteBlock}
+      SELECT
+        s.id as supplier_id,
+        s.name as supplier_name,
+        s.phone as supplier_phone,
+        sa.first_purchase_date,
+        sa.last_purchase_date,
+        sa.total_qty_bought,
+        sa.total_spent,
+        sa.purchase_count,
+        COALESCE(lc.cost_per_parent, 0) as last_cost,
+        pc.cost_per_parent as previous_cost,
+        COALESCE(sa.avg_cost, 0) as avg_cost
+      FROM supplier_aggs sa
+      JOIN suppliers s ON s.id = sa.supplier_id
+      LEFT JOIN last_cost lc ON lc.supplier_id = sa.supplier_id
+      LEFT JOIN prev_cost pc ON pc.supplier_id = sa.supplier_id
+      ORDER BY sa.last_purchase_date DESC
+      LIMIT ? OFFSET ?`;
+
+    const data = await this.base.getAll<ProductSupplierRecord>(
+      dataSql,
+      [...cteParams, limit, offset],
+    );
+
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) || 1 };
   }
 }

@@ -72,6 +72,11 @@ export function PurchaseDetailDialog({ purchase: initialPurchase, open, onOpenCh
   // Per-payment state keyed by payment.id
   const [paidAmounts, setPaidAmounts] = useState<Record<number, number | null>>({});
   const [adjustmentStrategies, setAdjustmentStrategies] = useState<Record<number, PaymentAdjustmentStrategy>>({});
+  // Pay-all state
+  const [payAllExpanded, setPayAllExpanded] = useState(false);
+  const [payAllMethod, setPayAllMethod]     = useState<ExpensePaymentMethod>('cash');
+  const [payAllRef, setPayAllRef]           = useState('');
+  const [payAllLoading, setPayAllLoading]   = useState(false);
   const [purchase, setPurchase] = useState<Purchase | null>(initialPurchase);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -97,6 +102,9 @@ export function PurchaseDetailDialog({ purchase: initialPurchase, open, onOpenCh
     setPurchase(initialPurchase);
     setExpandedPayId(null);
     setPayRef('');
+    setPayAllExpanded(false);
+    setPayAllRef('');
+    setPayAllMethod('cash');
     setEditOpen(false);
     setDeleteConfirmOpen(false);
     setItemsPage(0);
@@ -228,6 +236,37 @@ export function PurchaseDetailDialog({ purchase: initialPurchase, open, onOpenCh
       toast.error(err instanceof Error ? err.message : t('Failed to mark payment'));
     } finally {
       setPayingId(null);
+    }
+  };
+
+  const handlePayAll = async () => {
+    if (!purchase?.payments) return;
+    if (payAllMethod === 'bank_transfer' && !payAllRef.trim()) {
+      toast.error(t('Reference number is required for bank transfers'));
+      return;
+    }
+    const unpaidPayments = purchase.payments.filter(p => !p.is_paid);
+    const firstUnpaid = unpaidPayments[0];
+    if (!firstUnpaid) return;
+    const unpaidTotal = unpaidPayments.reduce((sum, p) => sum + p.amount, 0);
+    setPayAllLoading(true);
+    try {
+      await api.purchases.markPaymentPaid(
+        firstUnpaid.id,
+        payAllMethod,
+        payAllMethod === 'bank_transfer' ? payAllRef.trim() : undefined,
+        unpaidTotal,
+        'next',
+      );
+      toast.success(t('Invoice fully paid'));
+      setPayAllExpanded(false);
+      setPayAllRef('');
+      await refreshPurchase(purchase.id);
+      onPaymentMade();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : t('Failed to mark payment'));
+    } finally {
+      setPayAllLoading(false);
     }
   };
 
@@ -471,6 +510,76 @@ export function PurchaseDetailDialog({ purchase: initialPurchase, open, onOpenCh
         {purchase.payments && purchase.payments.length > 0 && (
           <div>
             <h3 className="mb-2 text-sm font-semibold">{t('Payment Schedule')}</h3>
+
+            {/* Pay Remaining Balance — shown when 2+ installments are still unpaid */}
+            {canPay && remaining > 0 && (purchase.payments?.filter(p => !p.is_paid).length ?? 0) > 1 && (
+              <div className="mb-3 rounded-md border border-primary/30 bg-primary/5 p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-sm font-semibold">{t('Pay Remaining Balance')}</span>
+                    <span className="ms-2 text-sm font-bold tabular-nums text-primary">
+                      {formatCurrency(remaining)}
+                    </span>
+                  </div>
+                  <Button
+                    variant={payAllExpanded ? 'secondary' : 'default'}
+                    size="sm"
+                    className="gap-1 shrink-0"
+                    onClick={() => { setPayAllExpanded(e => !e); setPayAllRef(''); setPayAllMethod('cash'); }}
+                  >
+                    <CreditCard className="h-3.5 w-3.5" />
+                    {payAllExpanded ? t('Cancel') : t('Pay Now')}
+                  </Button>
+                </div>
+                {payAllExpanded && (
+                  <div className="pt-2 border-t space-y-2">
+                    <div className="flex items-end gap-2 flex-wrap">
+                      <div className="space-y-1">
+                        <label className="text-xs text-muted-foreground">{t('Method')}</label>
+                        <Select
+                          value={payAllMethod}
+                          onValueChange={v => { setPayAllMethod(v as ExpensePaymentMethod); if (v !== 'bank_transfer') setPayAllRef(''); }}
+                        >
+                          <SelectTrigger className="h-8 w-36"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="cash">{t('Cash')}</SelectItem>
+                            <SelectItem value="bank_transfer">{t('Bank Transfer')}</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {payAllMethod === 'bank_transfer' && (
+                        <div className="space-y-1 flex-1 min-w-[140px]">
+                          <label className="text-xs text-muted-foreground">{t('Reference Number')}</label>
+                          <Input
+                            className="h-8"
+                            value={payAllRef}
+                            onChange={e => setPayAllRef(e.target.value)}
+                            placeholder={t('Enter reference number')}
+                          />
+                        </div>
+                      )}
+                      <Button
+                        size="sm"
+                        className="h-8 gap-1"
+                        disabled={payAllLoading}
+                        onClick={handlePayAll}
+                      >
+                        {payAllLoading
+                          ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          : <CheckCircle className="h-3.5 w-3.5" />}
+                        {t('Confirm')}
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {t('Settles all {{count}} remaining installments at once.', {
+                        count: purchase.payments?.filter(p => !p.is_paid).length ?? 0,
+                      })}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="space-y-2">
               {purchase.payments.map((payment, idx) => {
                 const overdue = !payment.is_paid && isOverdue(payment.due_date);

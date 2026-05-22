@@ -14,12 +14,25 @@ export function expenseRoutes(services: ServiceContainer): Router {
     res.status(201).json({ data: await services.expense.createCategory(req.body.name, req.user!.id) });
   }));
 
+  router.put('/categories/:id', requireMicroPerm('finance.expense_categories'), handle(async (req, res) => {
+    res.json({ data: await services.expense.updateCategory(Number(req.params.id), req.body.name, req.user!.id) });
+  }));
+
+  router.delete('/categories/:id', requireMicroPerm('finance.expense_categories'), handle(async (req, res) => {
+    await services.expense.deleteCategory(Number(req.params.id), req.user!.id);
+    res.json({ data: { ok: true } });
+  }));
+
   router.get('/', requireMicroPerm('finance.expenses.view'), handle(async (req, res) => {
     res.json({ data: await services.expense.getAll(req.query as any) });
   }));
 
   router.post('/', requireMicroPerm('finance.expenses.manage'), handle(async (req, res) => {
     res.status(201).json({ data: await services.expense.create(req.body, req.user!.id) });
+  }));
+
+  router.put('/:id', requireMicroPerm('finance.expenses.manage'), handle(async (req, res) => {
+    res.json({ data: await services.expense.update(Number(req.params.id), req.body, req.user!.id) });
   }));
 
   router.delete('/:id', requireMicroPerm('finance.expenses.delete'), handle(async (req, res) => {

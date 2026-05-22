@@ -111,7 +111,7 @@ function defaultFilters(): Filters {
     endDate: todayStr(),
     categoryId: ALL_CATEGORIES,
     search: '',
-    recurringFilter: 'manual',
+    recurringFilter: 'all',
   };
 }
 

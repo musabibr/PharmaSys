@@ -223,11 +223,9 @@ function printCashFlowReport(
       <p>${t('Returns')}: -${formatCurrency(report.total_returns)}</p>
       <p><strong>${t('Net Sales')}: ${formatCurrency(report.net_sales)}</strong></p>
     </div>
-    <h3>${t('Expense Breakdown')}</h3>
+    <h3>${t('Operational Expenses')}</h3>
     <div class="summary">
-      <p>${t('Cost of Goods Sold')}: ${formatCurrency(report.cost_of_goods_sold)}</p>
-      <p>${t('Operational Expenses')}: ${formatCurrency(report.operational_expenses)}</p>
-      <p><strong>${t('Total Expenses')}: ${formatCurrency(report.cost_of_goods_sold + report.operational_expenses)}</strong></p>
+      <p><strong>${t('Operational Expenses')}: ${formatCurrency(report.operational_expenses)}</strong></p>
     </div>
     <h3>${t('Payment Method Summary')}</h3>
     <table>
@@ -505,7 +503,6 @@ export function CashFlowPage() {
   }
 
   // ── Derived values ───────────────────────────────────────────────────────
-  const totalExpenses = report.cost_of_goods_sold + report.operational_expenses;
   const waterfallData = buildWaterfallData(report);
   const paymentRows = getPaymentRows(report);
   const grossMarginColor = report.gross_margin >= 0 ? 'success' : 'destructive';
@@ -633,19 +630,16 @@ export function CashFlowPage() {
           </CardContent>
         </Card>
 
-        {/* Expense Breakdown */}
+        {/* Operational Expenses */}
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">{t('Expense Breakdown')}</CardTitle>
+            <CardTitle className="text-base">{t('Operational Expenses')}</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-1">
-              <BreakdownRow label={t('Cost of Goods Sold')} value={report.cost_of_goods_sold} />
-              <BreakdownRow label={t('Operational Expenses')} value={report.operational_expenses} />
-              <Separator className="my-2" />
               <BreakdownRow
-                label={t('Total Expenses')}
-                value={totalExpenses}
+                label={t('Operational Expenses')}
+                value={report.operational_expenses}
                 bold
                 highlight
               />

@@ -125,10 +125,13 @@ function formatDateTime(dateStr: string): string {
 
 function getDefaultDateRange(): { from: string; to: string } {
   const now = new Date();
-  const to = now.toISOString().split('T')[0];
-  const from = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .split('T')[0];
+  // Use local date components — stored timestamps use datetime('now', 'localtime'),
+  // so the filter must match local dates, not UTC (toISOString gives UTC).
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const toLocalDate = (d: Date) =>
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const to = toLocalDate(now);
+  const from = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`;
   return { from, to };
 }
 

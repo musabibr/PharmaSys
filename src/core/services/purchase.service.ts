@@ -13,6 +13,8 @@ import type {
   CreatePurchaseInput, CreatePurchaseItemInput,
   UpdatePurchaseInput, ExpensePaymentMethod,
   PaymentAdjustmentStrategy, PurchasePendingItem, EnrichedPendingItem,
+  SupplierProductFilters, SupplierProductRecord,
+  ProductSupplierRecord,
 } from '../types/models';
 import { Validate } from '../common/validation';
 import { Money } from '../common/money';
@@ -131,6 +133,42 @@ export class PurchaseService {
 
   async getUpcomingSummary(): Promise<{ count: number; total: number }> {
     return await this.purchaseRepo.getUpcomingSummary();
+  }
+
+  /**
+   * List products purchased from a specific supplier with smart filters
+   * (stock status, recency window, smart presets like "never re-ordered" /
+   * "price increased" / "sole source"). Aggregates such as Total Qty / Total
+   * Spent honor the recency window; lifetime fields ignore it.
+   */
+  async getProductsBySupplier(
+    supplierId: number,
+    filters: SupplierProductFilters,
+  ): Promise<PaginatedResult<SupplierProductRecord>> {
+    Validate.id(supplierId, 'Supplier');
+    const supplier = await this.supplierRepo.getById(supplierId);
+    if (!supplier) throw new NotFoundError('Supplier', supplierId);
+
+    if (filters.start_date) Validate.dateString(filters.start_date, 'Start date');
+    if (filters.end_date)   Validate.dateString(filters.end_date,   'End date');
+
+    return await this.purchaseRepo.getProductsBySupplier(supplierId, filters);
+  }
+
+  /**
+   * Reverse lookup: given a product, list all suppliers that have supplied it
+   * with aggregated purchase data (totals, cost trends, averages).
+   */
+  async getSuppliersByProduct(
+    productId: number,
+    page?: number,
+    limit?: number,
+  ): Promise<PaginatedResult<ProductSupplierRecord>> {
+    Validate.id(productId, 'Product');
+    const product = await this.productRepo.getById(productId);
+    if (!product) throw new NotFoundError('Product', productId);
+
+    return await this.purchaseRepo.getSuppliersByProduct(productId, page, limit);
   }
 
   // ─── Update Purchase ─────────────────────────────────────────────────────────
@@ -864,8 +902,23 @@ export class PurchaseService {
         const product = await this.productRepo.getById(item.product_id);
         if (!product) throw new NotFoundError('Product', item.product_id);
 
+        // Update barcode on existing product if it has none and the invoice provides one
+        if (item.barcode && !product.barcode) {
+          await this.base.run(
+            'UPDATE products SET barcode = ? WHERE id = ?',
+            [item.barcode, item.product_id]
+          );
+        }
+
         const cf = product.conversion_factor || 1;
         const batchId = await this._createBatch(item.product_id, cf, item);
+
+        // Propagate the new batch's selling price to all OTHER active batches of
+        // this product. Without this, POS sells from the oldest-expiry batch first
+        // (FIFO) — so a freshly raised price wouldn't take effect until the older
+        // stock was fully sold. Cost is intentionally NOT touched: per-batch cost
+        // is required for accurate margin and FIFO COGS.
+        await this._propagateSellingPrice(item.product_id, cf, batchId, item, userId);
 
         await this.purchaseRepo.insertItem({
           purchase_id: purchaseId,
@@ -883,7 +936,13 @@ export class PurchaseService {
         const np = item.new_product;
         Validate.requiredString(np.name, 'Product name');
 
-        // Check if a product with same barcode or name already exists
+        // Match an existing active product first by barcode (hard identifier),
+        // then fall back to name-based match. Name fallback is REQUIRED because
+        // there is a partial UNIQUE INDEX on `LOWER(TRIM(name)) WHERE is_active = 1`
+        // (see migration.repository.ts:_migrateUniqueProductName). Without it, a
+        // new_product whose name collides with an existing active product would
+        // raise UNIQUE constraint and fail the whole purchase. Disambiguation by
+        // name is a UI-level concern handled in the import-flow Match step.
         let existingProduct = np.barcode
           ? await this.productRepo.findByBarcode(np.barcode)
           : undefined;
@@ -896,6 +955,13 @@ export class PurchaseService {
         if (existingProduct) {
           // Use existing product — just add a new batch
           productId = existingProduct.id;
+          // Update barcode if the existing product has none
+          if (np.barcode && !existingProduct.barcode) {
+            await this.base.run(
+              'UPDATE products SET barcode = ? WHERE id = ?',
+              [np.barcode, productId]
+            );
+          }
         } else {
           // Resolve or create category
           let categoryId: number | null = null;
@@ -932,6 +998,13 @@ export class PurchaseService {
         const cf = existingProduct ? (existingProduct.conversion_factor || 1) : (np.conversion_factor ?? 1);
         const batchId = await this._createBatch(productId, cf, item);
 
+        // For barcode-matched existing products, propagate the new selling price
+        // to other active batches (same rationale as the existing-product path).
+        // For brand-new products there are no prior batches to update — skip.
+        if (existingProduct) {
+          await this._propagateSellingPrice(productId, cf, batchId, item, userId);
+        }
+
         await this.purchaseRepo.insertItem({
           purchase_id: purchaseId,
           product_id: productId,
@@ -956,6 +1029,55 @@ export class PurchaseService {
           'items'
         );
       }
+    }
+  }
+
+  /**
+   * Update selling price on the product's other active batches so the most-recent
+   * purchase price takes effect immediately at POS, not only after older stock is
+   * sold (POS deducts FIFO from the oldest-expiry active batch).
+   *
+   * Updates BOTH the base column and the override column so the price change holds
+   * regardless of which one the read query prefers. Quarantine batches (set aside
+   * for damage/recall) are left alone. Cost is NOT updated — keeping per-batch cost
+   * is essential for accurate margin and FIFO COGS reporting.
+   */
+  private async _propagateSellingPrice(
+    productId: number,
+    conversionFactor: number,
+    excludeBatchId: number,
+    item: { selling_price_parent: number; selling_price_child?: number },
+    userId: number,
+  ): Promise<void> {
+    const sellParent = Money.round(item.selling_price_parent);
+    const sellChild  = item.selling_price_child && item.selling_price_child > 0
+      ? Money.round(item.selling_price_child)
+      : Money.divideToChild(sellParent, conversionFactor);
+
+    const changes = await this.base.runAndGetChanges(
+      `UPDATE batches
+       SET selling_price_parent = ?,
+           selling_price_parent_override = ?,
+           selling_price_child = ?,
+           selling_price_child_override = ?,
+           updated_at = datetime('now', 'localtime')
+       WHERE product_id = ?
+         AND status = 'active'
+         AND id != ?`,
+      [sellParent, sellParent, sellChild, sellChild, productId, excludeBatchId]
+    );
+
+    if (changes > 0) {
+      this.bus.emit('entity:mutated', {
+        action: 'PROPAGATE_SELLING_PRICE', table: 'batches',
+        recordId: productId, userId,
+        newValues: {
+          selling_price_parent: sellParent,
+          selling_price_child: sellChild,
+          source_batch_id: excludeBatchId,
+          batches_updated: changes,
+        },
+      });
     }
   }
 

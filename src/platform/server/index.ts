@@ -22,48 +22,18 @@ const HOST    = process.env.HOST ?? '0.0.0.0';
 const DB_DIR  = process.env.DB_PATH ?? path.join(process.cwd(), 'data');
 const DB_TYPE = process.env.DB_TYPE ?? 'sqlite';
 
-// ─── SQLite (sql.js) bootstrap ───────────────────────────────────────────────
+// ─── SQLite (better-sqlite3) bootstrap ───────────────────────────────────────
 
 async function bootSqlite(): Promise<{ repos: any; shutdown: () => void }> {
-  const initSqlJs = (await import('sql.js')).default;
   const { createRepositories } = await import('../../core/repositories/sql/index');
   const { MigrationRepository } = await import('../../core/repositories/sql/migration.repository');
 
   const DB_FILE = path.join(DB_DIR, 'pharmasys.db');
   fs.mkdirSync(DB_DIR, { recursive: true });
 
-  const SQL = await initSqlJs();
-
-  let db: InstanceType<typeof SQL.Database>;
-  if (fs.existsSync(DB_FILE)) {
-    db = new SQL.Database(fs.readFileSync(DB_FILE));
-  } else {
-    db = new SQL.Database();
-    console.log('[Server] New database created at', DB_FILE);
-  }
-
-  db.run('PRAGMA journal_mode=WAL;');
-  db.run('PRAGMA foreign_keys=ON;');
-
-  // Mutable reference — saveFn always exports the current DB (survives backup restore swap)
-  const dbRef = { current: db };
-
-  const saveFn = (): void => {
-    const data = dbRef.current.export();
-    const tmp  = DB_FILE + '.tmp';
-    fs.writeFileSync(tmp, data);
-    fs.renameSync(tmp, DB_FILE);
-  };
-
-  let saveTimer: ReturnType<typeof setTimeout> | null = null;
-  const scheduleSaveFn = (): void => {
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(saveFn, 500);
-  };
-
-  const repos = createRepositories(db as any, DB_DIR, saveFn, scheduleSaveFn,
-    (newDb) => { dbRef.current = newDb as any; }
-  );
+  // createRepositories opens the database file (creates if missing),
+  // sets WAL mode + foreign keys, all via better-sqlite3.
+  const repos = createRepositories(DB_FILE, DB_DIR);
 
   const migration = new MigrationRepository(repos.base, DB_DIR);
   const seedDemo = process.env.SEED_DEMO === 'true';
@@ -71,7 +41,7 @@ async function bootSqlite(): Promise<{ repos: any; shutdown: () => void }> {
 
   return {
     repos,
-    shutdown: () => saveFn(),
+    shutdown: () => repos.base.close(),
   };
 }
 
@@ -125,6 +95,14 @@ async function main(): Promise<void> {
 
   const bus = new EventBus();
   const svc = new ServiceContainer(repos, bus);
+
+  // Auto-generate any missed recurring expenses (daily + monthly)
+  try {
+    const count = await svc.recurringExpense.generateForMissedDays(1);
+    if (count > 0) console.log(`[Server] Auto-generated ${count} recurring expense(s)`);
+  } catch (err) {
+    console.warn('[Server] Failed to auto-generate recurring expenses:', (err as Error).message);
+  }
 
   const app = createApp(svc);
 

@@ -63,6 +63,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     useShiftStore.getState().reset();
     // Settings are global (not per-user) — don't reset on logout.
     // Resetting causes language/direction change → re-render cascade → focus loss.
+    // Defensive — the header DropdownMenu that called logout may unmount mid-close
+    // and leave pointer-events: none on body, freezing inputs on LoginPage.
+    document.body.style.pointerEvents = '';
+    document.body.removeAttribute('data-scroll-locked');
     set({ currentUser: null, isAuthenticated: false });
   },
 

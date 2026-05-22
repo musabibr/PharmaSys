@@ -18,6 +18,38 @@ export function purchaseRoutes(services: ServiceContainer): Router {
     res.json({ data: await services.purchase.getSupplierById(Number(req.params.id)) });
   }));
 
+  // Products purchased from this supplier — smart inventory view
+  router.get('/suppliers/:id/products', requireMicroPerm('inventory.products.view'), handle(async (req, res) => {
+    const q = req.query as Record<string, string | undefined>;
+    res.json({
+      data: await services.purchase.getProductsBySupplier(Number(req.params.id), {
+        start_date: q.start_date,
+        end_date: q.end_date,
+        search: q.search,
+        stock_status: q.stock_status as any,
+        preset: q.preset as any,
+        min_cost: q.min_cost != null ? Number(q.min_cost) : undefined,
+        max_cost: q.max_cost != null ? Number(q.max_cost) : undefined,
+        include_inactive: q.include_inactive === 'true',
+        sort_by: q.sort_by as any,
+        page: q.page != null ? Number(q.page) : undefined,
+        limit: q.limit != null ? Number(q.limit) : undefined,
+      }),
+    });
+  }));
+
+  // Reverse lookup: suppliers who have supplied a given product
+  router.get('/products/:id/suppliers', requireMicroPerm('inventory.products.view'), handle(async (req, res) => {
+    const q = req.query as Record<string, string | undefined>;
+    res.json({
+      data: await services.purchase.getSuppliersByProduct(
+        Number(req.params.id),
+        q.page != null ? Number(q.page) : undefined,
+        q.limit != null ? Number(q.limit) : undefined,
+      ),
+    });
+  }));
+
   router.post('/suppliers', requireMicroPerm('purchases.suppliers.manage'), handle(async (req, res) => {
     res.status(201).json({ data: await services.purchase.createSupplier(req.body, req.user!.id) });
   }));

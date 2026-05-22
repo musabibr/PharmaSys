@@ -215,7 +215,9 @@ export function BatchForm({
   function validate(): string | null {
     if (!expiryDate) return t('Expiry date is required');
     if (!isEditMode) {
-      const today = new Date().toISOString().split('T')[0];
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
       if (expiryDate <= today) return t('Expiry date must be in the future');
       if (quantity < 1) return t('Quantity must be at least 1');
     }

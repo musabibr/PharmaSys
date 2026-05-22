@@ -562,6 +562,12 @@ contextBridge.exposeInMainWorld('api', {
 
         getAllPendingItems: (filters) =>
             invoke('purchases:getAllPendingItems', filters),
+
+        getProductsBySupplier: (supplierId, filters) =>
+            invoke('purchases:getProductsBySupplier', supplierId, filters),
+
+        getSuppliersByProduct: (productId, page, limit) =>
+            invoke('purchases:getSuppliersByProduct', productId, page, limit),
     },
 
     // ════════════════════════════════════════

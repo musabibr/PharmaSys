@@ -68,7 +68,9 @@ function formatDateTime(dateStr: string): string {
 }
 
 function getDefaultDateRange(): { from: string; to: string } {
-  const today = new Date().toISOString().split('T')[0];
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
   return { from: today, to: today };
 }
 

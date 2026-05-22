@@ -71,6 +71,7 @@ interface ManualItem {
   sellPriceChild: number;
   expiryDate: string;
   batchNumber: string;
+  barcode: string;
   parentUnit: string;
   childUnit: string;
   convFactor: number;
@@ -108,6 +109,10 @@ interface CreatePurchaseFlowProps {
   onComplete: () => void;
   /** When true, skip the import step and go straight to manual entry */
   startManual?: boolean;
+  /** Pre-fill the supplier picker (used by the "By Supplier" tab's Re-order action) */
+  initialSupplierId?: number;
+  /** Pre-fill a manual item with this product (forces manualMode='items' and adds one row) */
+  initialProductId?: number;
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -220,7 +225,7 @@ function Stepper({ currentStep, hasItems }: { currentStep: Step; hasItems: boole
 
 // ─── Component ─────────────────────────────────────────────────────────────
 
-export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFlowProps) {
+export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId, initialProductId }: CreatePurchaseFlowProps) {
   const { t } = useTranslation();
   const getSetting = useSettingsStore((s) => s.getSetting);
   const defaultMarkup = Number(getSetting('default_markup_percent', '20')) || 20;
@@ -415,9 +420,12 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
     if (startManual) {
       setImportItems([]);
       setMatchedItems([]);
-      setManualMode('total');
+      // Pre-fill mode: when a productId was passed via "Re-order", start in items mode
+      // with one row already populated so the user only fills qty/cost/expiry.
+      const reorderMode = initialProductId != null;
+      setManualMode(reorderMode ? 'items' : 'total');
       setManualItems([]);
-      setSupplierId(null);
+      setSupplierId(initialSupplierId ?? null);
       setInvoiceRef('');
       const todayIso = new Date().toISOString().slice(0, 10);
       setPurchaseDate(todayIso);
@@ -435,10 +443,35 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
       setInitialPayMethod('cash');
       setInitialPayRef('');
       setStep('details');
-      api.products.getAll().then(p => setAllProducts(p)).catch(() => {});
+      api.products.getAll().then(p => {
+        setAllProducts(p);
+        // Pre-fill a single ManualItem from initialProductId once products are loaded
+        if (initialProductId != null) {
+          const product = p.find(x => x.id === initialProductId);
+          if (product) {
+            const seeded: ManualItem = {
+              _key: crypto.randomUUID(),
+              productId: product.id,
+              productName: product.name,
+              quantity: 0,
+              costPerParent: 0,
+              sellPrice: 0,
+              sellPriceChild: 0,
+              expiryDate: '',
+              batchNumber: '',
+              barcode: product.barcode ?? '',
+              parentUnit: product.parent_unit ?? 'Box',
+              childUnit: product.child_unit ?? '',
+              convFactor: product.conversion_factor ?? 1,
+              categoryName: '',
+            };
+            setManualItems([seeded]);
+          }
+        }
+      }).catch(() => {});
       api.categories.getAll().then(c => setAllCategories(Array.isArray(c) ? c : [])).catch(() => {});
     }
-  }, [startManual]);
+  }, [startManual, initialSupplierId, initialProductId]);
 
   // ─── Step 1: Import handlers ──────────────────────────────────────────────
 
@@ -473,7 +506,7 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
           ? Math.floor(Math.round(row.cost_per_parent * (1 + defaultMarkup / 100)) / (row.conversion_factor || 1))
           : 0,
         batchNumber: generateBatchNumber(),
-        barcode: '',
+        barcode: row.code || '',
         categoryName: '',
         usageInstructions: '',
       }));
@@ -640,7 +673,7 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
       sellPrice: item.sellPrice,
       sellPriceChild: item.sellPriceChild,
       batchNumber: item.batchNumber,
-      barcode: '',
+      barcode: item.barcode ?? '',
       categoryName: item.categoryName,
       usageInstructions: '',
     };
@@ -660,6 +693,7 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
       sellPriceChild: updated.sellPriceChild,
       expiryDate: updated.expiryDate,
       batchNumber: updated.batchNumber,
+      barcode: updated.barcode,
       parentUnit: updated.parentUnit,
       childUnit: updated.childUnit,
       convFactor: updated.convFactor,
@@ -995,6 +1029,7 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
           if (item.matchType === 'existing' && item.matchedProductId) {
             return {
               product_id: item.matchedProductId,
+              barcode: item.barcode || undefined,
               quantity: item.quantity,
               cost_per_parent: item.costPerParent,
               selling_price_parent: item.sellPrice,
@@ -1028,6 +1063,7 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
           if (item.productId) {
             return {
               product_id: item.productId,
+              barcode: item.barcode || undefined,
               quantity: item.quantity,
               cost_per_parent: item.costPerParent,
               selling_price_parent: item.sellPrice,
@@ -1039,6 +1075,7 @@ export function CreatePurchaseFlow({ onComplete, startManual }: CreatePurchaseFl
             return {
               new_product: {
                 name: item.productName,
+                barcode: item.barcode || undefined,
                 category_name: item.categoryName || undefined,
                 parent_unit: item.parentUnit || 'Unit',
                 child_unit: item.childUnit || undefined,

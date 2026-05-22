@@ -206,7 +206,7 @@ export function SettingsPage() {
   const [creatingBackup, setCreatingBackup] = useState(false);
   const [restoringBackup, setRestoringBackup] = useState<string | null>(null);
   const [restoringFromFile, setRestoringFromFile] = useState(false);
-  const [backupInterval, setBackupInterval] = useState('8');
+  const [backupInterval, setBackupInterval] = useState('2');
   const [savingBackupInterval, setSavingBackupInterval] = useState(false);
 
   // ── Recurring Expense Generation ─────────────────────────────────────────
@@ -249,7 +249,7 @@ export function SettingsPage() {
       setLockoutAttempts(s['account_lockout_attempts'] || '5');
       setLockoutDuration(s['account_lockout_duration_minutes'] || '15');
       setBankAccounts(parseBankAccounts(s['bank_config']));
-      setBackupInterval(s['auto_backup_hours'] || '8');
+      setBackupInterval(s['auto_backup_hours'] || '2');
       setGenerationMode(s['recurring_generation_mode'] || 'startup');
       setGenerationHour(s['recurring_generation_hour'] || '0');
     } catch (err) {

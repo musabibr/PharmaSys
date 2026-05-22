@@ -12,6 +12,13 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
   const { isFirstLaunch, isAuthenticated } = useAuthStore();
   const { isLoaded: settingsLoaded } = useSettingsStore();
   const hasTriggeredRef = useRef(false);
+  const cancelTourRef = useRef(tour.cancelTour);
+  cancelTourRef.current = tour.cancelTour;
+
+  // Destroy any active tour overlay when this provider unmounts (e.g., on logout)
+  useEffect(() => {
+    return () => { cancelTourRef.current(); };
+  }, []);
 
   // Auto-trigger welcome tour on first launch
   useEffect(() => {

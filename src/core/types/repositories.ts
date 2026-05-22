@@ -28,6 +28,8 @@ import type {
   Purchase, PurchaseItem, PurchasePayment, PurchaseFilters,
   PurchasePaymentStatus, AgingPayment, UpcomingPayment,
   UpdatePurchaseInput,
+  SupplierProductFilters, SupplierProductRecord,
+  ProductSupplierRecord,
 } from './models';
 
 // ─── Run result (mirrors sql.js semantics) ───
@@ -386,4 +388,6 @@ export interface IPurchaseRepository {
   getOverdueSummary(): Promise<{ count: number; total: number }>;
   getUpcomingPayments(): Promise<UpcomingPayment[]>;
   getUpcomingSummary(): Promise<{ count: number; total: number }>;
+  getProductsBySupplier(supplierId: number, filters: SupplierProductFilters): Promise<PaginatedResult<SupplierProductRecord>>;
+  getSuppliersByProduct(productId: number, page?: number, limit?: number): Promise<PaginatedResult<ProductSupplierRecord>>;
 }

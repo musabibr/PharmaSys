@@ -21,9 +21,21 @@ export default function PurchasesPage() {
   const canManage = usePermission('purchases.manage');
   const canManageSuppliers = usePermission('purchases.suppliers.manage');
 
-  // Read initial tab from route state (e.g., navigate('/purchases', { state: { tab: 'aging' } }))
-  const stateTab = (location.state as { tab?: string } | null)?.tab;
+  // Read initial tab + optional re-order pre-fill from route state
+  // (e.g., navigate('/purchases', { state: { tab: 'manual', initialSupplierId, initialProductId } }))
+  const routeState = location.state as {
+    tab?: string;
+    initialSupplierId?: number;
+    initialProductId?: number;
+  } | null;
+  const stateTab = routeState?.tab;
   const [tab, setTab] = useState(stateTab || 'list');
+  // Capture the pre-fill values once so subsequent tab switches don't keep re-injecting them
+  const [reorderPrefill] = useState<{ supplierId?: number; productId?: number } | null>(
+    routeState?.initialSupplierId || routeState?.initialProductId
+      ? { supplierId: routeState.initialSupplierId, productId: routeState.initialProductId }
+      : null
+  );
   const [selectedPurchase, setSelectedPurchase] = useState<Purchase | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [listKey, setListKey] = useState(0);
@@ -134,7 +146,12 @@ export default function PurchasesPage() {
 
         {canManage && (
           <TabsContent value="manual" className="flex-1 overflow-hidden">
-            <CreatePurchaseFlow onComplete={handlePurchaseComplete} startManual />
+            <CreatePurchaseFlow
+              onComplete={handlePurchaseComplete}
+              startManual
+              initialSupplierId={reorderPrefill?.supplierId}
+              initialProductId={reorderPrefill?.productId}
+            />
           </TabsContent>
         )}
 

@@ -3,7 +3,7 @@
  * All repos share the same db connection and can participate in the same transaction.
  */
 
-import { BaseRepository, type SqlJsDatabase } from './base.repository';
+import { BaseRepository, type BetterDatabase } from './base.repository';
 import { AuthRepository }        from './auth.repository';
 import { UserRepository }        from './user.repository';
 import { CategoryRepository }    from './category.repository';
@@ -42,26 +42,15 @@ export interface Repositories {
 }
 
 export function createRepositories(
-  db: SqlJsDatabase,
+  dbPath: string,
   dataPath: string,
-  saveFn: () => void,
-  scheduleSaveFn: () => void,
-  onRestored?: (newDb: SqlJsDatabase) => void
 ): Repositories {
-  const base     = new BaseRepository(db, saveFn, scheduleSaveFn);
+  const base     = new BaseRepository(dbPath);
   const settings = new SettingsRepository(base);
   const audit    = new AuditRepository(base);
   const report   = new ReportRepository(base, (key: string): Promise<string | null> => settings.get(key));
 
-  const backup = new BackupRepository(
-    base,
-    dataPath,
-    () => base.db,
-    (newDb: SqlJsDatabase) => {
-      base.replaceDb(newDb);
-      onRestored?.(newDb);
-    }
-  );
+  const backup = new BackupRepository(base, dataPath);
 
   return {
     base,
