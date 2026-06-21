@@ -157,10 +157,13 @@ export function createMockBatchRepo() {
     getBatchDeleteInfo: jest.fn().mockResolvedValue(undefined),
     getActiveBatchesForPriceUpdate: jest.fn().mockResolvedValue([]),
     bulkUpdateSellingPrices: jest.fn().mockResolvedValue(0),
+    propagateSellingPrices: jest.fn().mockResolvedValue(0),
     deleteBatch: jest.fn().mockResolvedValue(undefined),
     restoreDeletedBatch: jest.fn().mockResolvedValue(1),
     recalculateChildPricesForProduct: jest.fn().mockResolvedValue(0),
     rescaleQuantitiesForProduct: jest.fn().mockResolvedValue(undefined),
+    // Execute the callback so transactional service logic runs under test.
+    inTransaction: jest.fn(async (fn: () => Promise<unknown>) => await fn()),
   };
 }
 
@@ -384,7 +387,7 @@ export const sampleTransaction: Transaction = {
   items: [{
     id: 1, transaction_id: 1, product_id: 1, batch_id: 1,
     quantity_base: 20, unit_type: 'parent', unit_price: 800,
-    cost_price: 500, discount_percent: 0,
+    cost_price: 500, discount_percent: 0, checkout_discount_allocation: 0,
     line_total: 800, gross_profit: 300,
     conversion_factor_snapshot: 20, created_at: '2026-02-25',
     product_name: 'Paracetamol', batch_number: 'B001',

@@ -605,4 +605,26 @@ or maintaining a Node-ABI build for CI. Tracked here for a decision; not fixed i
 - **#23** DEFERRED — `sql.js` is still imported by the (broken) test harness; removal is tied to the #40 decision.
 - **#27** DEFERRED — firewall-rule cleanup needs NSIS uninstaller scripting (outside the TS codebase); rules are idempotent (fixed names) so they don't multiply in normal use.
 
-**Remaining:** #9, #30, #40 + Phase 6 docs (CLAUDE.md refresh). #9 needs frontend unit-passing context; #30 (IPC login rate-limit) and #40 (test harness) are design/tooling decisions.
+**Phase 6 (docs) + #40 (test recovery)** — `npm run tsc` clean:
+- **CLAUDE.md** refreshed: async/`better-sqlite3` data layer (not synchronous sql.js), the micro-permission
+  system (+ `permissions.ts` and the legacy-derivation note), `data/pharmasys.db`, and a note on the ABI
+  blocker.
+- **#40a (service unit tests) — LARGELY FIXED.** Root cause was the shared `tests/helpers/mocks.ts`
+  (a `TransactionItem` fixture missing `checkout_discount_allocation` broke 13/15 suites; the batch mock
+  lacked `inTransaction`/`propagateSellingPrices`). Fixed those + updated drifted call sites
+  (`held-sale.getAll(userId, role)`, `PurchaseService` 6-arg constructor). Test suite went from **137 →
+  512 passing**; 13/15 service suites now green and all Phase 1–4 service changes are now covered.
+- **Remaining 10 failures (batch.service, product.service)** are pre-existing test/code drift, NOT caused
+  by this pass. Some are safe additive drift (bulkCreate event now carries `errors`/`failedCount`;
+  `bulkUpdateSellingPrices` gained a 5th arg). Two are **genuine behavioral questions left for the owner**
+  rather than masked by editing tests to match code:
+    1. `reportDamage` on a partially-damaged batch keeps status `active` (only `sold_out` at qty 0); the
+       test expects `quarantine`. Decide: should partial damage quarantine the whole batch?
+    2. `bulkCreate` now emits a `BULK_CREATE_PRODUCTS` audit event even when every item fails; the test
+       expects no event. Decide: audit the failed attempt or stay silent?
+- **#40b (rest/integration suites) — STILL BLOCKED** by the better-sqlite3 Electron-ABI issue (Jest runs
+  under Node). Needs a tooling decision (pluggable sql.js test backend, run-under-Electron, or a Node-ABI
+  build for CI). `sql.js` stays in deps until this is decided (#23).
+
+**Remaining:** #9 (frontend, verify), #30 (IPC login rate-limit — design choice), #40b (ABI tooling),
+and the two behavioral decisions above.
