@@ -94,7 +94,7 @@ async function main(): Promise<void> {
     : await bootSqlite();
 
   const bus = new EventBus();
-  const svc = new ServiceContainer(repos, bus);
+  const svc = new ServiceContainer(repos, bus, DB_DIR);
 
   // Auto-generate any missed recurring expenses (daily + monthly)
   try {

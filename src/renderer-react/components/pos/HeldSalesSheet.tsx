@@ -14,7 +14,8 @@ import {
   SheetTitle,
   SheetDescription,
 } from '@/components/ui/sheet';
-import { PauseCircle, Play, Trash2, ShoppingCart, Clock } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { PauseCircle, Play, Trash2, ShoppingCart, Clock, Info } from 'lucide-react';
 import type { CartItem } from '@/stores/cart.store';
 import type { HeldSale } from '@/api/types';
 
@@ -88,6 +89,11 @@ export function HeldSalesSheet({ open, onOpenChange, onRetrieve }: HeldSalesShee
       toast.error(t('No items in this held sale'));
       return;
     }
+
+    if (!window.confirm(t('Stock was not reserved while this sale was held. Please verify that all items are still physically available before completing the sale. Continue?'))) {
+      return;
+    }
+
     // Delete from DB so it can't be retrieved again
     try {
       await api.held.delete(sale.id);
@@ -124,6 +130,12 @@ export function HeldSalesSheet({ open, onOpenChange, onRetrieve }: HeldSalesShee
           <SheetDescription>
             {t('Parked sales waiting to be retrieved.')}
           </SheetDescription>
+          <Alert variant="default" className="mt-4 bg-muted/50">
+            <Info className="h-4 w-4" />
+            <AlertDescription className="text-xs">
+              {t('Note: Holding a sale does not reserve stock. When you retrieve a sale, verify that the items are still available.')}
+            </AlertDescription>
+          </Alert>
         </SheetHeader>
 
         <Separator className="my-2" />

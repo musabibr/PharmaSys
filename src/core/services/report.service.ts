@@ -39,4 +39,8 @@ export class ReportService {
     Validate.dateString(filters.end_date, 'End date');
     return await this.repo.getPurchaseReport(filters);
   }
+
+  async getInventoryReconciliation(): Promise<any[]> {
+    return await this.repo.getInventoryReconciliation();
+  }
 }

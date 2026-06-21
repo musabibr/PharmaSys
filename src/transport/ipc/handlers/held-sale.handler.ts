@@ -2,12 +2,8 @@ import type { IpcRouter }        from '../ipc-router';
 import type { ServiceContainer } from '../../../core/services/index';
 
 export function registerHeldSaleHandlers(router: IpcRouter, services: ServiceContainer): void {
-  // Frontend uses 'held:getAll' — admin sees all, non-admin sees own
   router.handle('held:getAll', async (user) => {
-    if (user!.role === 'admin') {
-      return await services.heldSale.getAll();
-    }
-    return await services.heldSale.getAll(user!.id);
+    return await services.heldSale.getAll(user!.id, user!.role);
   }, { anyPermission: ['pos.held_sales', 'pos.sales'] });
 
   // Frontend uses 'held:save' with { items, customerNote }

@@ -3,6 +3,7 @@ import type { BatchRepository }       from '../repositories/sql/batch.repository
 import type { ShiftRepository }       from '../repositories/sql/shift.repository';
 import type { ProductRepository }     from '../repositories/sql/product.repository';
 import type { BaseRepository }        from '../repositories/sql/base.repository';
+import { AuditRepository }            from '../repositories/sql/audit.repository';
 import type { SettingsRepository }    from '../repositories/sql/settings.repository';
 import type { EventBus }              from '../events/event-bus';
 import type {
@@ -27,6 +28,7 @@ interface DeductedLine {
   discountPct:  number;
   lineTotal:    number;
   grossProfit:  number;
+  checkoutDiscountAllocation?: number;
   cfSnapshot:   number;
 }
 
@@ -38,7 +40,8 @@ export class TransactionService {
     private readonly productRepo: ProductRepository,
     private readonly base:        BaseRepository,
     private readonly bus:         EventBus,
-    private readonly settingsRepo?: SettingsRepository
+    private readonly settingsRepo?: SettingsRepository,
+    private readonly auditRepo?:  AuditRepository
   ) {}
 
   private async _shiftsEnabled(): Promise<boolean> {
@@ -79,10 +82,21 @@ export class TransactionService {
 
     await this._validatePayment(data);
 
-    return await this.base.inTransaction(async () => {
-      const lines = await this._deductFIFO(data.items, userId);
-      return await this._commitTransaction(data, lines, userId, shiftId, null);
-    });
+    const MAX_RETRIES = 3;
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        return await this.base.inTransaction(async () => {
+          const lines = await this._deductFIFO(data.items, userId);
+          return await this._commitTransaction(data, lines, userId, shiftId, null);
+        });
+      } catch (err) {
+        if (err instanceof ConflictError && attempt < MAX_RETRIES - 1) {
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw new ConflictError('Sale could not be committed after 3 retries. Please try again.');
   }
 
   async createReturn(data: CreateReturnInput, userId: number, userRole?: string): Promise<Transaction> {
@@ -123,8 +137,8 @@ export class TransactionService {
           'shift'
         );
       }
-    } else if (!shiftsOn) {
-      // Shifts disabled: use 7-day date window instead
+    } else {
+      // Admin (with shifts on), or anyone (with shifts off): use 7-day date window instead
       if (original.created_at) {
         const txnDate = new Date(original.created_at).getTime();
         const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
@@ -147,6 +161,9 @@ export class TransactionService {
       const lines: DeductedLine[] = [];
       // Tracks old_batch_id → new_batch_id for batches restored during this return
       const restoredBatchMap = new Map<number, number>();
+      // Track quantities consumed within THIS return request (prevents over-return
+      // when multiple items in the same request reference the same batch)
+      const inRequestConsumed: Record<string, number> = {};
 
       for (const item of data.items) {
         Validate.id(item.batch_id, 'Batch');
@@ -182,7 +199,7 @@ export class TransactionService {
         // ── 4. Enforce return quantity limit ──────────────────────────────────
         // Key is batch_id only so cross-unit returns share the same base-unit pool.
         const key          = `${item.batch_id}`;
-        const alreadyBase  = returnedMap[key] ?? 0;
+        const alreadyBase  = (returnedMap[key] ?? 0) + (inRequestConsumed[key] ?? 0);
         const remainingBase = origItem.quantity_base - alreadyBase;
 
         if (quantityBase > remainingBase) {
@@ -191,6 +208,9 @@ export class TransactionService {
             'quantity'
           );
         }
+
+        // Record this item's consumption for subsequent items in the same request
+        inRequestConsumed[key] = (inRequestConsumed[key] ?? 0) + quantityBase;
 
         // ── 5. Restore stock to batch ────────────────────────────────────────
         let effectiveBatchId = item.batch_id;
@@ -231,10 +251,13 @@ export class TransactionService {
               sellPerParent = origItem.unit_price * cf;
             }
 
+            const auditRepo = this.auditRepo ?? new AuditRepository(this.base);
+            const originalExpiry = await auditRepo.getDeletedBatchExpiry(item.batch_id);
+
             const newBatchId = await this.batchRepo.restoreDeletedBatch({
               product_id:           origItem.product_id,
               batch_number:         `RESTORED-${item.batch_id}-REVIEW`,
-              expiry_date:          '2099-12-31', // Unknown — original batch deleted; quarantine requires manual review
+              expiry_date:          originalExpiry ?? '2099-12-31', // Recovered from audit, or quarantine requires review
               quantity_base:        quantityBase,
               cost_per_parent:      costPerParent,
               cost_per_child:       costPerChild,
@@ -299,17 +322,23 @@ export class TransactionService {
         // For cross-unit returns (sold box → returning strips) derive per-strip price
         // using floor division so we never refund more than was collected.
         const unitPrice = (isCrossUnit && cf > 1)
-          ? Math.max(1, Math.floor(origItem.unit_price / cf))
+          ? Money.divideToChild(origItem.unit_price, cf)
           : origItem.unit_price;
         const costPrice = (isCrossUnit && cf > 1)
-          ? Math.max(1, Math.floor(origItem.cost_price / cf))
+          ? Money.divideToChild(origItem.cost_price, cf)
           : origItem.cost_price;
 
         const discountPct    = origItem.discount_percent ?? 0;
         const effectivePrice = Money.percent(unitPrice, 100 - discountPct);
         const lineTotal      = Money.multiply(effectivePrice, item.quantity);
         const costTotal      = Money.multiply(costPrice, item.quantity);
-        const grossProfit    = -Money.subtract(lineTotal, costTotal);
+        
+        const revenueChange  = -lineTotal;
+        const costChange     = -costTotal;
+        const grossProfit    = Money.subtract(revenueChange, costChange);
+
+        const returnedProportion = origItem.quantity_base > 0 ? quantityBase / origItem.quantity_base : 0;
+        const lineRefundDiscount = Math.round((origItem.checkout_discount_allocation ?? 0) * returnedProportion);
 
         lines.push({
           batchId:      effectiveBatchId,
@@ -321,19 +350,15 @@ export class TransactionService {
           discountPct,
           lineTotal,
           grossProfit,
+          checkoutDiscountAllocation: lineRefundDiscount,
           cfSnapshot:   cf,
         });
       }
 
-      // ── 7. Calculate return totals with proportional checkout discount ──────
+      // ── 7. Calculate return totals with exact per-line checkout discount allocation ──────
       const subtotal = lines.reduce((s, l) => s + l.lineTotal, 0);
 
-      // If the original sale had a checkout-level discount, apply proportionally
-      const origSubtotal = original.subtotal ?? 0;
-      const origDiscount = original.discount_amount ?? 0;
-      const proportionalDiscount = origSubtotal > 0
-        ? Math.round(subtotal * origDiscount / origSubtotal)
-        : 0;
+      const proportionalDiscount = lines.reduce((s, l) => s + (l.checkoutDiscountAllocation ?? 0), 0);
       const totalAmount = Math.max(0, subtotal - proportionalDiscount);
 
       // ── 8. Match original payment method for refund ────────────────────────
@@ -410,6 +435,12 @@ export class TransactionService {
         returnedMap = await this.repo.getReturnedQuantities(id);
       }
 
+      // Track how much returned quantity has been consumed per batch across
+      // multiple transaction_items. Without this, if 2 items reference the same
+      // batch_id, each would subtract the full alreadyReturned, causing incorrect
+      // stock restoration.
+      const consumedReturned: Record<string, number> = {};
+
       // Restore/re-deduct stock for each item
       for (const item of (txn.items ?? [])) {
         const batch = await this.batchRepo.getById(item.batch_id);
@@ -428,11 +459,24 @@ export class TransactionService {
 
         if (txn.transaction_type === 'sale') {
           // Sale void: restore stock, minus any already-returned quantities
-          const alreadyReturned = returnedMap[`${item.batch_id}`] ?? 0;
-          const restoreQty = item.quantity_base - alreadyReturned;
+          const key = `${item.batch_id}`;
+          const totalReturned = returnedMap[key] ?? 0;
+          const alreadyConsumed = consumedReturned[key] ?? 0;
+          const remainingReturned = Math.max(0, totalReturned - alreadyConsumed);
+          const deductFromThis = Math.min(item.quantity_base, remainingReturned);
+          consumedReturned[key] = alreadyConsumed + deductFromThis;
+
+          const restoreQty = item.quantity_base - deductFromThis;
           if (restoreQty <= 0) continue; // Fully returned — nothing to restore
           newQty    = batch.quantity_base + restoreQty;
-          newStatus = batch.status === 'sold_out' ? 'active' : batch.status;
+          // Don't restore expired batches to active — quarantine instead
+          if (this._isBatchExpired(batch.expiry_date)) {
+            newStatus = 'quarantine';
+          } else if (batch.status === 'sold_out') {
+            newStatus = 'active';
+          } else {
+            newStatus = batch.status;
+          }
         } else if (txn.transaction_type === 'return') {
           // Return void: re-deduct the returned stock
           if (batch.quantity_base < item.quantity_base) {
@@ -605,11 +649,14 @@ export class TransactionService {
             : (batch.cost_per_child_override || batch.cost_per_child || 0);
 
         const discountPct = item.discount_percent ?? 0;
-        const displayQty  = item.unit_type === 'parent' ? take / cf : take;
 
         const effectivePrice = Money.percent(unitPrice, 100 - discountPct);
-        const lineTotal      = Money.multiply(effectivePrice, displayQty);
-        const costTotal      = Money.multiply(costPrice, displayQty);
+        const lineTotal      = item.unit_type === 'parent' 
+                                 ? Math.round((effectivePrice * take) / cf) 
+                                 : Money.multiply(effectivePrice, take);
+        const costTotal      = item.unit_type === 'parent'
+                                 ? Math.round((costPrice * take) / cf)
+                                 : Money.multiply(costPrice, take);
         const grossProfit    = Money.subtract(lineTotal, costTotal);
 
         lines.push({
@@ -673,6 +720,15 @@ export class TransactionService {
       : data.payment_method === 'mixed' ? (data.cash_tendered ?? 0)
       : 0;
 
+    // Post-FIFO cash validation: ensure cash tendered covers the ACTUAL total
+    // (pre-FIFO validation used the frontend estimate which may differ)
+    if (data.transaction_type === 'sale' && data.payment_method === 'cash' && cashTendered < total) {
+      throw new ValidationError(
+        `Cash tendered (${cashTendered}) is less than the total (${total})`,
+        'cash_tendered'
+      );
+    }
+
     // Serialize payment breakdown to JSON string for storage (IPC delivers it as an object)
     const paymentJson: string | null = data.payment == null
       ? null
@@ -699,7 +755,21 @@ export class TransactionService {
       created_at: createdAt ?? null,
     });
 
-    for (const line of lines) {
+    let discountRemaining = discount;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      let allocation = 0;
+      if (line.checkoutDiscountAllocation !== undefined) {
+        allocation = line.checkoutDiscountAllocation;
+      } else if (subtotal > 0) {
+        if (i === lines.length - 1) {
+          allocation = discountRemaining;
+        } else {
+          allocation = Math.round((line.lineTotal / subtotal) * discount);
+          discountRemaining -= allocation;
+        }
+      }
+
       await this.repo.insertItem({
         transaction_id:             txnId,
         product_id:                 line.productId,
@@ -711,6 +781,7 @@ export class TransactionService {
         discount_percent:           line.discountPct,
         line_total:                 line.lineTotal,
         gross_profit:               line.grossProfit,
+        checkout_discount_allocation: allocation,
         conversion_factor_snapshot: line.cfSnapshot,
       });
     }
@@ -742,6 +813,6 @@ export class TransactionService {
     if (!expiryDate) return false;
     const n = new Date();
     const today = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
-    return expiryDate <= today;
+    return expiryDate < today;
   }
 }

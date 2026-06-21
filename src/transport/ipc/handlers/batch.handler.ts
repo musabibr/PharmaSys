@@ -50,6 +50,11 @@ export function registerBatchHandlers(router: IpcRouter, services: ServiceContai
     return await services.batch.getAdjustments(filters ?? {});
   }, { permission: 'inventory.batches.damage' });
 
+  router.handle('inventory:reverseAdjustment', async (user, id: number) => {
+    await services.batch.reverseAdjustment(id, user!.id);
+    return { success: true };
+  }, { adminOnly: true });
+
   router.handle('batches:getActiveBatchesForPriceUpdate', async (_user, productId: number) => {
     return await services.batch.getActiveBatchesForPriceUpdate(productId);
   }, { permission: 'inventory.batches.view' });

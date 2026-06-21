@@ -45,8 +45,7 @@ export class BatchService {
     const product = await this.productRepo.getById(data.product_id);
     if (!product) throw new NotFoundError('Product', data.product_id);
 
-    Validate.dateString(data.expiry_date, 'Expiry date');
-    // Warn but allow past expiry dates (admin may need to enter old stock for corrections)
+    Validate.futureDate(data.expiry_date, 'Expiry date');
     Validate.positiveInteger(data.quantity_base, 'Quantity');
 
     const costParent = Money.round(Validate.positiveNumber(data.cost_per_parent, 'Cost per base unit'));
@@ -58,16 +57,26 @@ export class BatchService {
     const costChild  = data.cost_per_child_override    ?? Money.divideToChild(costParent, cf);
     const sellChild  = data.selling_price_child_override ?? (sellParent ? Money.divideToChild(sellParent, cf) : 0);
 
-    const result = await this.repo.create({
-      ...data,
-      cost_per_parent: costParent,
-      cost_per_child: Money.divideToChild(costParent, cf),
-      selling_price_parent: sellParent,
-      selling_price_child: sellParent ? Money.divideToChild(sellParent, cf) : 0,
-      selling_price_parent_override: sellParent,
-      cost_per_child_override: costChild,
-      selling_price_child_override: sellChild,
-    });
+    let result;
+    try {
+      result = await this.repo.create({
+        ...data,
+        batch_number: Validate.optionalString(data.batch_number, 'Batch number', 60) ?? undefined,
+        cost_per_parent: costParent,
+        cost_per_child: Money.divideToChild(costParent, cf),
+        selling_price_parent: sellParent,
+        selling_price_child: sellParent ? Money.divideToChild(sellParent, cf) : 0,
+        selling_price_parent_override: sellParent,
+        cost_per_child_override: costChild,
+        selling_price_child_override: sellChild,
+      });
+    } catch (err: any) {
+      if (err?.message?.includes('UNIQUE constraint failed') && err?.message?.includes('idx_batches_product_batch')) {
+        throw new ValidationError(`Batch number "${data.batch_number}" already exists for this product.`, 'batch_number');
+      }
+      throw err;
+    }
+
 
     const newId = result.lastInsertRowid as number;
 
@@ -105,8 +114,30 @@ export class BatchService {
       throw new ConflictError('Batch was modified by another operation. Please refresh and try again.');
     }
 
+    if (data.status && existing.status !== data.status) {
+      if (existing.status === 'sold_out' && data.status === 'active' && (data.quantity_base ?? existing.quantity_base) <= 0) {
+        throw new ValidationError('Cannot mark a batch active with zero quantity. Please adjust quantity first.', 'status');
+      }
+      if (data.status === 'sold_out' && (data.quantity_base ?? existing.quantity_base) > 0) {
+        throw new ValidationError('Cannot mark a batch sold out when it still has quantity.', 'status');
+      }
+    }
+
     if (data.expiry_date !== undefined) {
       Validate.dateString(data.expiry_date, 'Expiry date');
+    }
+
+    // Validate quantity_base is non-negative if provided
+    if (data.quantity_base !== undefined && data.quantity_base < 0) {
+      throw new ValidationError('Quantity cannot be negative', 'quantity_base');
+    }
+
+    // Validate selling prices are non-negative
+    if (data.selling_price_parent !== undefined && data.selling_price_parent < 0) {
+      throw new ValidationError('Selling price cannot be negative', 'selling_price_parent');
+    }
+    if (data.cost_per_parent !== undefined && data.cost_per_parent < 0) {
+      throw new ValidationError('Cost price cannot be negative', 'cost_per_parent');
     }
 
     // Block cost_per_parent changes on batches that have been sold
@@ -120,7 +151,7 @@ export class BatchService {
     }
 
     // Auto-recalculate base child prices when parent prices change
-    const cf = (existing as any).conversion_factor ?? 1;
+    const cf = existing.conversion_factor ?? 1;
     if (data.cost_per_parent !== undefined && cf > 1) {
       data.cost_per_child = Money.divideToChild(data.cost_per_parent, cf);
     }
@@ -133,7 +164,19 @@ export class BatchService {
       data.selling_price_child = Money.divideToChild(newSellParent, cf);
     }
 
-    await this.repo.update(id, data);
+    let success = false;
+    try {
+      success = await this.repo.update(id, existing.version, data);
+    } catch (err: any) {
+      if (err?.message?.includes('UNIQUE constraint failed') && err?.message?.includes('idx_batches_product_batch')) {
+        throw new ValidationError(`Batch number "${data.batch_number}" already exists for this product.`, 'batch_number');
+      }
+      throw err;
+    }
+
+    if (!success) {
+      throw new ConflictError('Batch was modified by another operation. Please refresh and try again.');
+    }
 
     // Auto-propagate: if selling prices changed AND this is the latest batch,
     // push the new selling prices to all older batches of the same product.
@@ -182,45 +225,98 @@ export class BatchService {
     Validate.positiveInteger(quantityBase, 'Quantity');
     Validate.enum(type, ['damage', 'expiry', 'correction'] as const, 'Adjustment type');
 
-    const batch = await this.repo.getById(batchId);
-    if (!batch) throw new NotFoundError('Batch', batchId);
-    if (batch.quantity_base < quantityBase) {
-      throw new ValidationError(
-        `Cannot adjust ${quantityBase} units — only ${batch.quantity_base} available`, 'quantity'
+    return await this.repo.inTransaction(async () => {
+      const batch = await this.repo.getById(batchId);
+      if (!batch) throw new NotFoundError('Batch', batchId);
+      if (batch.quantity_base < quantityBase) {
+        throw new ValidationError(
+          `Cannot adjust ${quantityBase} units — only ${batch.quantity_base} available`, 'quantity'
+        );
+      }
+
+      const newQty = batch.quantity_base - quantityBase;
+      const newStatus = newQty === 0 ? 'sold_out' : batch.status;
+
+      const success = await this.repo.updateQuantityOptimistic(batchId, newQty, newStatus, batch.version);
+      if (!success) throw new ConflictError('Batch was modified concurrently. Please retry.');
+
+      await this.repo.insertAdjustment({
+        product_id:   batch.product_id!,
+        batch_id:     batchId,
+        quantity_base: quantityBase,
+        reason,
+        type,
+        user_id:      userId,
+      });
+
+      this.bus.emit('entity:mutated', {
+        action: 'REPORT_DAMAGE', table: 'batches',
+        recordId: batchId, userId,
+        oldValues: { quantity_base: batch.quantity_base, status: batch.status },
+        newValues: { quantity_base: newQty, status: newStatus, type, reason },
+      });
+      this.bus.emit('stock:changed', {
+        batchId,
+        productId:        batch.product_id!,
+        previousQuantity: batch.quantity_base,
+        newQuantity:      newQty,
+        changeReason:     type === 'correction' ? 'correction' : type === 'expiry' ? 'expiry' : 'damage',
+        userId,
+      });
+    });
+  }
+
+  async reverseAdjustment(id: number, userId: number): Promise<void> {
+    return await this.repo.inTransaction(async () => {
+      const adj = await this.repo.getAdjustmentById(id);
+      if (!adj) throw new NotFoundError('Adjustment', id);
+
+      // Guard: cannot reverse a reversal record itself
+      if (adj.quantity_base < 0) {
+        throw new BusinessRuleError('Cannot reverse a reversal adjustment');
+      }
+
+      // Guard: check if this adjustment was already reversed
+      const allAdjustments = await this.repo.getAdjustments({ batch_id: adj.batch_id });
+      const alreadyReversed = allAdjustments.some(a =>
+        a.reason === `Reversal of adjustment #${id}`
       );
-    }
+      if (alreadyReversed) {
+        throw new BusinessRuleError('This adjustment has already been reversed');
+      }
 
-    const newQty = batch.quantity_base - quantityBase;
-    const newStatus =
-      newQty === 0 ? 'sold_out'
-      : type === 'correction' ? 'active'
-      : 'quarantine';
+      const batch = await this.repo.getById(adj.batch_id);
+      if (!batch) throw new NotFoundError('Batch', adj.batch_id);
 
-    const success = await this.repo.updateQuantityOptimistic(batchId, newQty, newStatus, batch.version);
-    if (!success) throw new ConflictError('Batch was modified concurrently. Please retry.');
+      const newQty = batch.quantity_base + adj.quantity_base;
+      const newStatus = newQty > 0 && batch.status === 'sold_out' ? 'active' : batch.status;
 
-    await this.repo.insertAdjustment({
-      product_id:   batch.product_id!,
-      batch_id:     batchId,
-      quantity_base: quantityBase,
-      reason,
-      type,
-      user_id:      userId,
-    });
+      const success = await this.repo.updateQuantityOptimistic(batch.id, newQty, newStatus, batch.version);
+      if (!success) throw new ConflictError('Batch was modified concurrently. Please retry.');
 
-    this.bus.emit('entity:mutated', {
-      action: 'REPORT_DAMAGE', table: 'batches',
-      recordId: batchId, userId,
-      oldValues: { quantity_base: batch.quantity_base, status: batch.status },
-      newValues: { quantity_base: newQty, status: newStatus, type, reason },
-    });
-    this.bus.emit('stock:changed', {
-      batchId,
-      productId:        batch.product_id!,
-      previousQuantity: batch.quantity_base,
-      newQuantity:      newQty,
-      changeReason:     type === 'correction' ? 'correction' : type === 'expiry' ? 'expiry' : 'damage',
-      userId,
+      await this.repo.insertAdjustment({
+        product_id:   batch.product_id!,
+        batch_id:     batch.id,
+        quantity_base: -adj.quantity_base, // represents adding stock back
+        reason: `Reversal of adjustment #${adj.id}`,
+        type: 'correction',
+        user_id:      userId,
+      });
+
+      this.bus.emit('entity:mutated', {
+        action: 'REVERSE_ADJUSTMENT', table: 'batches',
+        recordId: batch.id, userId,
+        oldValues: { quantity_base: batch.quantity_base, status: batch.status },
+        newValues: { quantity_base: newQty, status: newStatus },
+      });
+      this.bus.emit('stock:changed', {
+        batchId: batch.id,
+        productId: batch.product_id!,
+        previousQuantity: batch.quantity_base,
+        newQuantity: newQty,
+        changeReason: 'correction',
+        userId,
+      });
     });
   }
 
@@ -255,7 +351,7 @@ export class BatchService {
     const product = await this.productRepo.getById(productId);
     const cf = product?.conversion_factor ?? 1;
     const baseChildPrice = cf > 1 ? Money.divideToChild(sellingPriceParent, cf) : sellingPriceParent;
-    const count = await this.repo.bulkUpdateSellingPrices(productId, sellingPriceParent, baseChildPrice, sellingPriceChild);
+    const count = await this.repo.bulkUpdateSellingPrices(productId, sellingPriceParent, baseChildPrice, sellingPriceChild, true);
     if (count > 0) {
       this.bus.emit('entity:mutated', {
         action: 'BULK_UPDATE_BATCH_PRICES', table: 'batches',
@@ -270,11 +366,20 @@ export class BatchService {
     Validate.id(id);
     const batch = await this.repo.getById(id);
     if (!batch) throw new NotFoundError('Batch', id);
+
+    const info = await this.repo.getBatchDeleteInfo(id);
+    if (info && (info.txn_count > 0 || info.adj_count > 0)) {
+      throw new ValidationError(
+        'Cannot delete batch with transaction history. Soft-delete (status=sold_out, quantity=0) instead.',
+        'id'
+      );
+    }
+
     await this.repo.deleteBatch(id);
     this.bus.emit('entity:mutated', {
       action: 'DELETE_BATCH', table: 'batches',
       recordId: id, userId,
-      oldValues: { product_name: (batch as any).product_name, batch_number: batch.batch_number },
+      oldValues: { product_name: (batch as any).product_name, batch_number: batch.batch_number, expiry_date: batch.expiry_date },
     });
   }
 

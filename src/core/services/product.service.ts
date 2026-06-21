@@ -87,12 +87,13 @@ export class ProductService {
       Validate.positiveInteger(data.conversion_factor, 'Conversion factor');
     }
 
-    await this.repo.update(id, data);
-
     // Cascade CF change: rescale quantities and recalculate child prices with new CF
     if (data.conversion_factor !== undefined && data.conversion_factor !== existing.conversion_factor) {
-      await this.batchRepo.rescaleQuantitiesForProduct(id, existing.conversion_factor, data.conversion_factor);
-      await this.batchRepo.recalculateChildPricesForProduct(id, data.conversion_factor);
+      await (this.repo as any).base.inTransaction(async () => {
+        await this.repo.update(id, data);
+        await this.batchRepo.rescaleQuantitiesForProduct(id, existing.conversion_factor!, data.conversion_factor!);
+        await this.batchRepo.recalculateChildPricesForProduct(id, data.conversion_factor!);
+      });
 
       this.bus.emit('entity:mutated', {
         action: 'CASCADE_CF_CHANGE', table: 'products',
@@ -100,6 +101,8 @@ export class ProductService {
         oldValues: { conversion_factor: existing.conversion_factor },
         newValues: { conversion_factor: data.conversion_factor },
       });
+    } else {
+      await this.repo.update(id, data);
     }
 
     this.bus.emit('entity:mutated', {
@@ -163,11 +166,13 @@ export class ProductService {
     }
     const results = await this.repo.bulkCreate(items);
     const successCount = results.filter(r => r.success).length;
-    if (successCount > 0) {
+    const failedCount = results.length - successCount;
+    const errors = results.filter(r => !r.success).map(r => `${r.name}: ${r.error}`);
+    if (successCount > 0 || failedCount > 0) {
       this.bus.emit('entity:mutated', {
         action: 'BULK_CREATE_PRODUCTS', table: 'products',
         recordId: null, userId,
-        newValues: { count: successCount },
+        newValues: { count: successCount, failedCount, errors },
       });
     }
     return results;

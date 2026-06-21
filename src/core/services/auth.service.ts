@@ -48,7 +48,8 @@ export class AuthService {
   constructor(
     private readonly repo:     AuthRepository,
     private readonly userRepo: UserRepository,
-    private readonly bus:      EventBus
+    private readonly bus:      EventBus,
+    private readonly dataDir?: string
   ) {}
 
   async login(username: string, password: string): Promise<LoginResult> {
@@ -236,8 +237,11 @@ export class AuthService {
   async emergencyResetAdmin(token: string): Promise<void> {
     Validate.requiredString(token, 'Emergency reset token');
 
-    // The token file must exist in the data/ directory
-    const dataDir = path.join(process.cwd(), 'data');
+    // The token file must exist in the app data directory. The real data path is
+    // injected from the platform entry point (Electron uses app.getPath('userData')),
+    // because process.cwd() is unreliable in a packaged app. Falls back to <cwd>/data
+    // for tests and non-Electron callers.
+    const dataDir = this.dataDir ?? path.join(process.cwd(), 'data');
     const tokenFilePath = path.join(dataDir, '.emergency-reset-token');
 
     if (!fs.existsSync(tokenFilePath)) {

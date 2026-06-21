@@ -150,6 +150,7 @@ export class MigrationRepository {
         discount_percent REAL DEFAULT 0 CHECK(discount_percent >= 0 AND discount_percent <= 100),
         line_total INTEGER NOT NULL DEFAULT 0,
         gross_profit INTEGER NOT NULL DEFAULT 0,
+        checkout_discount_allocation INTEGER NOT NULL DEFAULT 0,
         conversion_factor_snapshot INTEGER NOT NULL DEFAULT 1 CHECK(conversion_factor_snapshot > 0),
         created_at TEXT DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE CASCADE,
@@ -227,7 +228,7 @@ export class MigrationRepository {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         product_id INTEGER NOT NULL,
         batch_id INTEGER NOT NULL,
-        quantity_base INTEGER NOT NULL CHECK(quantity_base > 0),
+        quantity_base INTEGER NOT NULL,
         reason TEXT,
         type TEXT NOT NULL CHECK(type IN ('damage', 'expiry', 'correction')),
         user_id INTEGER NOT NULL,
@@ -276,6 +277,7 @@ export class MigrationRepository {
         alert_days_before INTEGER NOT NULL DEFAULT 7,
         notes TEXT,
         user_id INTEGER NOT NULL,
+        idempotency_key TEXT UNIQUE,
         created_at TEXT DEFAULT (datetime('now', 'localtime')),
         updated_at TEXT DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL,
@@ -324,6 +326,32 @@ export class MigrationRepository {
         created_at TEXT DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (purchase_id) REFERENCES purchases(id) ON DELETE CASCADE
       )`,
+      `CREATE TABLE IF NOT EXISTS cycle_counts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'completed', 'cancelled')),
+        created_by INTEGER NOT NULL,
+        assigned_to INTEGER,
+        started_at TEXT,
+        completed_at TEXT,
+        notes TEXT,
+        created_at TEXT DEFAULT (datetime('now', 'localtime')),
+        FOREIGN KEY (created_by) REFERENCES users(id),
+        FOREIGN KEY (assigned_to) REFERENCES users(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS cycle_count_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cycle_count_id INTEGER NOT NULL,
+        product_id INTEGER NOT NULL,
+        batch_id INTEGER,
+        expected_quantity INTEGER NOT NULL DEFAULT 0,
+        counted_quantity INTEGER,
+        variance INTEGER,
+        status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'counted', 'verified')),
+        FOREIGN KEY (cycle_count_id) REFERENCES cycle_counts(id) ON DELETE CASCADE,
+        FOREIGN KEY (product_id) REFERENCES products(id),
+        FOREIGN KEY (batch_id) REFERENCES batches(id)
+      )`
     ];
 
     for (const sql of schemas) {
@@ -342,6 +370,7 @@ export class MigrationRepository {
       'CREATE INDEX IF NOT EXISTS idx_transaction_items_product ON transaction_items(product_id)',
       'CREATE INDEX IF NOT EXISTS idx_transaction_items_batch ON transaction_items(batch_id)',
       'CREATE INDEX IF NOT EXISTS idx_batches_product ON batches(product_id)',
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_batches_product_batch ON batches(product_id, lower(trim(batch_number))) WHERE batch_number IS NOT NULL AND trim(batch_number) != \'\'',
       'CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)',
       'CREATE INDEX IF NOT EXISTS idx_products_name ON products(name)',
       'CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date)',
@@ -354,6 +383,7 @@ export class MigrationRepository {
       'CREATE INDEX IF NOT EXISTS idx_audit_user_date ON audit_logs(user_id, created_at)',
       'CREATE INDEX IF NOT EXISTS idx_transactions_parent ON transactions(parent_transaction_id)',
       // Purchase indexes
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_purchases_idempotency_key ON purchases(idempotency_key) WHERE idempotency_key IS NOT NULL',
       'CREATE INDEX IF NOT EXISTS idx_purchases_supplier ON purchases(supplier_id)',
       'CREATE INDEX IF NOT EXISTS idx_purchases_status ON purchases(payment_status)',
       'CREATE INDEX IF NOT EXISTS idx_purchases_date ON purchases(purchase_date)',
@@ -418,6 +448,7 @@ export class MigrationRepository {
       'ALTER TABLE transactions ADD COLUMN reference_number TEXT');
     await this._migrateColumn('transactions', 'payment',
       'ALTER TABLE transactions ADD COLUMN payment TEXT');
+    await this._migrateInventoryAdjustmentsConstraint();
     await this._migrateCashTendered();
     await this._migrateOldPaymentMethods();
     await this._migrateColumn('expenses', 'payment_method',
@@ -507,6 +538,43 @@ export class MigrationRepository {
     await this._migrateColumn('recurring_expenses', 'day_of_month',
       'ALTER TABLE recurring_expenses ADD COLUMN day_of_month INTEGER NOT NULL DEFAULT 1');
 
+    // Idempotency key for purchases
+    await this._migrateColumn('purchases', 'idempotency_key',
+      'ALTER TABLE purchases ADD COLUMN idempotency_key TEXT');
+
+    // Checkout discount allocation for transaction_items
+    await this._migrateColumn('transaction_items', 'checkout_discount_allocation',
+      'ALTER TABLE transaction_items ADD COLUMN checkout_discount_allocation INTEGER NOT NULL DEFAULT 0');
+
+    // Cycle counts
+    await this.base.rawRun(`CREATE TABLE IF NOT EXISTS cycle_counts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'completed', 'cancelled')),
+      created_by INTEGER NOT NULL,
+      assigned_to INTEGER,
+      started_at TEXT,
+      completed_at TEXT,
+      notes TEXT,
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (created_by) REFERENCES users(id),
+      FOREIGN KEY (assigned_to) REFERENCES users(id)
+    )`);
+    await this.base.rawRun(`CREATE TABLE IF NOT EXISTS cycle_count_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      cycle_count_id INTEGER NOT NULL,
+      product_id INTEGER NOT NULL,
+      batch_id INTEGER,
+      expected_quantity INTEGER NOT NULL DEFAULT 0,
+      counted_quantity INTEGER,
+      variance INTEGER,
+      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'counted', 'verified')),
+      FOREIGN KEY (cycle_count_id) REFERENCES cycle_counts(id) ON DELETE CASCADE,
+      FOREIGN KEY (product_id) REFERENCES products(id),
+      FOREIGN KEY (batch_id) REFERENCES batches(id)
+    )`);
+    await this.base.rawRun('CREATE INDEX IF NOT EXISTS idx_cycle_count_items_ccid ON cycle_count_items(cycle_count_id)');
+
     this.base.save();
   }
 
@@ -556,6 +624,43 @@ export class MigrationRepository {
         // Index already exists or cannot be created (duplicate names already
         // present). Service-level check is the fallback safety net.
       }
+    }
+  }
+
+  /** Remove the strict CHECK constraint on inventory_adjustments to allow negative quantities */
+  private async _migrateInventoryAdjustmentsConstraint(): Promise<void> {
+    try {
+      const tblInfo = await this.base.getOne<{ sql: string }>(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='inventory_adjustments'"
+      );
+      if (tblInfo?.sql.includes('CHECK(quantity_base > 0)')) {
+        await this.base.rawRun('PRAGMA foreign_keys=off;');
+        await this.base.rawRun(`
+          CREATE TABLE inventory_adjustments_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id INTEGER NOT NULL,
+            batch_id INTEGER NOT NULL,
+            quantity_base INTEGER NOT NULL,
+            reason TEXT,
+            type TEXT NOT NULL CHECK(type IN ('damage', 'expiry', 'correction')),
+            user_id INTEGER NOT NULL,
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            FOREIGN KEY (product_id) REFERENCES products(id),
+            FOREIGN KEY (batch_id) REFERENCES batches(id),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+          );
+        `);
+        await this.base.rawRun(`INSERT INTO inventory_adjustments_new SELECT * FROM inventory_adjustments;`);
+        await this.base.rawRun(`DROP TABLE inventory_adjustments;`);
+        await this.base.rawRun(`ALTER TABLE inventory_adjustments_new RENAME TO inventory_adjustments;`);
+        await this.base.rawRun(`CREATE INDEX IF NOT EXISTS idx_inventory_adjustments_product ON inventory_adjustments(product_id);`);
+        await this.base.rawRun(`CREATE INDEX IF NOT EXISTS idx_inventory_adjustments_batch ON inventory_adjustments(batch_id);`);
+        await this.base.rawRun('PRAGMA foreign_keys=on;');
+        console.log('[Migration] Removed CHECK constraint from inventory_adjustments');
+        this.base.save();
+      }
+    } catch (err: any) {
+      console.error('[Migration] Failed to migrate inventory_adjustments constraint:', err.message);
     }
   }
 

@@ -28,6 +28,10 @@ export function registerReportHandlers(router: IpcRouter, services: ServiceConta
     return await services.report.getPurchaseReport(filters);
   }, { permission: 'purchases.view' });
 
+  router.handle('reports:inventoryReconciliation', async (_user) => {
+    return await services.report.getInventoryReconciliation();
+  }, { adminOnly: true });
+
   // Frontend uses 'dashboard:stats' (not 'reports:dashboard')
   router.handle('dashboard:stats', async (_user) => {
     return await services.dashboard.getStats();

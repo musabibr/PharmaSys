@@ -213,6 +213,9 @@ contextBridge.exposeInMainWorld('api', {
 
     getAdjustments: async (filters) =>
       get(`/api/v1/batches/adjustments${qs(filters)}`),
+
+    reverseAdjustment: async (id) =>
+      post(`/api/v1/batches/adjustments/${id}/reverse`, {}),
   },
 
   // ════════════════════════════════════════
@@ -445,6 +448,19 @@ contextBridge.exposeInMainWorld('api', {
     preview:      async ()         => get('/api/v1/recurring-expenses/preview'),
     generate:     async (itemIds)  => post('/api/v1/recurring-expenses/generate', { itemIds }),
     restartTimer: async ()         => { /* no-op in client mode — timer runs on server */ },
+  },
+
+  // ════════════════════════════════════════
+  //  CYCLE COUNTS
+  // ════════════════════════════════════════
+
+  cycleCounts: {
+    getAll:      async ()               => get('/api/v1/cycle-counts'),
+    getById:     async (id)             => get(`/api/v1/cycle-counts/${id}`),
+    create:      async (data)           => post('/api/v1/cycle-counts', data),
+    start:       async (id)             => post(`/api/v1/cycle-counts/${id}/start`, {}),
+    recordCount: async (itemId, counted_quantity) => post(`/api/v1/cycle-counts/items/${itemId}`, { counted_quantity }),
+    complete:    async (id, applyAdjustments) => post(`/api/v1/cycle-counts/${id}/complete`, { applyAdjustments }),
   },
 
   // ════════════════════════════════════════

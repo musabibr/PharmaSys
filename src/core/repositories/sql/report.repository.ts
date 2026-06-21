@@ -208,7 +208,7 @@ export class ReportRepository implements IReportRepository {
                          / COALESCE(NULLIF(p.conversion_factor, 0), 1) AS INTEGER)
                END, 0)) as recommended_order
       FROM products p
-      LEFT JOIN batches b ON p.id = b.product_id AND b.quantity_base > 0 AND b.status = 'active'
+      LEFT JOIN batches b ON p.id = b.product_id AND b.quantity_base > 0
       LEFT JOIN velocity v ON v.product_id = p.id
       WHERE p.is_active = 1
       GROUP BY p.id
@@ -242,7 +242,7 @@ export class ReportRepository implements IReportRepository {
              MIN(b.created_at) as oldest_batch_date,
              CAST(JULIANDAY('now', 'localtime') - JULIANDAY(COALESCE(MIN(b.created_at), datetime('now', 'localtime'))) AS INTEGER) as days_in_inventory
       FROM products p
-      LEFT JOIN batches b ON p.id = b.product_id AND b.quantity_base > 0 AND b.status = 'active'
+      LEFT JOIN batches b ON p.id = b.product_id AND b.quantity_base > 0
       LEFT JOIN last_sale ls ON ls.product_id = p.id
       WHERE p.is_active = 1
       GROUP BY p.id
@@ -281,7 +281,7 @@ export class ReportRepository implements IReportRepository {
              COUNT(b.id) as batch_count
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
-      LEFT JOIN batches b ON p.id = b.product_id AND b.quantity_base > 0 AND b.status = 'active'
+      LEFT JOIN batches b ON p.id = b.product_id AND b.quantity_base > 0
       ${where}
       GROUP BY p.id
       HAVING total_stock_base > 0
@@ -299,7 +299,7 @@ export class ReportRepository implements IReportRepository {
                COALESCE(SUM(b.quantity_base * ${SELL_PER_CHILD_SQL}), 0) as retail_value
         FROM products p
         LEFT JOIN categories c ON p.category_id = c.id
-        LEFT JOIN batches b ON p.id = b.product_id AND b.quantity_base > 0 AND b.status = 'active'
+        LEFT JOIN batches b ON p.id = b.product_id AND b.quantity_base > 0
         ${where} GROUP BY p.id HAVING COALESCE(SUM(b.quantity_base), 0) > 0
       )
     `, [...params]);
@@ -358,12 +358,13 @@ export class ReportRepository implements IReportRepository {
           COALESCE(SUM(b.quantity_base * ${SELL_PER_CHILD_SQL}), 0) as inv_retail
         FROM batches b
         JOIN products p ON b.product_id = p.id
-        WHERE b.quantity_base > 0 AND b.status = 'active' AND p.is_active = 1
+        WHERE b.quantity_base > 0 AND b.status = 'active' AND b.expiry_date >= date('now') AND p.is_active = 1
       ),
       low_stock AS (
         SELECT COUNT(*) as low_stock_count FROM (
           SELECT p.id FROM products p
           LEFT JOIN batches b ON p.id = b.product_id AND b.quantity_base > 0
+            AND b.status = 'active' AND b.expiry_date >= date('now')
           WHERE p.is_active = 1
           GROUP BY p.id
           HAVING COALESCE(SUM(b.quantity_base), 0) <= (p.min_stock_level * COALESCE(NULLIF(p.conversion_factor, 0), 1))
@@ -372,12 +373,12 @@ export class ReportRepository implements IReportRepository {
       ),
       expiring AS (
         SELECT COUNT(*) as expiring_count FROM batches b JOIN products p ON b.product_id = p.id
-        WHERE b.quantity_base > 0 AND b.status = 'active'
+        WHERE b.quantity_base > 0 AND b.status IN ('active', 'quarantine')
           AND b.expiry_date <= ? AND b.expiry_date > ? AND p.is_active = 1
       ),
       expired AS (
         SELECT COUNT(*) as expired_count FROM batches b JOIN products p ON b.product_id = p.id
-        WHERE b.quantity_base > 0 AND b.status = 'active'
+        WHERE b.quantity_base > 0 AND b.status IN ('active', 'quarantine')
           AND b.expiry_date <= ? AND p.is_active = 1
       ),
       open_shifts AS (
@@ -487,5 +488,60 @@ export class ReportRepository implements IReportRepository {
       unpaid_count: s.unpaid_count,
       purchases: purchases as PurchaseReport['purchases'],
     };
+  }
+
+  async getInventoryReconciliation(): Promise<any[]> {
+    return await this.base.getAll(`
+      WITH 
+      PurchaseTotals AS (
+        SELECT pi.product_id, SUM(pi.quantity_received * COALESCE(NULLIF(p.conversion_factor, 0), 1)) as qty 
+        FROM purchase_items pi
+        JOIN products p ON pi.product_id = p.id
+        GROUP BY pi.product_id
+      ),
+      SalesTotals AS (
+        SELECT product_id, SUM(quantity_base) as qty
+        FROM transaction_items ti
+        JOIN transactions t ON ti.transaction_id = t.id
+        WHERE t.transaction_type = 'sale' AND t.is_voided = 0
+        GROUP BY product_id
+      ),
+      ReturnsTotals AS (
+        SELECT product_id, SUM(quantity_base) as qty
+        FROM transaction_items ti
+        JOIN transactions t ON ti.transaction_id = t.id
+        WHERE t.transaction_type = 'return' AND t.is_voided = 0
+        GROUP BY product_id
+      ),
+      AdjustmentsTotals AS (
+        SELECT product_id, 
+          SUM(-quantity_base) as qty
+        FROM inventory_adjustments
+        GROUP BY product_id
+      ),
+      ActualTotals AS (
+        SELECT product_id, SUM(quantity_base) as qty
+        FROM batches
+        GROUP BY product_id
+      )
+      SELECT 
+        p.id as product_id,
+        p.name as product_name,
+        COALESCE(pt.qty, 0) as purchased,
+        COALESCE(st.qty, 0) as sold,
+        COALESCE(rt.qty, 0) as returned,
+        COALESCE(adt.qty, 0) as adjustments,
+        (COALESCE(pt.qty, 0) - COALESCE(st.qty, 0) + COALESCE(rt.qty, 0) + COALESCE(adt.qty, 0)) as expected_qty,
+        COALESCE(act.qty, 0) as actual_qty,
+        COALESCE(act.qty, 0) - (COALESCE(pt.qty, 0) - COALESCE(st.qty, 0) + COALESCE(rt.qty, 0) + COALESCE(adt.qty, 0)) as variance
+      FROM products p
+      LEFT JOIN PurchaseTotals pt ON p.id = pt.product_id
+      LEFT JOIN SalesTotals st ON p.id = st.product_id
+      LEFT JOIN ReturnsTotals rt ON p.id = rt.product_id
+      LEFT JOIN AdjustmentsTotals adt ON p.id = adt.product_id
+      LEFT JOIN ActualTotals act ON p.id = act.product_id
+      WHERE variance != 0
+      ORDER BY ABS(variance) DESC
+    `);
   }
 }

@@ -9,8 +9,8 @@ export class ProductRepository implements IProductRepository {
 
   private static readonly STOCK_SUBQUERY =
     `COALESCE((SELECT SUM(b.quantity_base) FROM batches b
-      WHERE b.product_id = p.id AND b.status = 'active' AND b.quantity_base > 0
-        AND b.expiry_date >= date('now')), 0) as total_stock_base`;
+      WHERE b.product_id = p.id AND b.quantity_base > 0
+        AND b.status = 'active' AND b.expiry_date >= date('now')), 0) as total_stock_base`;
 
   /** Effective parent selling price from the first FIFO (oldest-expiry) active batch. */
   private static readonly SELL_PRICE_SUBQUERY =
@@ -227,11 +227,11 @@ export class ProductRepository implements IProductRepository {
     await this.base.inTransaction(async () => {
       for (const item of items) {
         try {
-          // Resolve or create category
+          // BUG 6 FIX: Case-insensitive category lookup
           let categoryId: number | null = null;
           if (item.category_name) {
             const cat = await this.base.getOne<{ id: number }>(
-              `SELECT id FROM categories WHERE name = ?`,
+              `SELECT id FROM categories WHERE LOWER(name) = LOWER(?)`,
               [item.category_name]
             );
             if (cat) {
@@ -245,48 +245,99 @@ export class ProductRepository implements IProductRepository {
             }
           }
 
-          // Insert product
-          const prodResult = await this.base.run(
-            `INSERT INTO products (name, generic_name, category_id, barcode,
-             parent_unit, child_unit, conversion_factor, min_stock_level)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              item.name,
-              item.generic_name ?? null,
-              categoryId,
-              item.barcode ?? null,
-              item.parent_unit ?? 'Box',
-              item.child_unit ?? 'Strip',
-              item.conversion_factor ?? 1,
-              item.min_stock_level ?? 0,
-            ]
-          );
+          // BUG 3 FIX: Duplicate detection — match by barcode first, then by name
+          let existingProductId: number | null = null;
+          let existingCf: number = item.conversion_factor ?? 1;
 
-          // Insert initial batch
-          const cf = item.conversion_factor ?? 1;
-          const costChild = Money.divideToChild(item.cost_per_parent, cf);
-          const sellChild = Money.divideToChild(item.selling_price_parent, cf);
+          if (item.barcode) {
+            const byBarcode = await this.base.getOne<{ id: number; conversion_factor: number }>(
+              `SELECT id, conversion_factor FROM products WHERE barcode = ? AND is_active = 1`,
+              [item.barcode]
+            );
+            if (byBarcode) {
+              existingProductId = byBarcode.id;
+              existingCf = byBarcode.conversion_factor ?? 1;
+            }
+          }
+          if (!existingProductId) {
+            const byName = await this.base.getOne<{ id: number; conversion_factor: number }>(
+              `SELECT id, conversion_factor FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND is_active = 1`,
+              [item.name]
+            );
+            if (byName) {
+              existingProductId = byName.id;
+              existingCf = byName.conversion_factor ?? 1;
+            }
+          }
 
-          await this.base.run(
-            `INSERT INTO batches (product_id, batch_number, expiry_date, quantity_base,
-             cost_per_parent, cost_per_child, cost_per_child_override,
-             selling_price_parent, selling_price_child,
-             selling_price_parent_override, selling_price_child_override, version)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-            [
-              prodResult.lastInsertRowid,
-              item.batch_number ?? null,
-              item.expiry_date,
-              item.quantity_base,
-              item.cost_per_parent,
-              costChild,
-              costChild,
-              item.selling_price_parent,
-              sellChild,
-              item.selling_price_parent,
-              sellChild,
-            ]
-          );
+          let productId: number;
+
+          if (existingProductId) {
+            // Existing product — just add a new batch (don't create a duplicate)
+            productId = existingProductId;
+            // Update barcode if the existing product doesn't have one
+            if (item.barcode) {
+              await this.base.run(
+                `UPDATE products SET barcode = COALESCE(NULLIF(barcode, ''), ?) WHERE id = ?`,
+                [item.barcode, productId]
+              );
+            }
+          } else {
+            // New product — create it
+            const prodResult = await this.base.run(
+              `INSERT INTO products (name, generic_name, category_id, barcode,
+               parent_unit, child_unit, conversion_factor, min_stock_level)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                item.name,
+                item.generic_name ?? null,
+                categoryId,
+                item.barcode ?? null,
+                item.parent_unit ?? 'Box',
+                item.child_unit ?? 'Strip',
+                item.conversion_factor ?? 1,
+                item.min_stock_level ?? 0,
+              ]
+            );
+            productId = prodResult.lastInsertRowid as number;
+          }
+
+          // BUG 7 FIX: Only create batch when there's actual stock data
+          const hasBatchData = item.quantity_base > 0 && item.expiry_date && item.expiry_date.trim() !== '';
+
+          if (hasBatchData) {
+            // BUG 2 FIX: Ensure selling price is positive
+            const sellParent = item.selling_price_parent > 0
+              ? item.selling_price_parent
+              : Math.round(item.cost_per_parent * 1.2); // 20% markup fallback
+
+            // Use existing product's CF for matched products (BUG 10 backend counterpart)
+            const cf = existingProductId ? existingCf : (item.conversion_factor ?? 1);
+            const costChild = Money.divideToChild(item.cost_per_parent, cf);
+            const sellChild = Money.divideToChild(sellParent, cf);
+
+            // BUG 9 FIX: Explicitly set status = 'active'
+            await this.base.run(
+              `INSERT INTO batches (product_id, batch_number, expiry_date, quantity_base,
+               cost_per_parent, cost_per_child, cost_per_child_override,
+               selling_price_parent, selling_price_child,
+               selling_price_parent_override, selling_price_child_override, status, version)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 1)`,
+              [
+                productId,
+                item.batch_number ?? null,
+                item.expiry_date,
+                item.quantity_base,
+                item.cost_per_parent,
+                costChild,
+                costChild,
+                sellParent,
+                sellChild,
+                sellParent,
+                sellChild,
+              ]
+            );
+          }
 
           results.push({ success: true, name: item.name });
         } catch (err) {

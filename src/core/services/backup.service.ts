@@ -25,7 +25,7 @@ export class BackupService {
     return await this.repo.list();
   }
 
-  async restore(filename: string, userId: number): Promise<void> {
+  async restore(filename: string, userId: number, displayFilename?: string): Promise<void> {
     // Sanitize filename (no directory traversal)
     if (filename.includes('/') || filename.includes('\\') || filename.includes('..')) {
       throw new ValidationError('Invalid backup filename', 'filename');
@@ -34,7 +34,7 @@ export class BackupService {
     this.bus.emit('entity:mutated', {
       action: 'RESTORE_BACKUP', table: 'backups',
       recordId: null, userId,
-      newValues: { filename },
+      newValues: { filename: displayFilename || filename },
     });
   }
 }

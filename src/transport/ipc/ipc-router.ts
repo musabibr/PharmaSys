@@ -54,10 +54,21 @@ export class IpcRouter {
     } = options;
 
     this.ipcMain.handle(channel, async (_event, ...args: TArgs) => {
-      // Payload size guard (1 MB)
+      // Payload size guard (1 MB). Measure per-arg and short-circuit once over the limit,
+      // so we don't fully serialize large payloads on every call. Binary args (ArrayBuffer /
+      // TypedArray / Buffer) are measured by byteLength — JSON.stringify turns them into "{}"
+      // and would let multi-MB binary payloads slip past the guard.
       try {
-        const payloadSize = JSON.stringify(args).length;
-        if (payloadSize > 1_048_576) {
+        const PAYLOAD_LIMIT = 1_048_576;
+        let payloadSize = 0;
+        for (const a of args) {
+          if (a instanceof ArrayBuffer) payloadSize += a.byteLength;
+          else if (ArrayBuffer.isView(a)) payloadSize += (a as ArrayBufferView).byteLength;
+          else if (typeof a === 'string') payloadSize += a.length;
+          else if (a != null) payloadSize += JSON.stringify(a).length;
+          if (payloadSize > PAYLOAD_LIMIT) break;
+        }
+        if (payloadSize > PAYLOAD_LIMIT) {
           return { success: false, error: 'Request payload too large', code: 'PAYLOAD_TOO_LARGE', statusCode: 413 };
         }
 

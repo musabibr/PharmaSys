@@ -290,7 +290,7 @@ async function initDatabase(): Promise<ServiceContainer> {
   }
 
   const bus = new EventBus();
-  const svc = new ServiceContainer(repos, bus);
+  const svc = new ServiceContainer(repos, bus, dataPath);
 
   return svc;
 }
@@ -410,6 +410,20 @@ function registerPdfParseHandler(): void {
           maxBuffer: 10 * 1024 * 1024, // 10 MB
           env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
         }, (error, stdout, stderr) => {
+          // If we got valid JSON, resolve it even if there was an error (graceful degradation)
+          if (stdout && stdout.trim().startsWith('[')) {
+            try {
+              JSON.parse(stdout); // verify it's valid JSON
+              if (error) {
+                console.warn('[PDFParser] Process exited with error, but partial data was recovered:', error.message);
+                if (stderr) console.warn('[PDFParser] Stderr:', stderr);
+              }
+              return resolve(stdout);
+            } catch {
+              // Not valid JSON, fall through to error handling
+            }
+          }
+
           if (error) {
             if ((error as any).code === 'ENOENT') {
               reject(new Error('Python is not installed or not in PATH.'));
@@ -533,9 +547,6 @@ async function bootMainApp(): Promise<void> {
   if (deviceMode === 'client') {
     console.log(`[Startup] Client mode → connecting to http://${deviceConfig.serverHost}:${deviceConfig.serverPort}`);
     createWindow();
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow();
-    });
     return;
   }
 
@@ -603,12 +614,32 @@ async function bootMainApp(): Promise<void> {
     const selectedFile = filePaths[0];
     const backupDir = path.join(dataPath, 'backups');
     if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
-    const filename = path.basename(selectedFile);
-    fs.copyFileSync(selectedFile, path.join(backupDir, filename));
+
+    // Temp-then-promote: copy to a temporary file first
+    const tmpFilename = `restore-${Date.now()}.tmp`;
+    const tmpPath = path.join(backupDir, tmpFilename);
+    fs.copyFileSync(selectedFile, tmpPath);
+    
     try {
-      await services!.backup.restore(filename, currentUser?.id ?? 0);
+      // Whitelist the extension (dialog already restricts these) and verify the promoted
+      // path stays inside the backup directory — symmetry with backup:saveAs (defense-in-depth).
+      const rawExt = path.extname(selectedFile).toLowerCase();
+      const ext = ['.bak', '.enc', '.sqlite'].includes(rawExt) ? rawExt : '.bak';
+      const finalFilename = `pharmasys-backup-${new Date().toISOString().replace(/[:.]/g, '-')}-imported${ext}`;
+      const resolvedBackupDir = path.resolve(backupDir);
+      const finalPath = path.resolve(resolvedBackupDir, finalFilename);
+      if (!finalPath.startsWith(resolvedBackupDir + path.sep)) {
+        throw new Error('Invalid backup destination path');
+      }
+      await services!.backup.restore(tmpFilename, currentUser?.id ?? 0, finalFilename);
+
+      // If successful, promote the temp file to a permanent backup file
+      fs.renameSync(tmpPath, finalPath);
+
       return { success: true, restartRequired: true };
     } catch (err) {
+      // If it fails, remove the temp file so we don't pollute the directory
+      try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
       return { success: false, error: (err as Error).message };
     }
   });
@@ -698,10 +729,6 @@ async function bootMainApp(): Promise<void> {
       }
     }, 1500); // brief delay so the main window has time to render first
   }
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
 }
 
 // ─── Application Lifecycle ────────────────────────────────────────────────────
@@ -729,6 +756,12 @@ app.on('second-instance', () => {
     mainWindow.show();
     mainWindow.focus();
   }
+});
+
+// Re-create a window when the app is activated with none open (macOS dock / taskbar).
+// Registered once here — not per device-mode branch — so handlers can't accumulate.
+app.on('activate', () => {
+  if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
 app.whenReady().then(async () => {

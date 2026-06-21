@@ -10,6 +10,7 @@ import {
   Skull,
   History,
   Search,
+  Check,
 } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ProductsTab } from './ProductsTab';
@@ -20,6 +21,8 @@ import { ReorderTab } from './ReorderTab';
 import { DeadCapitalTab } from './DeadCapitalTab';
 import { SalesHistoryTab } from './SalesHistoryTab';
 import { SupplierProductsTab } from './SupplierProductsTab';
+import { AdjustmentsTab } from './AdjustmentsTab';
+import { CycleCountsTab } from './CycleCountsTab';
 import { useAnyPermission, usePermission } from '@/hooks/usePermission';
 
 // ---------------------------------------------------------------------------
@@ -64,7 +67,7 @@ export function InventoryPage() {
   return (
     <div className="flex h-full flex-col">
       <Tabs value={tab} onValueChange={setTab} className="flex h-full flex-col">
-        <TabsList data-tour="inv-tabs" className="w-full justify-start">
+        <TabsList data-tour="inv-tabs" className="w-full justify-start overflow-x-auto flex-nowrap shrink-0 hide-scrollbar">
           {canViewProducts && (
             <TabsTrigger value="products" className="gap-1.5">
               <Package className="h-4 w-4" />
@@ -101,10 +104,22 @@ export function InventoryPage() {
               {t('Dead Capital')}
             </TabsTrigger>
           )}
+          {canViewBatches && (
+            <TabsTrigger value="adjustments" className="gap-1.5">
+              <History className="h-4 w-4" />
+              {t('Adjustments')}
+            </TabsTrigger>
+          )}
           {canViewSalesHistory && (
             <TabsTrigger value="sales-history" className="gap-1.5">
               <History className="h-4 w-4" />
               {t('Sales History')}
+            </TabsTrigger>
+          )}
+          {canViewBatches && (
+            <TabsTrigger value="cycle-counts" className="gap-1.5">
+              <Check className="h-4 w-4" />
+              {t('Cycle Counts')}
             </TabsTrigger>
           )}
           {canViewBySupplier && (
@@ -145,9 +160,19 @@ export function InventoryPage() {
             <DeadCapitalTab />
           </TabsContent>
         )}
+        {canViewBatches && (
+          <TabsContent value="adjustments" className="flex-1 overflow-hidden">
+            <AdjustmentsTab />
+          </TabsContent>
+        )}
         {canViewSalesHistory && (
           <TabsContent value="sales-history" className="flex-1 overflow-hidden">
             <SalesHistoryTab />
+          </TabsContent>
+        )}
+        {canViewBatches && (
+          <TabsContent value="cycle-counts" className="flex-1 overflow-hidden">
+            <CycleCountsTab />
           </TabsContent>
         )}
         {canViewBySupplier && (

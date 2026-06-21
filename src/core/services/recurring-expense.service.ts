@@ -8,9 +8,15 @@ import type {
 import { Validate }               from '../common/validation';
 import { NotFoundError, BusinessRuleError, ValidationError } from '../types/errors';
 
+// Average days per month (365.25 / 12 ≈ 30.44) gives a more accurate monthly projection
+// for daily items than a flat ×30, which under-counts the yearly cost by ~1.5%.
+const AVG_DAYS_PER_MONTH = 365.25 / 12;
+
 function enrichItem(item: RecurringExpense): RecurringExpense {
   const daily  = item.amount_type === 'daily'   ? item.amount : null;
-  const monthly = item.amount_type === 'monthly' ? item.amount : item.amount * 30;
+  const monthly = item.amount_type === 'monthly'
+    ? item.amount
+    : Math.round(item.amount * AVG_DAYS_PER_MONTH);
   return { ...item, daily_amount: daily ?? undefined, monthly_amount: monthly };
 }
 
@@ -145,17 +151,18 @@ export class RecurringExpenseService {
     const existing = await this.repo.getById(id);
     if (!existing) throw new NotFoundError('RecurringExpense', id);
 
-    const newActive = existing.is_active === 1 ? false : true;
-    await this.repo.setActive(id, newActive);
+    // Atomic flip (single UPDATE) avoids a lost update if two toggles race.
+    await this.repo.toggleActive(id);
+    const updated = await this.getById(id);
 
     this.bus.emit('entity:mutated', {
       action: 'TOGGLE_RECURRING_EXPENSE', table: 'recurring_expenses',
       recordId: id, userId,
       oldValues: { is_active: existing.is_active },
-      newValues: { is_active: newActive ? 1 : 0 },
+      newValues: { is_active: updated.is_active },
     });
 
-    return await this.getById(id);
+    return updated;
   }
 
   // ─── Date range helpers (shared between preview and generate) ──────────

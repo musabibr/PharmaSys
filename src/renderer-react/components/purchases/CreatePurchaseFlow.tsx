@@ -283,6 +283,9 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
   const [submitting, setSubmitting] = useState(false);
   const [showDraftPrompt, setShowDraftPrompt] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
+  const [mismatchErrorMsg, setMismatchErrorMsg] = useState('');
+  const [forceConfirmMismatch, setForceConfirmMismatch] = useState(false);
 
   // Manual items mode (separate from PDF import)
   const [manualItems, setManualItems] = useState<ManualItem[]>([]);
@@ -1130,13 +1133,19 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
             }
           : undefined,
         pending_items: pendingItemsPayload,
+        idempotency_key: idempotencyKey,
+        force_confirm_mismatch: forceConfirmMismatch,
       }));
 
       toast.success(t('Purchase created successfully'));
       clearDraft();
       onComplete();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : t('Failed to create purchase'));
+    } catch (err: any) {
+      if (err.code === 'TOTAL_MISMATCH') {
+        setMismatchErrorMsg(err.message);
+      } else {
+        toast.error(err instanceof Error ? err.message : t('Failed to create purchase'));
+      }
     } finally {
       setSubmitting(false);
     }
@@ -1145,6 +1154,7 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
     paymentType, paymentMethod, bankReference, installments, installmentDiff,
     initialPayment, initialPayMethod, initialPayRef, deferInstallments,
     hasItems, hasManualItems, matchedItems, manualItems, manualMode, onComplete, t, totalAmount, parkedKeys, clearDraft,
+    idempotencyKey, forceConfirmMismatch,
   ]);
 
   // ─── Render ─────────────────────────────────────────────────────────────
@@ -2677,6 +2687,35 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
             </Button>
             <Button onClick={restoreDraft}>
               {t('Resume')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* ── Mismatch Confirm Dialog ───────────────────────────────────────── */}
+      <Dialog open={!!mismatchErrorMsg} onOpenChange={(open) => !open && setMismatchErrorMsg('')}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertCircle className="h-5 w-5" />
+              {t('Total Mismatch')}
+            </DialogTitle>
+            <DialogDescription className="pt-2 text-base text-foreground">
+              {mismatchErrorMsg}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => setMismatchErrorMsg('')}>
+              {t('Cancel')}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setMismatchErrorMsg('');
+                setForceConfirmMismatch(true);
+                setTimeout(() => handleSubmit(), 0);
+              }}
+            >
+              {t('Confirm Mismatch')}
             </Button>
           </DialogFooter>
         </DialogContent>

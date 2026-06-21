@@ -74,6 +74,14 @@ export class RecurringExpenseRepository {
     );
   }
 
+  /** Flip is_active in a single statement so concurrent toggles can't lose an update. */
+  async toggleActive(id: number): Promise<void> {
+    await this.base.runImmediate(
+      `UPDATE recurring_expenses SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END WHERE id = ?`,
+      [id]
+    );
+  }
+
   async hasGeneratedExpenses(id: number): Promise<boolean> {
     const row = await this.base.getOne<{ cnt: number }>(
       `SELECT COUNT(*) as cnt FROM expenses WHERE recurring_expense_id = ?`,

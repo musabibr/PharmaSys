@@ -2,7 +2,7 @@ import type { ShiftRepository }   from '../repositories/sql/shift.repository';
 import type { EventBus }           from '../events/event-bus';
 import type {
   Shift, ShiftFilters, ShiftExpectedCash, ShiftReport,
-  PaginatedResult, VarianceType,
+  PaginatedResult, VarianceType, UserRole,
 } from '../types/models';
 import { Validate }                from '../common/validation';
 import { NotFoundError, ValidationError, InternalError } from '../types/errors';
@@ -98,7 +98,8 @@ export class ShiftService {
     shiftId: number,
     actualCash: number,
     notes: string | null,
-    userId: number
+    userId: number,
+    userRole?: UserRole
   ): Promise<Shift> {
     Validate.id(shiftId);
 
@@ -107,7 +108,9 @@ export class ShiftService {
     if (shift.status !== 'open') {
       throw new ValidationError('Shift is already closed', 'shift');
     }
-    if (shift.user_id !== userId) {
+    // Owners can close their own shift; admins may close any shift (otherwise an admin
+    // hitting the normal close endpoint is wrongly rejected and must know about forceClose).
+    if (shift.user_id !== userId && userRole !== 'admin') {
       throw new ValidationError('You can only close your own shift', 'shift');
     }
 
@@ -240,7 +243,9 @@ export class ShiftService {
 
         this.bus.emit('shift:changed', {
           action: 'closed', shiftId: shift.id, userId: shift.user_id,
-          actualCash: 0,
+          // Auto-close persists actual_cash = expected_cash; emit the same value so
+          // listeners (audit/reporting) record what was actually written.
+          actualCash: expected.expected_cash,
           expectedCash: expected.expected_cash,
           variance: 0,
         });

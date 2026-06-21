@@ -37,7 +37,7 @@ export function registerShiftHandlers(router: IpcRouter, services: ServiceContai
     actualCash: number;
     notes?: string;
   }) => {
-    const shift = await services.shift.close(payload.shiftId, payload.actualCash, payload.notes ?? null, user!.id);
+    const shift = await services.shift.close(payload.shiftId, payload.actualCash, payload.notes ?? null, user!.id, user!.role);
     // Frontend reads result.variance & result.variance_type at top level
     return { success: true, ...shift };
   }, { anyPermission: ['finance.shifts.close', 'pos.sales'] });

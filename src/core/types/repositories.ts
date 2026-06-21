@@ -143,7 +143,7 @@ export interface IBatchRepository {
   getAvailableByProduct(productId: number): Promise<IFIFOBatch[]>;
   getAll(filters?: BatchFilters): Promise<Batch[]>;
   create(data: CreateBatchInput): Promise<RunResult>;
-  update(id: number, data: Partial<UpdateBatchInput>): Promise<void>;
+  update(id: number, expectedVersion: number, data: Partial<UpdateBatchInput>): Promise<boolean>;
   updateQuantityOptimistic(
     id: number,
     newQuantityBase: number,
@@ -171,6 +171,7 @@ export interface IBatchRepository {
     selling_price_parent: number;
     selling_price_child: number;
   }): Promise<number>;
+  inTransaction<T>(work: () => Promise<T>): Promise<T>;
 }
 
 // ─── Transaction ───
@@ -207,6 +208,7 @@ export interface ITransactionItemInsertData {
   discount_percent: number;
   line_total: number;
   gross_profit: number;
+  checkout_discount_allocation: number;
   conversion_factor_snapshot: number;
 }
 
@@ -290,6 +292,7 @@ export interface IAuditRepository {
   ): Promise<void>;
   getAll(filters: AuditLogFilters): Promise<PaginatedResult<AuditLog>>;
   purgeOlderThan(days: number): Promise<number>;
+  getDeletedBatchExpiry(batchId: number): Promise<string | undefined>;
 }
 
 // ─── Settings ───
@@ -331,6 +334,7 @@ export interface ISupplierRepository {
 export interface IPurchaseRepository {
   getAll(filters: PurchaseFilters): Promise<PaginatedResult<Purchase>>;
   getById(id: number): Promise<Purchase | undefined>;
+  getByIdempotencyKey(key: string): Promise<Purchase | undefined>;
   getItems(purchaseId: number): Promise<PurchaseItem[]>;
   getPayments(purchaseId: number): Promise<PurchasePayment[]>;
   insert(data: {

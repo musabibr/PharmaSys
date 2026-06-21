@@ -279,7 +279,17 @@ export function ProductImportDialog({ open, onOpenChange, onImported }: ProductI
       if (!ws) { toast.error(t('No worksheet found in the file')); return; }
       const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' });
       if (rawRows.length === 0) { toast.error(t('No data rows found in file')); return; }
-      const rows = rawRows.map((raw, i) => mapRow(raw, i + 1, t, existingProducts, updateExistingDefault));
+
+      // Strip BOM (\uFEFF) from column headers to prevent missing field matches
+      const strippedRows = rawRows.map(row => {
+        const cleanRow: Record<string, unknown> = {};
+        for (const key in row) {
+          cleanRow[key.replace(/^\uFEFF/, '')] = row[key];
+        }
+        return cleanRow;
+      });
+
+      const rows = strippedRows.map((raw, i) => mapRow(raw, i + 1, t, existingProducts, updateExistingDefault));
       setParsedRows(rows);
       setFileName(file.name);
       setCurrentPage(0);
@@ -367,13 +377,17 @@ export function ProductImportDialog({ open, onOpenChange, onImported }: ProductI
           productId = row.matchedProductId;
           updated++;
 
-          // Add batch if cost/expiry/qty provided
-          if (row.expiryDate && row.quantity > 0 && row.costPerParent > 0) {
+          // Add batch if cost/expiry/qty provided AND we are not linking to a purchase
+          // (if linking to a purchase, the purchase flow will create the batch to prevent double-stock)
+          if (row.expiryDate && row.quantity > 0 && row.costPerParent > 0 && assignPurchaseId === 'none') {
+            const matchedProduct = currentExisting.find(p => p.id === row.matchedProductId);
+            const actualCf = matchedProduct?.conversion_factor ?? row.convFactor;
+            
             await api.batches.create({
               product_id:           row.matchedProductId,
               batch_number:         row.batchNumber         || undefined,
               expiry_date:          row.expiryDate,
-              quantity_base:        row.quantity * row.convFactor,
+              quantity_base:        row.quantity * actualCf,
               cost_per_parent:      row.costPerParent,
               selling_price_parent: row.sellPricePerParent ||
                 Math.round(row.costPerParent * (1 + defaultMarkup / 100)),
@@ -405,9 +419,13 @@ export function ProductImportDialog({ open, onOpenChange, onImported }: ProductI
           if (first?.success && first.id) {
             productId = first.id;
             created++;
-            // Refresh local cache for subsequent dedup
-            const fresh = await api.products.getAll().catch(() => currentExisting);
-            currentExisting = Array.isArray(fresh) ? fresh : currentExisting;
+            // Update local cache for subsequent dedup without triggering an API call per row
+            currentExisting.push({
+              id: productId,
+              name: row.name,
+              barcode: row.barcode || null,
+              conversion_factor: row.convFactor,
+            } as any);
           } else {
             failed++;
             errors.push(`Row ${row.rowIndex}: ${first?.error ?? t('Unknown error')}`);

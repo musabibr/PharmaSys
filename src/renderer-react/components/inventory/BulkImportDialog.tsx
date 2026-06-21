@@ -66,9 +66,9 @@ const TEMPLATE_HEADERS = [
   'Min Stock Level',
   'Batch Number',
   'Expiry Date (YYYY-MM-DD)',
-  'Qty (Base Units)',
-  'Cost per Base Unit (SDG)',
-  'Sell Price per Base Unit (SDG)',
+  'Qty (Parent Units)',
+  'Cost per Parent Unit (SDG)',
+  'Sell Price per Parent Unit (SDG)',
 ];
 
 const EXAMPLE_ROW = [
@@ -189,7 +189,7 @@ function mapRow(
   const expiryDate = normalizeDate(get(['expiry', 'exp']));
   const quantity = toInt(get(['qty', 'quantity']), 0);
   const costPerParent = toInt(get(['cost']), 0);
-  const sellPricePerParent = toInt(get(['sell', 'selling', 'price']), 0);
+  const sellPricePerParent = toInt(get(['sell price', 'selling price', 'sell_price', 'selling_price']), 0);
 
   if (!name) {
     errors.push(t('Product name is required'));

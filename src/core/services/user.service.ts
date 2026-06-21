@@ -1,5 +1,4 @@
 import * as crypto from 'crypto';
-import * as util   from 'util';
 import type { UserRepository } from '../repositories/sql/user.repository';
 import type { EventBus }       from '../events/event-bus';
 import type { UserPublic, CreateUserInput, UpdateUserInput } from '../types/models';
@@ -7,8 +6,6 @@ import { Validate }            from '../common/validation';
 import { NotFoundError, ValidationError } from '../types/errors';
 import { ALL_PERMISSION_KEYS, deriveLegacyPermissions } from '../common/permissions';
 import type { PermissionKey } from '../common/permissions';
-
-const scryptAsync = util.promisify(crypto.scrypt);
 
 function hashPassword(password: string): string {
   const salt = crypto.randomBytes(16).toString('hex');

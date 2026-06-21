@@ -175,7 +175,7 @@ export class ShiftRepository implements IShiftRepository {
     const expenses = await this.base.getAll<Expense>(
       `SELECT e.*, ec.name as category_name FROM expenses e
        JOIN expense_categories ec ON e.category_id = ec.id
-       WHERE e.shift_id = ?
+       WHERE e.shift_id = ? AND e.is_revoked = 0
          AND e.id NOT IN (SELECT expense_id FROM purchase_payments WHERE expense_id IS NOT NULL)`,
       [shiftId]
     );
