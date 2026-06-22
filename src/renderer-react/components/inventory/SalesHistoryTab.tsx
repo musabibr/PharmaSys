@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { api } from '@/api';
 import type { Product, User, ProductSaleFilters, ProductSaleRecord } from '@/api/types';
@@ -53,6 +54,7 @@ function formatDateTime(iso: string): string {
 
 export function SalesHistoryTab() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
 
   // ---- Product multi-select ----
   const [allProducts, setAllProducts] = useState<Product[]>([]);
@@ -397,7 +399,14 @@ export function SalesHistoryTab() {
                       {formatDateTime(row.created_at)}
                     </TableCell>
                     <TableCell className="font-mono text-xs">
-                      {row.transaction_number}
+                      <button
+                        type="button"
+                        onClick={() => navigate('/transactions', { state: { transactionId: row.transaction_id } })}
+                        className="text-primary underline-offset-4 hover:underline"
+                        title={t('Open transaction')}
+                      >
+                        {row.transaction_number}
+                      </button>
                     </TableCell>
                     {showProductCol && (
                       <TableCell className="max-w-[160px] truncate text-sm font-medium">

@@ -2321,5 +2321,6 @@
   "No cycle counts found": "لا توجد عمليات جرد",
   "pending": "قيد الانتظار",
   "in_progress": "قيد التنفيذ",
-  "completed": "مكتمل"
+  "completed": "مكتمل",
+  "Open transaction": "فتح المعاملة"
 }
