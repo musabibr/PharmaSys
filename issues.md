@@ -512,6 +512,39 @@ or maintaining a Node-ABI build for CI. Tracked here for a decision; not fixed i
 
 ---
 
+## 🧾 STOCK-INTEGRITY AUDIT (root-cause of "system qty ≠ actual qty")
+
+Full review of every code path that writes `batches.quantity_base`.
+
+**Sound paths (no change needed):**
+- **Sale FIFO** (`transaction.service._deductFIFO` + `createSale`): atomic via
+  `base.inTransaction` (BEGIN→COMMIT, ROLLBACK on error — verified), oldest-expiry-first,
+  every deduction uses `updateQuantityOptimistic` (version check) and retries on conflict.
+  Can't under- or double-deduct.
+- **Return / Void restore**: enforce return limits and subtract already-returned qty before
+  restoring; optimistic-locked. No double-restore.
+- **reportDamage / reverseAdjustment**: optimistic-locked; reversal guarded against
+  double-reverse. **POS checkout**: submit disabled on `loading` (double-click guard).
+
+**Bugs found & FIXED (these caused the variance):**
+- 🔴 **`updatePurchaseItem` reset batch stock.** Editing a purchase item's received quantity
+  did `quantity_base = qty * cf` — overwriting current stock with the full received amount and
+  **wiping every unit already sold/adjusted from that batch** (system shows more than actual →
+  "didn't deduct"). FIXED: apply the **delta** in base units
+  (`quantity_base = max(0, current + (newReceived − oldReceived) × cf)`) and re-derive status.
+- 🔴 **Cycle-count used a stale variance.** `complete()` recorded the adjustment as
+  `-item.variance` where variance was snapshotted at count **start**. Any sale between starting
+  and completing the count desynced the reconciliation ledger from actual stock. FIXED: derive
+  the adjustment from the batch's **current** quantity at apply time
+  (`adjustment = current − counted`), set the batch to the counted value, skip when already
+  equal. Regression tests added (`cycle-count.service.test.ts`).
+
+**Edge note (not fixed — rare):** changing a product's `conversion_factor` rescales batch
+quantities with floor division (`qty × newCf / oldCf`); intentional (prevents ghost inventory)
+but can shift reconciliation by a unit on non-divisible factors. Avoid changing CF after stock exists.
+
+---
+
 ## 📋 Summary Table
 
 | # | Severity | Category | Component | Issue |

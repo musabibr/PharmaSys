@@ -95,33 +95,37 @@ export class CycleCountService {
         }
 
         for (const item of cc.items) {
-          if (item.status === 'counted' && item.variance !== null && item.variance !== 0 && item.batch_id) {
-            // Apply correction
-            const batch = await this.batchRepo.getById(item.batch_id);
-            if (batch) {
-              const newQty = item.counted_quantity ?? 0;
-              const newStatus = newQty === 0 ? 'sold_out' : batch.status === 'sold_out' ? 'active' : batch.status;
-              const success = await this.batchRepo.updateQuantityOptimistic(batch.id, newQty, newStatus, batch.version);
-              if (!success) {
-                throw new BusinessRuleError(
-                  `Failed to update batch ${batch.id} (${item.product_name ?? 'unknown'}) — it was modified concurrently. Please retry the cycle count.`
-                );
-              }
+          if (item.status !== 'counted' || item.batch_id == null || item.counted_quantity == null) continue;
 
-              // Record adjustment: positive quantity = stock removed, negative = stock added
-              // variance = counted - expected
-              // If counted < expected → variance is negative → stock was lost → adjustment records positive (removed)
-              // If counted > expected → variance is positive → stock was found → adjustment records negative (added)
-              await this.batchRepo.insertAdjustment({
-                product_id: item.product_id,
-                batch_id: item.batch_id,
-                quantity_base: -item.variance,
-                reason: `Cycle Count correction (${cc.name})`,
-                type: 'correction',
-                user_id: userId
-              });
-            }
+          const batch = await this.batchRepo.getById(item.batch_id);
+          if (!batch) continue;
+
+          const newQty = item.counted_quantity;
+          // INTEGRITY FIX: compute the adjustment from the batch's CURRENT quantity at apply
+          // time, not from item.variance (which was snapshotted at count start). If a sale
+          // happened between counting and completing, the stale variance would desync the
+          // reconciliation ledger from actual stock. realDelta > 0 = stock removed (lost),
+          // < 0 = stock added (found).
+          const realDelta = batch.quantity_base - newQty;
+          if (realDelta === 0) continue; // batch already matches the count — nothing to do
+
+          const newStatus = newQty === 0 ? 'sold_out' : batch.status === 'sold_out' ? 'active' : batch.status;
+          const success = await this.batchRepo.updateQuantityOptimistic(batch.id, newQty, newStatus, batch.version);
+          if (!success) {
+            throw new BusinessRuleError(
+              `Failed to update batch ${batch.id} (${item.product_name ?? 'unknown'}) — it was modified concurrently. Please retry the cycle count.`
+            );
           }
+
+          // Record adjustment: positive quantity_base = stock removed, negative = stock added.
+          await this.batchRepo.insertAdjustment({
+            product_id: item.product_id,
+            batch_id: item.batch_id,
+            quantity_base: realDelta,
+            reason: `Cycle Count correction (${cc.name})`,
+            type: 'correction',
+            user_id: userId
+          });
         }
       }
     });

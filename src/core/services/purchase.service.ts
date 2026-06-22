@@ -1376,31 +1376,50 @@ export class PurchaseService {
       if (item.batch_id) {
         const product = await this.productRepo.getById(item.product_id);
         const cf = product?.conversion_factor ?? 1;
-        const batchUpdate: Record<string, unknown> = {};
+        const sets: string[] = [];
+        const params: unknown[] = [];
         if (data.cost_per_parent !== undefined) {
-          batchUpdate.cost_per_parent = updateData.cost_per_parent;
+          sets.push('cost_per_parent = ?');
+          params.push(updateData.cost_per_parent);
           // Recalculate child cost from parent cost using CF
           if (cf > 1) {
-            batchUpdate.cost_per_child = Money.divideToChild(updateData.cost_per_parent as number, cf);
-            batchUpdate.cost_per_child_override = batchUpdate.cost_per_child;
+            const childCost = Money.divideToChild(updateData.cost_per_parent as number, cf);
+            sets.push('cost_per_child = ?', 'cost_per_child_override = ?');
+            params.push(childCost, childCost);
           }
         }
         if (data.selling_price_parent !== undefined) {
-          batchUpdate.selling_price_parent = updateData.selling_price_parent;
-          batchUpdate.selling_price_parent_override = updateData.selling_price_parent;
+          sets.push('selling_price_parent = ?', 'selling_price_parent_override = ?');
+          params.push(updateData.selling_price_parent, updateData.selling_price_parent);
           // Recalculate child selling price from parent price using CF
           if (cf > 1) {
-            batchUpdate.selling_price_child = Money.divideToChild(updateData.selling_price_parent as number, cf);
-            batchUpdate.selling_price_child_override = batchUpdate.selling_price_child;
+            const childSell = Money.divideToChild(updateData.selling_price_parent as number, cf);
+            sets.push('selling_price_child = ?', 'selling_price_child_override = ?');
+            params.push(childSell, childSell);
           }
         }
         if (data.quantity_received !== undefined) {
-          batchUpdate.quantity_base = qty * cf;
+          // INTEGRITY FIX: apply the DELTA in base units, never reset to qty*cf — resetting
+          // would wipe out units already sold/adjusted from this batch and inflate stock
+          // (system shows more than actual). Re-derive status from the resulting quantity.
+          const deltaBase = (qty - item.quantity_received) * cf;
+          if (deltaBase !== 0) {
+            const b = await this.base.getOne<{ quantity_base: number; status: string }>(
+              'SELECT quantity_base, status FROM batches WHERE id = ?', [item.batch_id]
+            );
+            if (b) {
+              const newQty = Math.max(0, b.quantity_base + deltaBase);
+              const newStatus = newQty === 0 ? 'sold_out'
+                : (b.status === 'sold_out' ? 'active' : b.status);
+              sets.push('quantity_base = ?', 'status = ?');
+              params.push(newQty, newStatus);
+            }
+          }
         }
-        if (Object.keys(batchUpdate).length > 0) {
+        if (sets.length > 0) {
           await this.base.run(
-            `UPDATE batches SET ${Object.keys(batchUpdate).map(k => `${k} = ?`).join(', ')}, version = version + 1, updated_at = datetime('now', 'localtime') WHERE id = ?`,
-            [...Object.values(batchUpdate), item.batch_id]
+            `UPDATE batches SET ${sets.join(', ')}, version = version + 1, updated_at = datetime('now', 'localtime') WHERE id = ?`,
+            [...params, item.batch_id]
           );
         }
       }
