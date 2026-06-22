@@ -2259,5 +2259,12 @@
   "Avg cost": "متوسط التكلفة",
   "Purchase count": "عدد المشتريات",
   "Suppliers for: {{name}}": "الموردون لـ: {{name}}",
-  "Print Report": "طباعة التقرير"
+  "Print Report": "طباعة التقرير",
+  "Leave this purchase?": "مغادرة هذه الفاتورة؟",
+  "Hold it to finish later, or discard to lose your progress.": "احفظها مؤقتاً لإكمالها لاحقاً، أو تجاهلها لفقدان تقدمك.",
+  "Hold & resume later": "حفظ مؤقت ومتابعة لاحقاً",
+  "New Cycle Count": "جرد مخزون جديد",
+  "Cycle Counts": "جرد المخزون",
+  "Give this stock count a name (e.g. a date or aisle).": "أعطِ هذا الجرد اسماً (مثل تاريخ أو رف).",
+  "e.g. 2026-06-22 full count": "مثال: جرد كامل 2026-06-22"
 }

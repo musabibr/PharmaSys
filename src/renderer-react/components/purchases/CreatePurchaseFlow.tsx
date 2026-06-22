@@ -416,6 +416,15 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
     onComplete();
   }
 
+  // Close the flow but KEEP the draft so it can be resumed next time. The restore
+  // prompt on mount picks it back up. Without this, the only exits (Cancel / submit)
+  // both clear the draft, so a held invoice came back empty.
+  function holdAndClose() {
+    saveDraft();
+    setShowCancelConfirm(false);
+    onComplete();
+  }
+
   // ─── End draft persistence ────────────────────────────────────────────────
 
   // Auto-skip to manual entry when startManual prop is set
@@ -2726,9 +2735,9 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
       <Dialog open={showCancelConfirm} onOpenChange={setShowCancelConfirm}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>{t('Cancel purchase?')}</DialogTitle>
+            <DialogTitle>{t('Leave this purchase?')}</DialogTitle>
             <DialogDescription>
-              {t('All your progress will be lost. Are you sure you want to cancel?')}
+              {t('Hold it to finish later, or discard to lose your progress.')}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-0">
@@ -2736,7 +2745,11 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
               {t('Keep editing')}
             </Button>
             <Button variant="destructive" onClick={confirmCancel}>
-              {t('Cancel')}
+              {t('Discard')}
+            </Button>
+            <Button onClick={holdAndClose} className="gap-1.5">
+              <Bookmark className="h-4 w-4" />
+              {t('Hold & resume later')}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -9,6 +9,10 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow
 } from '@/components/ui/table';
 import { Input } from '@/components/ui/input';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 
 export function CycleCountsTab() {
   const { t } = useTranslation();
@@ -16,6 +20,9 @@ export function CycleCountsTab() {
   const [loading, setLoading] = useState(true);
   const [selectedCountId, setSelectedCountId] = useState<number | null>(null);
   const [selectedCount, setSelectedCount] = useState<CycleCount | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [creating, setCreating] = useState(false);
 
   const fetchCounts = async () => {
     try {
@@ -50,15 +57,27 @@ export function CycleCountsTab() {
     }
   };
 
-  const handleCreate = async () => {
-    const name = prompt(t('Enter Cycle Count Name'));
+  // NOTE: window.prompt() is not supported in Electron (always returns null), so the
+  // old prompt-based create silently did nothing. Use a proper dialog instead.
+  const handleCreate = () => {
+    setNewName('');
+    setCreateOpen(true);
+  };
+
+  const submitCreate = async () => {
+    const name = newName.trim();
     if (!name) return;
+    setCreating(true);
     try {
       const { throwIfError } = await import('@/api');
       throwIfError(await api.cycleCounts.create({ name }));
+      setCreateOpen(false);
+      setNewName('');
       fetchCounts();
     } catch (err: any) {
       alert('Error creating cycle count: ' + (err.message || err));
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -237,6 +256,37 @@ export function CycleCountsTab() {
           </Table>
         </CardContent>
       </Card>
+
+      {/* Create dialog — replaces window.prompt(), which Electron does not support */}
+      <Dialog open={createOpen} onOpenChange={(o) => { if (!creating) setCreateOpen(o); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t('New Cycle Count')}</DialogTitle>
+            <DialogDescription>
+              {t('Give this stock count a name (e.g. a date or aisle).')}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="cycle-count-name">{t('Name')}</Label>
+            <Input
+              id="cycle-count-name"
+              autoFocus
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') submitCreate(); }}
+              placeholder={t('e.g. 2026-06-22 full count')}
+            />
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={creating}>
+              {t('Cancel')}
+            </Button>
+            <Button onClick={submitCreate} disabled={creating || !newName.trim()}>
+              {t('Create')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
