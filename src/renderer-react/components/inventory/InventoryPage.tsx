@@ -5,7 +5,6 @@ import {
   Package,
   Layers,
   AlertTriangle,
-  Calculator,
   TrendingUp,
   Skull,
   History,
@@ -17,7 +16,6 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ProductsTab } from './ProductsTab';
 import { BatchesTab } from './BatchesTab';
 import { ExpiryTab } from './ExpiryTab';
-import { ValuationTab } from './ValuationTab';
 import { ReorderTab } from './ReorderTab';
 import { DeadCapitalTab } from './DeadCapitalTab';
 import { SalesHistoryTab } from './SalesHistoryTab';
@@ -52,7 +50,6 @@ export function InventoryPage() {
     canViewProducts  ? 'products' :
     canViewBatches   ? 'batches' :
     canViewExpiry    ? 'expiry' :
-    canViewValuation ? 'valuation' :
     canViewReorder   ? 'reorder' :
     canViewDeadCap      ? 'dead-capital' :
     canViewSalesHistory ? 'sales-history' :
@@ -86,12 +83,6 @@ export function InventoryPage() {
             <TabsTrigger value="expiry" className="gap-1.5">
               <AlertTriangle className="h-4 w-4" />
               {t('Expiry')}
-            </TabsTrigger>
-          )}
-          {canViewValuation && (
-            <TabsTrigger value="valuation" className="gap-1.5">
-              <Calculator className="h-4 w-4" />
-              {t('Valuation')}
             </TabsTrigger>
           )}
           {canViewReorder && (
@@ -151,11 +142,6 @@ export function InventoryPage() {
         {canViewExpiry && (
           <TabsContent value="expiry" className="flex-1 overflow-hidden">
             <ExpiryTab />
-          </TabsContent>
-        )}
-        {canViewValuation && (
-          <TabsContent value="valuation" className="flex-1 overflow-hidden">
-            <ValuationTab />
           </TabsContent>
         )}
         {canViewReorder && (

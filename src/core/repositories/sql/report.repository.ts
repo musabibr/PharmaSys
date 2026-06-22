@@ -524,9 +524,12 @@ export class ReportRepository implements IReportRepository {
         FROM batches
         GROUP BY product_id
       )
-      SELECT 
+      SELECT
         p.id as product_id,
         p.name as product_name,
+        p.parent_unit as parent_unit,
+        p.child_unit as child_unit,
+        COALESCE(NULLIF(p.conversion_factor, 0), 1) as conversion_factor,
         COALESCE(pt.qty, 0) as purchased,
         COALESCE(st.qty, 0) as sold,
         COALESCE(rt.qty, 0) as returned,

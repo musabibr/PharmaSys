@@ -15,6 +15,9 @@ import { Search, RefreshCw } from 'lucide-react';
 interface ReconRow {
   product_id: number;
   product_name: string;
+  parent_unit: string | null;
+  child_unit: string | null;
+  conversion_factor: number;
   purchased: number;
   sold: number;
   returned: number;
@@ -25,6 +28,7 @@ interface ReconRow {
 }
 
 type VarianceFilter = 'all' | 'shortage' | 'overage' | 'balanced';
+type UnitMode = 'small' | 'large';
 
 export function DiagnosticsTab() {
   const { t } = useTranslation();
@@ -32,6 +36,21 @@ export function DiagnosticsTab() {
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [variance, setVariance] = useState<VarianceFilter>('all');
+  const [unitMode, setUnitMode] = useState<UnitMode>('small');
+
+  // Quantities are stored in base (small/child) units. In "large" mode, convert to the
+  // parent unit (qty / conversion_factor). The Unit column shows which unit a row is in.
+  const unitLabel = (row: ReconRow): string => {
+    if (unitMode === 'large' && row.conversion_factor > 1) return row.parent_unit || row.child_unit || '—';
+    return row.child_unit || '—';
+  };
+  const fmtQty = (qty: number, row: ReconRow): string => {
+    if (unitMode === 'large' && row.conversion_factor > 1) {
+      const v = qty / row.conversion_factor;
+      return Number.isInteger(v) ? String(v) : v.toFixed(2);
+    }
+    return String(qty);
+  };
 
   const fetchReconciliation = async () => {
     try {
@@ -93,6 +112,15 @@ export function DiagnosticsTab() {
             <SelectItem value="balanced">{t('Balanced')}</SelectItem>
           </SelectContent>
         </Select>
+        <Select value={unitMode} onValueChange={(v) => setUnitMode(v as UnitMode)}>
+          <SelectTrigger className="w-[170px]">
+            <SelectValue placeholder={t('Unit')} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="small">{t('Small unit')}</SelectItem>
+            <SelectItem value="large">{t('Large unit')}</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <Card className="flex-1 flex flex-col overflow-hidden">
@@ -101,6 +129,7 @@ export function DiagnosticsTab() {
             <TableHeader>
               <TableRow>
                 <TableHead>{t('Product')}</TableHead>
+                <TableHead>{t('Unit')}</TableHead>
                 <TableHead className="text-end">{t('Purchased')}</TableHead>
                 <TableHead className="text-end">{t('Sold')}</TableHead>
                 <TableHead className="text-end">{t('Returned')}</TableHead>
@@ -114,22 +143,23 @@ export function DiagnosticsTab() {
               {visible.map(row => (
                 <TableRow key={row.product_id}>
                   <TableCell className="font-medium">{row.product_name}</TableCell>
-                  <TableCell className="text-end">{row.purchased}</TableCell>
-                  <TableCell className="text-end">{row.sold}</TableCell>
-                  <TableCell className="text-end">{row.returned}</TableCell>
-                  <TableCell className="text-end">{row.adjustments}</TableCell>
-                  <TableCell className="text-end font-medium">{row.expected_qty}</TableCell>
-                  <TableCell className="text-end font-medium">{row.actual_qty}</TableCell>
+                  <TableCell className="text-muted-foreground">{unitLabel(row)}</TableCell>
+                  <TableCell className="text-end">{fmtQty(row.purchased, row)}</TableCell>
+                  <TableCell className="text-end">{fmtQty(row.sold, row)}</TableCell>
+                  <TableCell className="text-end">{fmtQty(row.returned, row)}</TableCell>
+                  <TableCell className="text-end">{fmtQty(row.adjustments, row)}</TableCell>
+                  <TableCell className="text-end font-medium">{fmtQty(row.expected_qty, row)}</TableCell>
+                  <TableCell className="text-end font-medium">{fmtQty(row.actual_qty, row)}</TableCell>
                   <TableCell className="text-end font-bold">
                     <span className={row.variance < 0 ? 'text-red-500' : row.variance > 0 ? 'text-green-500' : ''}>
-                      {row.variance > 0 ? '+' : ''}{row.variance}
+                      {row.variance > 0 ? '+' : ''}{fmtQty(row.variance, row)}
                     </span>
                   </TableCell>
                 </TableRow>
               ))}
               {visible.length === 0 && !loading && (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                     {data.length ? t('No products match your filters') : t('No reconciliation discrepancies found.')}
                   </TableCell>
                 </TableRow>
