@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Plus, Play, Check, ArrowLeft, Save } from 'lucide-react';
+import { Plus, Play, Check, ArrowLeft, Search } from 'lucide-react';
 import { api } from '@/api';
 import type { CycleCount, CycleCountItem } from '@/api/types';
 import {
@@ -23,6 +23,7 @@ export function CycleCountsTab() {
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
+  const [itemSearch, setItemSearch] = useState('');
 
   const fetchCounts = async () => {
     try {
@@ -115,24 +116,38 @@ export function CycleCountsTab() {
   };
 
   if (selectedCountId && selectedCount) {
+    const q = itemSearch.trim().toLowerCase();
+    const allItems = selectedCount.items ?? [];
+    const visibleItems = q
+      ? allItems.filter(it =>
+          (it.product_name?.toLowerCase().includes(q)) ||
+          (it.batch_number?.toLowerCase().includes(q)))
+      : allItems;
     return (
       <div className="flex h-full flex-col gap-4 p-4">
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-3">
           <Button variant="ghost" size="icon" onClick={() => setSelectedCountId(null)}>
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <div>
-            <h2 className="text-lg font-semibold">{selectedCount.name}</h2>
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold truncate">{selectedCount.name}</h2>
             <p className="text-sm text-muted-foreground">{t(selectedCount.status)}</p>
           </div>
-          <div className="ml-auto">
-            {selectedCount.status === 'in_progress' && (
-              <Button onClick={() => handleComplete(selectedCount.id)}>
-                <Check className="h-4 w-4 mr-2" />
-                {t('Complete & Adjust')}
-              </Button>
-            )}
+          <div className="relative ms-auto w-full sm:w-64 order-last sm:order-none">
+            <Search className="pointer-events-none absolute start-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              className="ps-8"
+              placeholder={t('Search product or batch...')}
+              value={itemSearch}
+              onChange={(e) => setItemSearch(e.target.value)}
+            />
           </div>
+          {selectedCount.status === 'in_progress' && (
+            <Button onClick={() => handleComplete(selectedCount.id)}>
+              <Check className="h-4 w-4 me-2" />
+              {t('Complete & Adjust')}
+            </Button>
+          )}
         </div>
 
         <Card className="flex-1 flex flex-col overflow-hidden">
@@ -148,7 +163,7 @@ export function CycleCountsTab() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {selectedCount.items?.map(item => (
+                {visibleItems.map(item => (
                   <TableRow key={item.id}>
                     <TableCell className="font-medium">{item.product_name}</TableCell>
                     <TableCell>{item.batch_number || '---'}</TableCell>
@@ -175,10 +190,10 @@ export function CycleCountsTab() {
                     </TableCell>
                   </TableRow>
                 ))}
-                {!selectedCount.items?.length && (
+                {!visibleItems.length && (
                   <TableRow>
                     <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                      {t('No items to count')}
+                      {allItems.length ? t('No products match your search') : t('No items to count')}
                     </TableCell>
                   </TableRow>
                 )}

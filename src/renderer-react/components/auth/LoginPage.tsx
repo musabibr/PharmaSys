@@ -25,7 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Settings, Monitor, Server, Wifi, Loader2, RefreshCw, CheckCircle2, XCircle, Search, WifiOff } from 'lucide-react';
+import { Settings, Monitor, Server, Wifi, Loader2, RefreshCw, CheckCircle2, XCircle, Search, WifiOff, Eye, EyeOff } from 'lucide-react';
 import type { DiscoveredServer } from '@/api/types';
 import { useConnectionStatus } from '@/hooks/useConnectionStatus';
 
@@ -92,6 +92,7 @@ export function LoginPage() {
   // Login form state
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -654,15 +655,29 @@ export function LoginPage() {
 
           <div className="space-y-2">
             <Label htmlFor="login-password">{t('Password')}</Label>
-            <Input
-              id="login-password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder={t('Enter your password')}
-              autoComplete="current-password"
-              disabled={loading}
-            />
+            <div className="relative">
+              <Input
+                id="login-password"
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={t('Enter your password')}
+                autoComplete="current-password"
+                disabled={loading}
+                className="pe-10"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((s) => !s)}
+                disabled={loading}
+                className="absolute end-0 top-0 flex h-full w-10 items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50"
+                aria-label={showPassword ? t('Hide password') : t('Show password')}
+                title={showPassword ? t('Hide password') : t('Show password')}
+                tabIndex={-1}
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
           </div>
 
           {error && (

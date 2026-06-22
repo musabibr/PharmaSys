@@ -11,6 +11,7 @@ import {
   History,
   Search,
   Check,
+  Scale,
 } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ProductsTab } from './ProductsTab';
@@ -23,6 +24,7 @@ import { SalesHistoryTab } from './SalesHistoryTab';
 import { SupplierProductsTab } from './SupplierProductsTab';
 import { AdjustmentsTab } from './AdjustmentsTab';
 import { CycleCountsTab } from './CycleCountsTab';
+import { DiagnosticsTab } from '@/components/admin/DiagnosticsTab';
 import { useAnyPermission, usePermission } from '@/hooks/usePermission';
 
 // ---------------------------------------------------------------------------
@@ -67,7 +69,7 @@ export function InventoryPage() {
   return (
     <div className="flex h-full flex-col">
       <Tabs value={tab} onValueChange={setTab} className="flex h-full flex-col">
-        <TabsList data-tour="inv-tabs" className="w-full justify-start overflow-x-auto flex-nowrap shrink-0 hide-scrollbar">
+        <TabsList data-tour="inv-tabs" className="w-full justify-start flex-wrap h-auto gap-1 shrink-0">
           {canViewProducts && (
             <TabsTrigger value="products" className="gap-1.5">
               <Package className="h-4 w-4" />
@@ -122,6 +124,12 @@ export function InventoryPage() {
               {t('Cycle Counts')}
             </TabsTrigger>
           )}
+          {canViewValuation && (
+            <TabsTrigger value="reconciliation" className="gap-1.5">
+              <Scale className="h-4 w-4" />
+              {t('Reconciliation')}
+            </TabsTrigger>
+          )}
           {canViewBySupplier && (
             <TabsTrigger value="by-supplier" className="gap-1.5">
               <Search className="h-4 w-4" />
@@ -173,6 +181,11 @@ export function InventoryPage() {
         {canViewBatches && (
           <TabsContent value="cycle-counts" className="flex-1 overflow-hidden">
             <CycleCountsTab />
+          </TabsContent>
+        )}
+        {canViewValuation && (
+          <TabsContent value="reconciliation" className="flex-1 overflow-hidden">
+            <DiagnosticsTab />
           </TabsContent>
         )}
         {canViewBySupplier && (

@@ -50,8 +50,7 @@ import {
 } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useTourContext } from '@/tours/TourProvider';
-import { HelpCircle, Check, Play, Activity } from 'lucide-react';
-import { DiagnosticsTab } from './DiagnosticsTab';
+import { HelpCircle, Check, Play } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -652,12 +651,6 @@ export function SettingsPage() {
             <TabsTrigger value="backup" className="gap-1.5">
               <Database className="h-4 w-4" />
               {t('Backup')}
-            </TabsTrigger>
-          )}
-          {isAdmin && (
-            <TabsTrigger value="diagnostics" className="gap-1.5">
-              <Activity className="h-4 w-4" />
-              {t('Diagnostics')}
             </TabsTrigger>
           )}
           <TabsTrigger value="security" className="gap-1.5">
@@ -1395,11 +1388,6 @@ export function SettingsPage() {
             </div>
           </TabsContent>
 
-        {isAdmin && (
-          <TabsContent value="diagnostics" className="flex-1 overflow-hidden">
-            <DiagnosticsTab />
-          </TabsContent>
-        )}
       </Tabs>
     </div>
   );

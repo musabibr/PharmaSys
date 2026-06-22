@@ -311,6 +311,11 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
 
   const draftKey = startManual ? DRAFT_KEY_MANUAL : DRAFT_KEY;
 
+  // True while a saved draft is awaiting the user's Resume/Discard decision. Blocks the
+  // auto-save effect from overwriting that draft with the empty initial state on remount —
+  // without this, "Resume" loaded an empty invoice.
+  const draftDecisionPending = useRef(false);
+
   const saveDraft = useCallback(() => {
     try {
       const key = startManual ? DRAFT_KEY_MANUAL : DRAFT_KEY;
@@ -352,6 +357,9 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
         const pastImport = d.step && d.step !== 'import';
         const hasInvoice = !!d.invoiceRef;
         if (hasItems || pastImport || hasInvoice) {
+          // Freeze auto-save until the user resolves the prompt, so the held draft
+          // isn't overwritten by the empty initial state on this remount.
+          draftDecisionPending.current = true;
           setShowDraftPrompt(true);
         } else {
           // Empty draft — discard silently
@@ -394,16 +402,20 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
       api.products.getAll().then(p => setAllProducts(p)).catch(() => {});
       api.categories.getAll().then(c => setAllCategories(c)).catch(() => {});
     } catch { /* corrupt draft — silently ignore */ }
+    draftDecisionPending.current = false;
     setShowDraftPrompt(false);
   }
 
   function discardDraft() {
     clearDraft();
+    draftDecisionPending.current = false;
     setShowDraftPrompt(false);
   }
 
   // Auto-save draft whenever step is past import (PDF flow) or always in manual flow
   useEffect(() => {
+    // Don't save while a saved draft is awaiting Resume/Discard — would clobber it.
+    if (draftDecisionPending.current) return;
     if (startManual || step !== 'import') saveDraft();
   }, [step, importItems, matchedItems, manualItems, supplierId, invoiceRef,
       purchaseDate, paymentType, installments, saveDraft, startManual]);
@@ -2538,6 +2550,10 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
             <Button variant="destructive" size="sm" onClick={() => setShowCancelConfirm(true)}>
               {t('Cancel')}
             </Button>
+            <Button variant="outline" size="sm" onClick={holdAndClose} className="gap-1.5" title={t('Save and resume later')}>
+              <Bookmark className="h-3.5 w-3.5" />
+              {t('Hold')}
+            </Button>
             <Button
               size="sm"
               onClick={() => enterMatchStep()}
@@ -2584,6 +2600,10 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
             <Button variant="destructive" size="sm" onClick={() => setShowCancelConfirm(true)}>
               {t('Cancel')}
             </Button>
+            <Button variant="outline" size="sm" onClick={holdAndClose} className="gap-1.5" title={t('Save and resume later')}>
+              <Bookmark className="h-3.5 w-3.5" />
+              {t('Hold')}
+            </Button>
           </div>
         </div>
       )}
@@ -2605,6 +2625,10 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
             )}
             <Button variant="destructive" onClick={() => setShowCancelConfirm(true)}>
               {t('Cancel')}
+            </Button>
+            <Button variant="outline" onClick={holdAndClose} className="gap-1.5" title={t('Save and resume later')}>
+              <Bookmark className="h-4 w-4" />
+              {t('Hold')}
             </Button>
           </div>
           <Button
