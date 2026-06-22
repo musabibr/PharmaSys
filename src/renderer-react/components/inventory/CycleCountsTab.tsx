@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Fragment } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -13,6 +13,9 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 
 export function CycleCountsTab() {
   const { t } = useTranslation();
@@ -24,6 +27,7 @@ export function CycleCountsTab() {
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
   const [itemSearch, setItemSearch] = useState('');
+  const [viewMode, setViewMode] = useState<'batch' | 'product'>('batch');
 
   const fetchCounts = async () => {
     try {
@@ -123,6 +127,61 @@ export function CycleCountsTab() {
           (it.product_name?.toLowerCase().includes(q)) ||
           (it.batch_number?.toLowerCase().includes(q)))
       : allItems;
+
+    // Group display only — counting stays per batch (preserves stock integrity).
+    const groups: Array<{
+      productId: number; productName: string; items: typeof visibleItems;
+      sumExpected: number; sumCounted: number; sumVariance: number; anyCounted: boolean;
+    }> = [];
+    if (viewMode === 'product') {
+      const byProduct = new Map<number, (typeof groups)[number]>();
+      for (const it of visibleItems) {
+        let g = byProduct.get(it.product_id);
+        if (!g) {
+          g = { productId: it.product_id, productName: it.product_name ?? '—', items: [],
+                sumExpected: 0, sumCounted: 0, sumVariance: 0, anyCounted: false };
+          byProduct.set(it.product_id, g);
+          groups.push(g);
+        }
+        g.items.push(it);
+        g.sumExpected += it.expected_quantity ?? 0;
+        if (it.counted_quantity != null) { g.sumCounted += it.counted_quantity; g.anyCounted = true; }
+        if (it.variance != null) g.sumVariance += it.variance;
+      }
+    }
+
+    const varianceSpan = (v: number) => (
+      <span className={v < 0 ? 'text-red-500' : v > 0 ? 'text-green-500' : ''}>
+        {v > 0 ? '+' : ''}{v}
+      </span>
+    );
+
+    const renderItemRow = (item: CycleCountItem, showProduct: boolean) => (
+      <TableRow key={item.id}>
+        <TableCell className={showProduct ? 'font-medium' : 'ps-8 text-muted-foreground'}>
+          {showProduct ? item.product_name : ''}
+        </TableCell>
+        <TableCell>{item.batch_number || '---'}</TableCell>
+        <TableCell className="text-end">{item.expected_quantity}</TableCell>
+        <TableCell className="text-end">
+          {selectedCount.status === 'in_progress' ? (
+            <Input
+              type="number"
+              min={0}
+              className="w-24 ms-auto text-end"
+              defaultValue={item.counted_quantity ?? ''}
+              onBlur={(e) => handleRecord(item.id, e.target.value)}
+            />
+          ) : (
+            item.counted_quantity ?? '---'
+          )}
+        </TableCell>
+        <TableCell className="text-end font-medium">
+          {item.variance !== null ? varianceSpan(item.variance) : '---'}
+        </TableCell>
+      </TableRow>
+    );
+
     return (
       <div className="flex h-full flex-col gap-4 p-4">
         <div className="flex flex-wrap items-center gap-3">
@@ -133,7 +192,16 @@ export function CycleCountsTab() {
             <h2 className="text-lg font-semibold truncate">{selectedCount.name}</h2>
             <p className="text-sm text-muted-foreground">{t(selectedCount.status)}</p>
           </div>
-          <div className="relative ms-auto w-full sm:w-64 order-last sm:order-none">
+          <Select value={viewMode} onValueChange={(v) => setViewMode(v as 'batch' | 'product')}>
+            <SelectTrigger className="w-40 ms-auto sm:ms-0">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="batch">{t('Per batch')}</SelectItem>
+              <SelectItem value="product">{t('By product')}</SelectItem>
+            </SelectContent>
+          </Select>
+          <div className="relative w-full sm:w-64 order-last sm:order-none">
             <Search className="pointer-events-none absolute start-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               className="ps-8"
@@ -157,39 +225,28 @@ export function CycleCountsTab() {
                 <TableRow>
                   <TableHead>{t('Product')}</TableHead>
                   <TableHead>{t('Batch')}</TableHead>
-                  <TableHead className="text-right">{t('System Qty')}</TableHead>
-                  <TableHead className="text-right w-48">{t('Counted Qty')}</TableHead>
-                  <TableHead className="text-right">{t('Variance')}</TableHead>
+                  <TableHead className="text-end">{t('System Qty')}</TableHead>
+                  <TableHead className="text-end w-48">{t('Counted Qty')}</TableHead>
+                  <TableHead className="text-end">{t('Variance')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {visibleItems.map(item => (
-                  <TableRow key={item.id}>
-                    <TableCell className="font-medium">{item.product_name}</TableCell>
-                    <TableCell>{item.batch_number || '---'}</TableCell>
-                    <TableCell className="text-right">{item.expected_quantity}</TableCell>
-                    <TableCell className="text-right">
-                      {selectedCount.status === 'in_progress' ? (
-                        <Input 
-                          type="number" 
-                          min={0}
-                          className="w-24 ml-auto text-right"
-                          defaultValue={item.counted_quantity ?? ''}
-                          onBlur={(e) => handleRecord(item.id, e.target.value)}
-                        />
-                      ) : (
-                        item.counted_quantity ?? '---'
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right font-medium">
-                      {item.variance !== null ? (
-                        <span className={item.variance < 0 ? 'text-red-500' : item.variance > 0 ? 'text-green-500' : ''}>
-                          {item.variance > 0 ? '+' : ''}{item.variance}
-                        </span>
-                      ) : '---'}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {viewMode === 'product'
+                  ? groups.map(g => (
+                      <Fragment key={g.productId}>
+                        <TableRow className="bg-muted/50">
+                          <TableCell className="font-semibold">{g.productName}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {g.items.length} {t('batches')}
+                          </TableCell>
+                          <TableCell className="text-end font-medium">{g.sumExpected}</TableCell>
+                          <TableCell className="text-end font-medium">{g.anyCounted ? g.sumCounted : '—'}</TableCell>
+                          <TableCell className="text-end font-bold">{g.anyCounted ? varianceSpan(g.sumVariance) : '—'}</TableCell>
+                        </TableRow>
+                        {g.items.map(it => renderItemRow(it, false))}
+                      </Fragment>
+                    ))
+                  : visibleItems.map(it => renderItemRow(it, true))}
                 {!visibleItems.length && (
                   <TableRow>
                     <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">

@@ -2322,5 +2322,7 @@
   "pending": "قيد الانتظار",
   "in_progress": "قيد التنفيذ",
   "completed": "مكتمل",
-  "Open transaction": "فتح المعاملة"
+  "Open transaction": "فتح المعاملة",
+  "Per batch": "حسب التشغيلة",
+  "By product": "حسب المنتج"
 }
