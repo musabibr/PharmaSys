@@ -132,6 +132,18 @@ export class BatchService {
       throw new ValidationError('Quantity cannot be negative', 'quantity_base');
     }
 
+    // Auto-derive status from the new quantity for the sold_out <-> active transition.
+    // Without this, re-stocking a sold_out batch (quantity 0 -> N) leaves status='sold_out',
+    // so POS (which requires status='active' AND quantity_base>0) keeps showing out-of-stock.
+    // Only the caller can move a batch into/out of 'quarantine'; we never touch that here.
+    if (data.quantity_base !== undefined && data.status === undefined) {
+      if (data.quantity_base > 0 && existing.status === 'sold_out') {
+        data.status = 'active';
+      } else if (data.quantity_base === 0 && existing.status === 'active') {
+        data.status = 'sold_out';
+      }
+    }
+
     // Validate selling prices are non-negative
     if (data.selling_price_parent !== undefined && data.selling_price_parent < 0) {
       throw new ValidationError('Selling price cannot be negative', 'selling_price_parent');

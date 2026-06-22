@@ -157,6 +157,27 @@ describe('BatchService', () => {
       await expect(svc.update(99, {} as any, 1)).rejects.toThrow(NotFoundError);
     });
 
+    it('re-activates a sold_out batch when quantity is restocked above zero', async () => {
+      const { svc, batchRepo } = createService();
+      const soldOut = { ...sampleBatch, status: 'sold_out' as const, quantity_base: 0 };
+      batchRepo.getById.mockResolvedValue(soldOut);
+      await svc.update(1, { quantity_base: 50 } as any, 1);
+      expect(batchRepo.update).toHaveBeenCalledWith(
+        1, soldOut.version,
+        expect.objectContaining({ quantity_base: 50, status: 'active' }),
+      );
+    });
+
+    it('marks an active batch sold_out when quantity drops to zero', async () => {
+      const { svc, batchRepo } = createService();
+      batchRepo.getById.mockResolvedValue({ ...sampleBatch, status: 'active', quantity_base: 100 });
+      await svc.update(1, { quantity_base: 0 } as any, 1);
+      expect(batchRepo.update).toHaveBeenCalledWith(
+        1, sampleBatch.version,
+        expect.objectContaining({ quantity_base: 0, status: 'sold_out' }),
+      );
+    });
+
     it('throws ConflictError on version mismatch', async () => {
       const { svc, batchRepo } = createService();
       batchRepo.getById.mockResolvedValue(sampleBatch); // version: 1

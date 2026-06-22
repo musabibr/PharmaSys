@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import {
   Loader2, Plus, Trash2, Save, Upload, ChevronLeft, ChevronRight,
   CheckCircle2, XCircle, Search, FileText, SkipForward, Clock, Pencil, PenLine, Bookmark, X, FolderOpen,
+  AlertCircle,
 } from 'lucide-react';
 import { api, throwIfError } from '@/api';
 import type { ExpensePaymentMethod, Product, Category } from '@/api/types';

@@ -148,7 +148,7 @@ export function createMockBatchRepo() {
     getAll: jest.fn().mockResolvedValue([]),
     getAllAvailable: jest.fn().mockResolvedValue([]),
     create: jest.fn().mockResolvedValue(runResult(1)),
-    update: jest.fn().mockResolvedValue(undefined),
+    update: jest.fn().mockResolvedValue(true),
     updateQuantityOptimistic: jest.fn().mockResolvedValue(true),
     getExpiring: jest.fn().mockResolvedValue([]),
     getExpired: jest.fn().mockResolvedValue([]),
