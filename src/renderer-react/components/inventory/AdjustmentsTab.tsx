@@ -17,8 +17,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Undo2, Plus, Pencil, Search, RotateCcw } from 'lucide-react';
 import { usePermission } from '@/hooks/usePermission';
+import { BatchHistoryTab } from './BatchHistoryTab';
 
 const TYPES: AdjustmentType[] = ['damage', 'expiry', 'correction'];
 
@@ -171,6 +173,12 @@ export function AdjustmentsTab() {
 
   return (
     <div className="flex h-full flex-col p-4 bg-background gap-4">
+      <Tabs defaultValue="adjustments" className="flex flex-1 flex-col overflow-hidden">
+        <TabsList className="self-start shrink-0">
+          <TabsTrigger value="adjustments">{t('Adjustments')}</TabsTrigger>
+          <TabsTrigger value="history">{t('Batch History')}</TabsTrigger>
+        </TabsList>
+        <TabsContent value="adjustments" className="flex-1 overflow-hidden flex flex-col gap-4 mt-3">
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -290,6 +298,12 @@ export function AdjustmentsTab() {
           </Table>
         </div>
       )}
+        </TabsContent>
+
+        <TabsContent value="history" className="flex-1 overflow-hidden mt-3">
+          <BatchHistoryTab />
+        </TabsContent>
+      </Tabs>
 
       {/* Create / Edit dialog */}
       <Dialog open={dialogOpen} onOpenChange={(o) => { if (!submitting) setDialogOpen(o); }}>

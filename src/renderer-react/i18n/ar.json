@@ -2342,5 +2342,15 @@
   "Counts": "عمليات الجرد",
   "Select a count": "اختر جرداً",
   "No counts yet": "لا توجد عمليات جرد بعد",
-  "No variances found": "لا توجد فروقات"
+  "No variances found": "لا توجد فروقات",
+  "Batch History": "سجل التشغيلات",
+  "Search action, batch or user...": "ابحث بالإجراء أو التشغيلة أو المستخدم...",
+  "All changes": "كل التغييرات",
+  "No batch changes found": "لا توجد تغييرات على التشغيلات",
+  "CREATE_BATCH": "إنشاء تشغيلة",
+  "UPDATE_BATCH": "تعديل تشغيلة",
+  "DELETE_BATCH": "حذف تشغيلة",
+  "REPORT_DAMAGE": "تسجيل تلف",
+  "REVERSE_ADJUSTMENT": "عكس تسوية",
+  "BULK_UPDATE_BATCH_PRICES": "تحديث أسعار جماعي"
 }
