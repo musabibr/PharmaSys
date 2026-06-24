@@ -22,7 +22,6 @@ import { SalesHistoryTab } from './SalesHistoryTab';
 import { SupplierProductsTab } from './SupplierProductsTab';
 import { AdjustmentsTab } from './AdjustmentsTab';
 import { CycleCountsTab } from './CycleCountsTab';
-import { DiagnosticsTab } from '@/components/admin/DiagnosticsTab';
 import { useAnyPermission, usePermission } from '@/hooks/usePermission';
 
 // ---------------------------------------------------------------------------
@@ -36,7 +35,6 @@ export function InventoryPage() {
   const canViewProducts   = usePermission('inventory.products.view');
   const canViewBatches    = usePermission('inventory.batches.view');
   const canViewExpiry     = useAnyPermission(['inventory.batches.view', 'inventory.expiry_alerts']);
-  const canViewValuation  = usePermission('inventory.valuation');
   const canViewReorder    = useAnyPermission(['inventory.reorder', 'inventory.low_stock']);
   const canViewDeadCap      = usePermission('inventory.dead_capital');
   const canViewSalesHistory = usePermission('inventory.batches.view');
@@ -111,14 +109,8 @@ export function InventoryPage() {
           )}
           {canViewBatches && (
             <TabsTrigger value="cycle-counts" className="gap-1.5">
-              <Check className="h-4 w-4" />
-              {t('Cycle Counts')}
-            </TabsTrigger>
-          )}
-          {canViewValuation && (
-            <TabsTrigger value="reconciliation" className="gap-1.5">
               <Scale className="h-4 w-4" />
-              {t('Reconciliation')}
+              {t('Stock Count')}
             </TabsTrigger>
           )}
           {canViewBySupplier && (
@@ -167,11 +159,6 @@ export function InventoryPage() {
         {canViewBatches && (
           <TabsContent value="cycle-counts" className="flex-1 overflow-hidden">
             <CycleCountsTab />
-          </TabsContent>
-        )}
-        {canViewValuation && (
-          <TabsContent value="reconciliation" className="flex-1 overflow-hidden">
-            <DiagnosticsTab />
           </TabsContent>
         )}
         {canViewBySupplier && (

@@ -599,8 +599,8 @@ contextBridge.exposeInMainWorld('api', {
         create: (data) =>
             invoke('cycleCounts:create', data),
 
-        start: (id) =>
-            invoke('cycleCounts:start', id),
+        start: (id, productIds) =>
+            invoke('cycleCounts:start', id, productIds),
 
         recordCount: (itemId, counted_quantity) =>
             invoke('cycleCounts:recordCount', { itemId, counted_quantity }),

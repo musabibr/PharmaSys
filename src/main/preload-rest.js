@@ -458,7 +458,7 @@ contextBridge.exposeInMainWorld('api', {
     getAll:      async ()               => get('/api/v1/cycle-counts'),
     getById:     async (id)             => get(`/api/v1/cycle-counts/${id}`),
     create:      async (data)           => post('/api/v1/cycle-counts', data),
-    start:       async (id)             => post(`/api/v1/cycle-counts/${id}/start`, {}),
+    start:       async (id, productIds) => post(`/api/v1/cycle-counts/${id}/start`, { productIds }),
     recordCount: async (itemId, counted_quantity) => post(`/api/v1/cycle-counts/items/${itemId}`, { counted_quantity }),
     complete:    async (id, applyAdjustments) => post(`/api/v1/cycle-counts/${id}/complete`, { applyAdjustments }),
   },

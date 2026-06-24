@@ -22,7 +22,7 @@ export function createCycleCountRoutes(services: ServiceContainer): Router {
   }));
 
   router.post('/:id/start', requireMicroPerm('inventory.batches.manage'), handle(async (req, res) => {
-    const count = await services.cycleCount.start(Number(req.params.id), req.user!.id);
+    const count = await services.cycleCount.start(Number(req.params.id), req.user!.id, req.body?.productIds);
     res.json({ success: true, data: count });
   }));
 

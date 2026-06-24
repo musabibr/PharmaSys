@@ -31,6 +31,20 @@ export class BatchRepository implements IBatchRepository {
     );
   }
 
+  /** Live (active/quarantine) batches for a set of products — used to scope a stock count. */
+  async getBatchesForProducts(productIds: number[]): Promise<Batch[]> {
+    if (productIds.length === 0) return [];
+    const placeholders = productIds.map(() => '?').join(',');
+    return await this.base.getAll<Batch>(
+      `SELECT b.*, p.name as product_name, p.parent_unit, p.child_unit, p.conversion_factor
+       FROM batches b
+       JOIN products p ON b.product_id = p.id
+       WHERE b.product_id IN (${placeholders}) AND b.status IN ('active','quarantine')
+       ORDER BY p.name, b.expiry_date, b.id`,
+      productIds
+    );
+  }
+
   async getById(id: number): Promise<Batch | undefined> {
     return await this.base.getOne<Batch>(
       `SELECT b.*, p.name as product_name, p.parent_unit, p.child_unit, p.conversion_factor

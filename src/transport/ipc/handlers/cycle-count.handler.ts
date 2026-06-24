@@ -14,8 +14,8 @@ export function registerCycleCountHandlers(router: IpcRouter, services: ServiceC
     return await services.cycleCount.create(payload, user!.id);
   }, { permission: 'inventory.batches.manage' });
 
-  router.handle('cycleCounts:start', async (user, id: number) => {
-    return await services.cycleCount.start(id, user!.id);
+  router.handle('cycleCounts:start', async (user, id: number, productIds?: number[]) => {
+    return await services.cycleCount.start(id, user!.id, productIds);
   }, { permission: 'inventory.batches.manage' });
 
   router.handle('cycleCounts:recordCount', async (user, payload: { itemId: number; counted_quantity: number }) => {

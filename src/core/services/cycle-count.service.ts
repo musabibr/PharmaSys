@@ -30,22 +30,34 @@ export class CycleCountService {
     return await this.getById(id);
   }
 
-  async start(id: number, userId: number): Promise<CycleCount> {
+  async start(id: number, userId: number, productIds?: number[]): Promise<CycleCount> {
     const cc = await this.getById(id);
     if (cc.status !== 'pending') throw new BusinessRuleError('Only pending cycle counts can be started');
-    
-    // Auto-populate with active, non-expired batches that have stock.
-    // Previously used getAll({}) which returned all batches including quarantined/expired/sold_out.
-    const activeBatches = await this.batchRepo.getAll({ status: 'active' });
-    const today = new Date().toISOString().split('T')[0];
-    const items = activeBatches
-      .filter(b => b.quantity_base > 0 && (!b.expiry_date || b.expiry_date >= today))
-      .map(b => ({
+
+    let items;
+    if (productIds && productIds.length > 0) {
+      // Scoped count: every live (active/quarantine) batch of the selected products,
+      // including expired ones — the whole point is to physically verify them.
+      const batches = await this.batchRepo.getBatchesForProducts(productIds);
+      items = batches.map(b => ({
         cycle_count_id: id,
         product_id: b.product_id,
         batch_id: b.id,
-        expected_quantity: b.quantity_base
+        expected_quantity: b.quantity_base,
       }));
+    } else {
+      // No scope → all active, non-expired, in-stock batches (legacy behaviour).
+      const activeBatches = await this.batchRepo.getAll({ status: 'active' });
+      const today = new Date().toISOString().split('T')[0];
+      items = activeBatches
+        .filter(b => b.quantity_base > 0 && (!b.expiry_date || b.expiry_date >= today))
+        .map(b => ({
+          cycle_count_id: id,
+          product_id: b.product_id,
+          batch_id: b.id,
+          expected_quantity: b.quantity_base,
+        }));
+    }
 
     await this.repo.inTransaction(async () => {
       await this.repo.addItems(items);

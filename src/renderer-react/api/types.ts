@@ -926,7 +926,7 @@ export interface PharmaSysApi {
     getAll(): Promise<CycleCount[]>;
     getById(id: number): Promise<CycleCount>;
     create(data: { name: string; assigned_to?: number; notes?: string }): Promise<CycleCount>;
-    start(id: number): Promise<CycleCount>;
+    start(id: number, productIds?: number[]): Promise<CycleCount>;
     recordCount(itemId: number, counted_quantity: number): Promise<{ success: boolean }>;
     complete(id: number, applyAdjustments: boolean): Promise<CycleCount>;
   };

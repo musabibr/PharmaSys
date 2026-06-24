@@ -2324,5 +2324,18 @@
   "completed": "مكتمل",
   "Open transaction": "فتح المعاملة",
   "Per batch": "حسب التشغيلة",
-  "By product": "حسب المنتج"
+  "By product": "حسب المنتج",
+  "Stock Count": "جرد المخزون",
+  "New Stock Count": "جرد مخزون جديد",
+  "Name the count and pick the products to verify (search, filter, then select).": "سمِّ الجرد واختر المنتجات المراد التحقق منها (ابحث، صفِّ، ثم اختر).",
+  "Enter a name": "أدخل اسماً",
+  "Select at least one product": "اختر منتجاً واحداً على الأقل",
+  "Failed to create stock count": "تعذر إنشاء الجرد",
+  "Failed to start": "تعذر البدء",
+  "Failed to complete": "تعذر الإكمال",
+  "Failed to record count": "تعذر تسجيل العد",
+  "All categories": "كل الفئات",
+  "Select all (filtered)": "تحديد الكل (المُصفّى)",
+  "stock": "المخزون",
+  "Start count": "بدء الجرد"
 }
