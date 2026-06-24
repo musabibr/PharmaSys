@@ -2337,5 +2337,10 @@
   "All categories": "كل الفئات",
   "Select all (filtered)": "تحديد الكل (المُصفّى)",
   "stock": "المخزون",
-  "Start count": "بدء الجرد"
+  "Start count": "بدء الجرد",
+  "products": "منتجات",
+  "Counts": "عمليات الجرد",
+  "Select a count": "اختر جرداً",
+  "No counts yet": "لا توجد عمليات جرد بعد",
+  "No variances found": "لا توجد فروقات"
 }

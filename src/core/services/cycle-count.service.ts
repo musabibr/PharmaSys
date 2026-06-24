@@ -34,30 +34,36 @@ export class CycleCountService {
     const cc = await this.getById(id);
     if (cc.status !== 'pending') throw new BusinessRuleError('Only pending cycle counts can be started');
 
-    let items;
+    // Resolve which products to count.
+    let productIdList: number[];
     if (productIds && productIds.length > 0) {
-      // Scoped count: every live (active/quarantine) batch of the selected products,
-      // including expired ones — the whole point is to physically verify them.
-      const batches = await this.batchRepo.getBatchesForProducts(productIds);
-      items = batches.map(b => ({
-        cycle_count_id: id,
-        product_id: b.product_id,
-        batch_id: b.id,
-        expected_quantity: b.quantity_base,
-      }));
+      productIdList = [...new Set(productIds)];
     } else {
-      // No scope → all active, non-expired, in-stock batches (legacy behaviour).
+      // No scope → every product that currently has active, non-expired, in-stock batches.
       const activeBatches = await this.batchRepo.getAll({ status: 'active' });
       const today = new Date().toISOString().split('T')[0];
-      items = activeBatches
-        .filter(b => b.quantity_base > 0 && (!b.expiry_date || b.expiry_date >= today))
-        .map(b => ({
-          cycle_count_id: id,
-          product_id: b.product_id,
-          batch_id: b.id,
-          expected_quantity: b.quantity_base,
-        }));
+      productIdList = [...new Set(
+        activeBatches
+          .filter(b => b.quantity_base > 0 && (!b.expiry_date || b.expiry_date >= today))
+          .map(b => b.product_id)
+      )];
     }
+
+    // PRODUCT-LEVEL: one count row per product, expected = sum of its live batch quantities.
+    // The stock count is total-based (e.g. "3 boxes + 2 strips"); the per-batch distribution
+    // of any variance happens at apply time in complete(). A selected product always gets a
+    // row even if it has no batches (expected 0), so nothing the user picks goes missing.
+    const batches = await this.batchRepo.getBatchesForProducts(productIdList);
+    const totals = new Map<number, number>();
+    for (const pid of productIdList) totals.set(pid, 0);
+    for (const b of batches) totals.set(b.product_id, (totals.get(b.product_id) ?? 0) + b.quantity_base);
+
+    const items = productIdList.map(pid => ({
+      cycle_count_id: id,
+      product_id: pid,
+      batch_id: null,
+      expected_quantity: totals.get(pid) ?? 0,
+    }));
 
     await this.repo.inTransaction(async () => {
       await this.repo.addItems(items);
@@ -107,37 +113,8 @@ export class CycleCountService {
         }
 
         for (const item of cc.items) {
-          if (item.status !== 'counted' || item.batch_id == null || item.counted_quantity == null) continue;
-
-          const batch = await this.batchRepo.getById(item.batch_id);
-          if (!batch) continue;
-
-          const newQty = item.counted_quantity;
-          // INTEGRITY FIX: compute the adjustment from the batch's CURRENT quantity at apply
-          // time, not from item.variance (which was snapshotted at count start). If a sale
-          // happened between counting and completing, the stale variance would desync the
-          // reconciliation ledger from actual stock. realDelta > 0 = stock removed (lost),
-          // < 0 = stock added (found).
-          const realDelta = batch.quantity_base - newQty;
-          if (realDelta === 0) continue; // batch already matches the count — nothing to do
-
-          const newStatus = newQty === 0 ? 'sold_out' : batch.status === 'sold_out' ? 'active' : batch.status;
-          const success = await this.batchRepo.updateQuantityOptimistic(batch.id, newQty, newStatus, batch.version);
-          if (!success) {
-            throw new BusinessRuleError(
-              `Failed to update batch ${batch.id} (${item.product_name ?? 'unknown'}) — it was modified concurrently. Please retry the cycle count.`
-            );
-          }
-
-          // Record adjustment: positive quantity_base = stock removed, negative = stock added.
-          await this.batchRepo.insertAdjustment({
-            product_id: item.product_id,
-            batch_id: item.batch_id,
-            quantity_base: realDelta,
-            reason: `Cycle Count correction (${cc.name})`,
-            type: 'correction',
-            user_id: userId
-          });
+          if (item.status !== 'counted' || item.counted_quantity == null) continue;
+          await this._applyProductCount(item.product_id, item.counted_quantity, cc.name, userId);
         }
       }
     });
@@ -148,5 +125,51 @@ export class CycleCountService {
     });
 
     return await this.getById(id);
+  }
+
+  /**
+   * Reconcile a product's total stock to the physically-counted total by distributing the
+   * difference across its live batches: shortages come off the oldest-expiry batch first
+   * (FIFO), found stock is added to the newest-expiry batch. Each per-batch change is recorded
+   * as a correction adjustment, so the reconciliation ledger stays in sync — the sum of the
+   * adjustments equals the product-level variance. Uses CURRENT batch quantities (not the
+   * start snapshot) so sales made during the count don't desync stock.
+   */
+  private async _applyProductCount(productId: number, countedBase: number, ccName: string, userId: number): Promise<void> {
+    const batches = await this.batchRepo.getBatchesForProducts([productId]); // oldest-expiry first
+    const currentTotal = batches.reduce((s, b) => s + b.quantity_base, 0);
+    const delta = countedBase - currentTotal;
+    if (delta === 0) return;
+
+    if (delta < 0) {
+      // Shortage — remove |delta| starting from the oldest-expiry batch.
+      let toRemove = -delta;
+      for (const b of batches) {
+        if (toRemove <= 0) break;
+        const take = Math.min(b.quantity_base, toRemove);
+        if (take <= 0) continue;
+        const newQty = b.quantity_base - take;
+        const newStatus = newQty === 0 ? 'sold_out' : b.status;
+        const ok = await this.batchRepo.updateQuantityOptimistic(b.id, newQty, newStatus, b.version);
+        if (!ok) throw new BusinessRuleError(`Batch ${b.id} was modified concurrently. Please retry the count.`);
+        await this.batchRepo.insertAdjustment({
+          product_id: productId, batch_id: b.id, quantity_base: take,
+          reason: `Stock count (${ccName})`, type: 'correction', user_id: userId,
+        });
+        toRemove -= take;
+      }
+    } else {
+      // Overage / found stock — add to the newest-expiry batch (last in oldest-first order).
+      if (batches.length === 0) return; // no batch to attribute found stock to
+      const target = batches[batches.length - 1];
+      const newQty = target.quantity_base + delta;
+      const newStatus = newQty > 0 && target.status === 'sold_out' ? 'active' : target.status;
+      const ok = await this.batchRepo.updateQuantityOptimistic(target.id, newQty, newStatus, target.version);
+      if (!ok) throw new BusinessRuleError(`Batch ${target.id} was modified concurrently. Please retry the count.`);
+      await this.batchRepo.insertAdjustment({
+        product_id: productId, batch_id: target.id, quantity_base: -delta,
+        reason: `Stock count (${ccName})`, type: 'correction', user_id: userId,
+      });
+    }
   }
 }
