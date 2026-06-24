@@ -39,6 +39,8 @@ export function AdjustmentsTab() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [productId, setProductId] = useState<number | null>(null);
+  const [productSearch, setProductSearch] = useState('');
+  const [showProductResults, setShowProductResults] = useState(false);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [batchId, setBatchId] = useState<number | null>(null);
   const [quantity, setQuantity] = useState('');
@@ -101,6 +103,7 @@ export function AdjustmentsTab() {
     setEditingId(null);
     setProductId(null); setBatchId(null); setBatches([]);
     setQuantity(''); setAdjType('damage'); setReason('');
+    setProductSearch(''); setShowProductResults(false);
     setDialogOpen(true);
     if (products.length === 0) {
       try { setProducts(await api.products.getAll()); } catch { /* ignore */ }
@@ -110,6 +113,8 @@ export function AdjustmentsTab() {
   const openEdit = async (adj: InventoryAdjustment) => {
     setEditingId(adj.id);
     setProductId(adj.product_id);
+    setProductSearch(adj.product_name ?? '');
+    setShowProductResults(false);
     setQuantity(String(adj.quantity_base));
     setAdjType(adj.type);
     setReason(adj.reason ?? '');
@@ -122,12 +127,23 @@ export function AdjustmentsTab() {
     } catch { /* ignore */ }
   };
 
-  const onProductChange = async (idStr: string) => {
-    const id = Number(idStr);
-    setProductId(id);
+  const selectProduct = async (p: Product) => {
+    setProductId(p.id);
+    setProductSearch(p.name);
+    setShowProductResults(false);
     setBatchId(null);
-    try { setBatches(await api.batches.getByProduct(id)); } catch { setBatches([]); }
+    try { setBatches(await api.batches.getByProduct(p.id)); } catch { setBatches([]); }
   };
+
+  // Local filtered product list for the searchable picker
+  const pq = productSearch.trim().toLowerCase();
+  const productResults = (pq
+    ? products.filter(p =>
+        p.name.toLowerCase().includes(pq) ||
+        (p.generic_name ?? '').toLowerCase().includes(pq) ||
+        (p.barcode ?? '').toLowerCase().includes(pq))
+    : products
+  ).slice(0, 50);
 
   const submitAdjustment = async () => {
     const qty = parseInt(quantity, 10);
@@ -287,12 +303,38 @@ export function AdjustmentsTab() {
           <div className="space-y-3">
             <div className="space-y-1.5">
               <Label>{t('Product')}</Label>
-              <Select value={productId ? String(productId) : ''} onValueChange={onProductChange} disabled={editingId !== null}>
-                <SelectTrigger><SelectValue placeholder={t('Select product')} /></SelectTrigger>
-                <SelectContent>
-                  {products.map(p => <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              {editingId !== null ? (
+                <Input value={productSearch} disabled />
+              ) : (
+                <div className="relative">
+                  <Search className="pointer-events-none absolute start-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    className="ps-8"
+                    placeholder={t('Search product...')}
+                    value={productSearch}
+                    onChange={(e) => { setProductSearch(e.target.value); setProductId(null); setBatchId(null); setShowProductResults(true); }}
+                    onFocus={() => setShowProductResults(true)}
+                    onBlur={() => setTimeout(() => setShowProductResults(false), 150)}
+                  />
+                  {showProductResults && (
+                    <div className="absolute z-50 mt-1 max-h-52 w-full overflow-auto rounded-md border bg-popover shadow-md">
+                      {productResults.length === 0 ? (
+                        <div className="px-3 py-2 text-sm text-muted-foreground">{t('No products')}</div>
+                      ) : productResults.map(p => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onMouseDown={() => selectProduct(p)}
+                          className="flex w-full items-center px-3 py-2 text-sm hover:bg-accent text-start"
+                        >
+                          {p.name}
+                          {p.generic_name && <span className="ms-2 text-xs text-muted-foreground truncate">{p.generic_name}</span>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <div className="space-y-1.5">
               <Label>{t('Batch')}</Label>

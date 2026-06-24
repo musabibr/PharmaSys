@@ -193,11 +193,26 @@ describe('BatchService', () => {
       }));
     });
 
-    it('blocks cost_per_parent change when batch has sales', async () => {
+    it('allows cost_per_parent change even after sales (cost edits are no longer blocked)', async () => {
       const { svc, batchRepo } = createService();
-      batchRepo.getById.mockResolvedValue(sampleBatch);
+      batchRepo.getById
+        .mockResolvedValueOnce(sampleBatch)
+        .mockResolvedValue({ ...sampleBatch, cost_per_parent: 9999 });
       batchRepo.getBatchDeleteInfo.mockResolvedValue({ quantity_base: 200, txn_count: 3, adj_count: 0 });
-      await expect(svc.update(1, { cost_per_parent: 9999 } as any, 1)).rejects.toThrow(ValidationError);
+      const result = await svc.update(1, { cost_per_parent: 9999 } as any, 1);
+      expect(result.cost_per_parent).toBe(9999);
+    });
+
+    it('records a correction adjustment when the quantity is edited (audit + reconciliation)', async () => {
+      const { svc, batchRepo } = createService();
+      batchRepo.getById
+        .mockResolvedValueOnce({ ...sampleBatch, quantity_base: 200 })
+        .mockResolvedValue({ ...sampleBatch, quantity_base: 180 });
+      await svc.update(1, { quantity_base: 180 } as any, 1);
+      // 200 current − 180 new = 20 removed
+      expect(batchRepo.insertAdjustment).toHaveBeenCalledWith(expect.objectContaining({
+        batch_id: 1, quantity_base: 20, type: 'correction',
+      }));
     });
 
     it('allows cost_per_parent change when batch has no sales', async () => {

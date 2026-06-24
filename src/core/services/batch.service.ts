@@ -152,15 +152,9 @@ export class BatchService {
       throw new ValidationError('Cost price cannot be negative', 'cost_per_parent');
     }
 
-    // Block cost_per_parent changes on batches that have been sold
-    if (data.cost_per_parent !== undefined && data.cost_per_parent !== existing.cost_per_parent) {
-      const info = await this.repo.getBatchDeleteInfo(id);
-      if (info && info.txn_count > 0) {
-        throw new ValidationError(
-          'Cannot change cost after sales have been recorded against this batch', 'cost_per_parent'
-        );
-      }
-    }
+    // NOTE: cost edits are allowed even after sales. Past sales snapshot their own
+    // cost_price into transaction_items, so editing the batch cost only affects future
+    // COGS/margin — it does not rewrite already-recorded sales.
 
     // Auto-recalculate base child prices when parent prices change
     const cf = existing.conversion_factor ?? 1;
@@ -188,6 +182,21 @@ export class BatchService {
 
     if (!success) {
       throw new ConflictError('Batch was modified by another operation. Please refresh and try again.');
+    }
+
+    // Audit a manual stock-quantity edit as a correction adjustment. This makes batch-tab
+    // edits appear in the Adjustments list AND keeps the reconciliation ledger in sync with
+    // actual stock (a silent quantity edit would otherwise create system-vs-actual variance).
+    // Convention: quantity_base > 0 = stock removed, < 0 = stock added.
+    if (data.quantity_base !== undefined && data.quantity_base !== existing.quantity_base) {
+      await this.repo.insertAdjustment({
+        product_id:    existing.product_id!,
+        batch_id:      id,
+        quantity_base: existing.quantity_base - data.quantity_base,
+        reason:        'Manual batch quantity edit',
+        type:          'correction',
+        user_id:       userId,
+      });
     }
 
     // Auto-propagate: if selling prices changed AND this is the latest batch,
