@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type { ServiceContainer } from '../../../core/services/index';
-import { requireAuth, requireMicroPerm, requireAnyMicroPerm } from '../../middleware/auth.middleware';
+import { requireAuth, requireMicroPerm, requireAnyMicroPerm, requireAdmin } from '../../middleware/auth.middleware';
 import { handle }                        from '../../middleware/route-helpers';
 
 export function reportRoutes(services: ServiceContainer): Router {
@@ -41,6 +41,10 @@ export function reportRoutes(services: ServiceContainer): Router {
       supplier_id: req.query.supplierId ? Number(req.query.supplierId) : undefined,
       payment_status: req.query.paymentStatus as any || undefined,
     })});
+  }));
+
+  router.get('/inventory-reconciliation', requireAdmin, handle(async (_req, res) => {
+    res.json({ data: await services.report.getInventoryReconciliation() });
   }));
 
   return router;

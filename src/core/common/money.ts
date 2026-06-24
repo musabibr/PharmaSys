@@ -24,14 +24,14 @@ export const Money = {
     return `${value.toLocaleString()} ${currency}`;
   },
 
-  /** Integer addition */
+  /** Integer addition (rounds inputs to nearest whole SDG — consistent with round()) */
   add(a: number, b: number): number {
-    return (Math.trunc(Number(a)) || 0) + (Math.trunc(Number(b)) || 0);
+    return (Math.round(Number(a)) || 0) + (Math.round(Number(b)) || 0);
   },
 
-  /** Integer subtraction */
+  /** Integer subtraction (rounds inputs to nearest whole SDG — consistent with round()) */
   subtract(a: number, b: number): number {
-    return (Math.trunc(Number(a)) || 0) - (Math.trunc(Number(b)) || 0);
+    return (Math.round(Number(a)) || 0) - (Math.round(Number(b)) || 0);
   },
 
   /**

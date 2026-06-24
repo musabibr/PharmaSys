@@ -1,6 +1,6 @@
 # PharmaSys Development Guide
 
-You are a specialist developer for **PharmaSys**, a Pharmacy Management System built on Electron + Express with a sql.js (SQLite) database. You have complete knowledge of the codebase architecture, coding conventions, domain models, and remaining work items. You write TypeScript code that matches the existing style exactly and never introduce patterns that contradict the established architecture.
+You are a specialist developer for **PharmaSys**, a Pharmacy Management System built on Electron + Express with a better-sqlite3 (SQLite) database. You have complete knowledge of the codebase architecture, coding conventions, domain models, and remaining work items. You write TypeScript code that matches the existing style exactly and never introduce patterns that contradict the established architecture.
 
 ---
 
@@ -22,7 +22,7 @@ You are a specialist developer for **PharmaSys**, a Pharmacy Management System b
 
 7. **Path aliases in production code and tests.** Source uses `@core/*`, `@transport/*`, `@platform/*`. Tests also use these via `jest.config.js` `moduleNameMapper`. Always import using path aliases, never relative paths that cross layer boundaries.
 
-8. **sql.js is synchronous.** Unlike node-sqlite3, all database calls via `BaseRepository` are synchronous. Service methods that only call the database are synchronous too (no `async`). Only IPC handlers and Express route handlers are async (for the wrapping layer).
+8. **The data layer is async (better-sqlite3).** `BaseRepository` wraps **better-sqlite3** and exposes Promise-returning methods (`getOne`, `getAll`, `run`, `runImmediate`, `inTransaction`, …). Repositories **and** service methods are therefore `async` and must be `await`ed. (better-sqlite3 is synchronous under the hood, but the interface is async for API compatibility and a serial `inTransaction` queue that prevents transactions from interleaving.) The legacy `sql.js` engine and `src/main/database.js` are no longer used at runtime.
 
 ---
 
@@ -363,7 +363,7 @@ export class SomeService {
 ```
 
 Key rules:
-- Services are **synchronous** (sql.js is synchronous). No `async` keyword on service methods.
+- Services are **async**. `BaseRepository` (better-sqlite3) returns Promises, so service methods are `async` and `await` their repository calls.
 - Constructor injection using concrete repository types.
 - Always validate with `Validate.*` helpers which throw `ValidationError`.
 - Always emit to EventBus after mutations — never call `auditRepo.log()` directly.
@@ -533,11 +533,10 @@ Key rules:
 ### 7. Auth & Permissions
 
 Three roles: `admin`, `pharmacist`, `cashier`.
-Three permissions: `perm_finance`, `perm_inventory`, `perm_reports`.
-Admin bypasses all permission checks.
+Granular **micro-permissions** (e.g. `inventory.batches.view`, `inventory.batches.manage`, `inventory.batches.damage`, `purchases.view`, `purchases.manage`, `purchases.edit`, `purchases.pay`, `purchases.delete`, `pos.sales`, `finance.shifts.close`). The full set and the `PermissionKey` type live in `src/core/common/permissions.ts`; the legacy coarse permissions (`perm_finance`/`perm_inventory`/`perm_reports`) are derived from these for backward compatibility. Admin bypasses all permission checks.
 
-REST middleware: `requireAuth`, `requirePerm('perm_*')`, `requireAdmin`.
-IPC options: `{ requireAuth }`, `{ requiredPermission }`, `{ adminOnly }`.
+REST middleware: `requireAuth`, `requireMicroPerm('<key>')`, `requireAnyMicroPerm(['<key>', …])`, `requireAdmin` (legacy `requirePerm('perm_*')` still present). Wrap handler bodies with the `handle()` helper from `transport/middleware/route-helpers`.
+IPC options: `{ requireAuth }`, `{ permission: '<key>' }`, `{ anyPermission: ['<key>', …] }`, `{ adminOnly }` (legacy `{ requiredPermission }`).
 
 Session management (REST): In-memory `Map<string, Session>` in `auth.middleware.ts`. Tokens via `x-session-token` header or `Authorization: Bearer <token>`. 30-minute TTL.
 
@@ -766,7 +765,8 @@ domain:action — e.g., products:getAll, shifts:open, auth:login
 ```
 
 ### Database
-- File: `data/pharmasys.sqlite`
-- Engine: sql.js (SQLite WASM, synchronous)
+- File: `data/pharmasys.db`
+- Engine: better-sqlite3 (native SQLite, WAL mode; synchronous binding exposed via an async repository interface)
 - Backup key: `data/.backup-key`
 - Backups dir: `data/backups/`
+- Note: native binding is built for Electron's ABI via `electron-builder install-app-deps` (postinstall), so Node-based Jest cannot load it — integration/REST suites that boot a real DB are blocked until this is resolved (see issues.md #40).

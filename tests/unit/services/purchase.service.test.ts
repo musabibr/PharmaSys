@@ -50,7 +50,6 @@ function createService() {
 
   const svc = new PurchaseService(
     purchaseRepo as any, supplierRepo as any,
-    expenseRepo as any, shiftRepo as any,
     base as any, bus,
     productRepo as any, categoryRepo as any,
   );

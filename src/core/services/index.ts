@@ -23,6 +23,7 @@ import { SettingsService }    from './settings.service';
 import { BackupService }      from './backup.service';
 import { PurchaseService }          from './purchase.service';
 import { RecurringExpenseService }  from './recurring-expense.service';
+import { CycleCountService }        from './cycle-count.service';
 
 export class ServiceContainer {
   private _auth?:        AuthService;
@@ -41,10 +42,12 @@ export class ServiceContainer {
   private _backup?:     BackupService;
   private _purchase?:          PurchaseService;
   private _recurringExpense?:  RecurringExpenseService;
+  private _cycleCount?:        CycleCountService;
 
   constructor(
     private readonly repos: Repositories,
-    private readonly bus:   EventBus
+    private readonly bus:   EventBus,
+    private readonly dataPath?: string
   ) {
     // Wire the audit listener — it subscribes to EventBus and writes audit logs
     new AuditListener(bus, repos.audit);
@@ -54,7 +57,8 @@ export class ServiceContainer {
     return (this._auth ??= new AuthService(
       this.repos.auth,
       this.repos.user,
-      this.bus
+      this.bus,
+      this.dataPath
     ));
   }
 
@@ -98,7 +102,8 @@ export class ServiceContainer {
       this.repos.product,
       this.repos.base,
       this.bus,
-      this.repos.settings
+      this.repos.settings,
+      this.repos.audit
     ));
   }
 
@@ -171,12 +176,18 @@ export class ServiceContainer {
     return (this._purchase ??= new PurchaseService(
       this.repos.purchase,
       this.repos.supplier,
-      this.repos.expense,
-      this.repos.shift,
       this.repos.base,
       this.bus,
       this.repos.product,
       this.repos.category,
+    ));
+  }
+
+  get cycleCount(): CycleCountService {
+    return (this._cycleCount ??= new CycleCountService(
+      this.repos.cycleCount,
+      this.repos.batch,
+      this.bus
     ));
   }
 }
@@ -199,4 +210,5 @@ export {
   BackupService,
   PurchaseService,
   RecurringExpenseService,
+  CycleCountService,
 };

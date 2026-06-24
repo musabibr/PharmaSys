@@ -214,6 +214,9 @@ contextBridge.exposeInMainWorld('api', {
 
         getAdjustments: (filters) =>
             invoke('inventory:getAdjustments', filters),
+
+        reverseAdjustment: (id) =>
+            invoke('inventory:reverseAdjustment', id),
     },
 
     // ════════════════════════════════════════
@@ -400,6 +403,9 @@ contextBridge.exposeInMainWorld('api', {
                 supplier_id: supplierId || undefined,
                 payment_status: paymentStatus || undefined,
             }),
+
+        inventoryReconciliation: () =>
+            invoke('reports:inventoryReconciliation'),
     },
 
     // ════════════════════════════════════════
@@ -577,6 +583,30 @@ contextBridge.exposeInMainWorld('api', {
     pdf: {
         parsePython: (buffer) =>
             invoke('pdf:parsePython', buffer),
+    },
+
+    // ════════════════════════════════════════
+    //  CYCLE COUNTS
+    // ════════════════════════════════════════
+
+    cycleCounts: {
+        getAll: () =>
+            invoke('cycleCounts:getAll'),
+
+        getById: (id) =>
+            invoke('cycleCounts:getById', id),
+
+        create: (data) =>
+            invoke('cycleCounts:create', data),
+
+        start: (id, productIds) =>
+            invoke('cycleCounts:start', id, productIds),
+
+        recordCount: (itemId, counted_quantity) =>
+            invoke('cycleCounts:recordCount', { itemId, counted_quantity }),
+
+        complete: (id, applyAdjustments) =>
+            invoke('cycleCounts:complete', { id, applyAdjustments }),
     },
 
     // ════════════════════════════════════════

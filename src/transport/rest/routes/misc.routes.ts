@@ -28,7 +28,7 @@ export function heldSaleRoutes(services: ServiceContainer): Router {
   const router = Router();
 
   router.get('/', requireAnyMicroPerm(['pos.held_sales', 'pos.sales']), handle(async (req, res) => {
-    res.json({ data: await services.heldSale.getAll(req.user!.id) });
+    res.json({ data: await services.heldSale.getAll(req.user!.id, req.user!.role) });
   }));
 
   router.post('/', requireAnyMicroPerm(['pos.held_sales', 'pos.sales']), handle(async (req, res) => {

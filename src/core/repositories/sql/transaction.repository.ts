@@ -206,12 +206,12 @@ export class TransactionRepository implements ITransactionRepository {
       `INSERT INTO transaction_items (
          transaction_id, product_id, batch_id, quantity_base,
          unit_type, unit_price, cost_price, discount_percent,
-         line_total, gross_profit, conversion_factor_snapshot
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         line_total, gross_profit, checkout_discount_allocation, conversion_factor_snapshot
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.transaction_id, data.product_id, data.batch_id, data.quantity_base,
         data.unit_type, data.unit_price, data.cost_price, data.discount_percent,
-        data.line_total, data.gross_profit, data.conversion_factor_snapshot,
+        data.line_total, data.gross_profit, data.checkout_discount_allocation, data.conversion_factor_snapshot,
       ]
     );
   }

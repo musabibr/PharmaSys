@@ -1384,12 +1384,11 @@ export function SettingsPage() {
                   {t('Reset All Tours')}
                 </Button>
               </div>
-            </section>
-          </div>
-        </TabsContent>
+              </section>
+            </div>
+          </TabsContent>
 
       </Tabs>
     </div>
   );
 }
-

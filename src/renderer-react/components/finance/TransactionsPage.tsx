@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { api } from '@/api';
@@ -107,6 +108,8 @@ function createDefaultFilters(): TransactionFilters {
 
 export function TransactionsPage() {
   const { t } = useTranslation();
+  const location = useLocation();
+  const navigate = useNavigate();
   const currentUser = useAuthStore((s) => s.currentUser);
   const isAdmin = currentUser?.role === 'admin';
   const canVoid = usePermission('finance.transactions.void');
@@ -182,6 +185,19 @@ export function TransactionsPage() {
   useEffect(() => {
     fetchTransactions();
   }, [fetchTransactions]);
+
+  // Open a specific transaction when navigated here from another page (e.g. Sales History
+  // "view exact transaction"). The detail sheet fetches the transaction by id directly, so
+  // it works even if the row isn't in the current filtered list. Clear state so it doesn't
+  // re-open on refresh/back.
+  useEffect(() => {
+    const txnId = (location.state as { transactionId?: number } | null)?.transactionId;
+    if (txnId) {
+      setDetailTransactionId(txnId);
+      setDetailOpen(true);
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [location.state]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- Summary from backend aggregates (across ALL matching rows, not just current page) ----
   const summary = useMemo(() => ({

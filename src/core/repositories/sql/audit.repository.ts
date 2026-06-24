@@ -79,4 +79,20 @@ export class AuditRepository implements IAuditRepository {
     );
     return result.changes;
   }
+
+  async getDeletedBatchExpiry(batchId: number): Promise<string | undefined> {
+    const log = await this.base.getOne<{ old_values: string }>(
+      `SELECT old_values FROM audit_logs 
+       WHERE table_name = 'batches' AND action = 'DELETE_BATCH' AND record_id = ?
+       ORDER BY created_at DESC LIMIT 1`,
+      [batchId]
+    );
+    if (!log || !log.old_values) return undefined;
+    try {
+      const parsed = JSON.parse(log.old_values);
+      return parsed.expiry_date;
+    } catch {
+      return undefined;
+    }
+  }
 }

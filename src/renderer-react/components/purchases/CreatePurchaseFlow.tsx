@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import {
   Loader2, Plus, Trash2, Save, Upload, ChevronLeft, ChevronRight,
   CheckCircle2, XCircle, Search, FileText, SkipForward, Clock, Pencil, PenLine, Bookmark, X, FolderOpen,
+  AlertCircle,
 } from 'lucide-react';
 import { api, throwIfError } from '@/api';
 import type { ExpensePaymentMethod, Product, Category } from '@/api/types';
@@ -283,6 +284,9 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
   const [submitting, setSubmitting] = useState(false);
   const [showDraftPrompt, setShowDraftPrompt] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
+  const [mismatchErrorMsg, setMismatchErrorMsg] = useState('');
+  const [forceConfirmMismatch, setForceConfirmMismatch] = useState(false);
 
   // Manual items mode (separate from PDF import)
   const [manualItems, setManualItems] = useState<ManualItem[]>([]);
@@ -306,6 +310,11 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
   // ─── Draft persistence ────────────────────────────────────────────────────
 
   const draftKey = startManual ? DRAFT_KEY_MANUAL : DRAFT_KEY;
+
+  // True while a saved draft is awaiting the user's Resume/Discard decision. Blocks the
+  // auto-save effect from overwriting that draft with the empty initial state on remount —
+  // without this, "Resume" loaded an empty invoice.
+  const draftDecisionPending = useRef(false);
 
   const saveDraft = useCallback(() => {
     try {
@@ -348,6 +357,9 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
         const pastImport = d.step && d.step !== 'import';
         const hasInvoice = !!d.invoiceRef;
         if (hasItems || pastImport || hasInvoice) {
+          // Freeze auto-save until the user resolves the prompt, so the held draft
+          // isn't overwritten by the empty initial state on this remount.
+          draftDecisionPending.current = true;
           setShowDraftPrompt(true);
         } else {
           // Empty draft — discard silently
@@ -390,16 +402,20 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
       api.products.getAll().then(p => setAllProducts(p)).catch(() => {});
       api.categories.getAll().then(c => setAllCategories(c)).catch(() => {});
     } catch { /* corrupt draft — silently ignore */ }
+    draftDecisionPending.current = false;
     setShowDraftPrompt(false);
   }
 
   function discardDraft() {
     clearDraft();
+    draftDecisionPending.current = false;
     setShowDraftPrompt(false);
   }
 
   // Auto-save draft whenever step is past import (PDF flow) or always in manual flow
   useEffect(() => {
+    // Don't save while a saved draft is awaiting Resume/Discard — would clobber it.
+    if (draftDecisionPending.current) return;
     if (startManual || step !== 'import') saveDraft();
   }, [step, importItems, matchedItems, manualItems, supplierId, invoiceRef,
       purchaseDate, paymentType, installments, saveDraft, startManual]);
@@ -408,6 +424,15 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
 
   function confirmCancel() {
     clearDraft();
+    setShowCancelConfirm(false);
+    onComplete();
+  }
+
+  // Close the flow but KEEP the draft so it can be resumed next time. The restore
+  // prompt on mount picks it back up. Without this, the only exits (Cancel / submit)
+  // both clear the draft, so a held invoice came back empty.
+  function holdAndClose() {
+    saveDraft();
     setShowCancelConfirm(false);
     onComplete();
   }
@@ -1130,13 +1155,19 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
             }
           : undefined,
         pending_items: pendingItemsPayload,
+        idempotency_key: idempotencyKey,
+        force_confirm_mismatch: forceConfirmMismatch,
       }));
 
       toast.success(t('Purchase created successfully'));
       clearDraft();
       onComplete();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : t('Failed to create purchase'));
+    } catch (err: any) {
+      if (err.code === 'TOTAL_MISMATCH') {
+        setMismatchErrorMsg(err.message);
+      } else {
+        toast.error(err instanceof Error ? err.message : t('Failed to create purchase'));
+      }
     } finally {
       setSubmitting(false);
     }
@@ -1145,6 +1176,7 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
     paymentType, paymentMethod, bankReference, installments, installmentDiff,
     initialPayment, initialPayMethod, initialPayRef, deferInstallments,
     hasItems, hasManualItems, matchedItems, manualItems, manualMode, onComplete, t, totalAmount, parkedKeys, clearDraft,
+    idempotencyKey, forceConfirmMismatch,
   ]);
 
   // ─── Render ─────────────────────────────────────────────────────────────
@@ -2518,6 +2550,10 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
             <Button variant="destructive" size="sm" onClick={() => setShowCancelConfirm(true)}>
               {t('Cancel')}
             </Button>
+            <Button variant="outline" size="sm" onClick={holdAndClose} className="gap-1.5" title={t('Save and resume later')}>
+              <Bookmark className="h-3.5 w-3.5" />
+              {t('Hold')}
+            </Button>
             <Button
               size="sm"
               onClick={() => enterMatchStep()}
@@ -2564,6 +2600,10 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
             <Button variant="destructive" size="sm" onClick={() => setShowCancelConfirm(true)}>
               {t('Cancel')}
             </Button>
+            <Button variant="outline" size="sm" onClick={holdAndClose} className="gap-1.5" title={t('Save and resume later')}>
+              <Bookmark className="h-3.5 w-3.5" />
+              {t('Hold')}
+            </Button>
           </div>
         </div>
       )}
@@ -2585,6 +2625,10 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
             )}
             <Button variant="destructive" onClick={() => setShowCancelConfirm(true)}>
               {t('Cancel')}
+            </Button>
+            <Button variant="outline" onClick={holdAndClose} className="gap-1.5" title={t('Save and resume later')}>
+              <Bookmark className="h-4 w-4" />
+              {t('Hold')}
             </Button>
           </div>
           <Button
@@ -2681,14 +2725,43 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {/* ── Mismatch Confirm Dialog ───────────────────────────────────────── */}
+      <Dialog open={!!mismatchErrorMsg} onOpenChange={(open) => !open && setMismatchErrorMsg('')}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertCircle className="h-5 w-5" />
+              {t('Total Mismatch')}
+            </DialogTitle>
+            <DialogDescription className="pt-2 text-base text-foreground">
+              {mismatchErrorMsg}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => setMismatchErrorMsg('')}>
+              {t('Cancel')}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setMismatchErrorMsg('');
+                setForceConfirmMismatch(true);
+                setTimeout(() => handleSubmit(), 0);
+              }}
+            >
+              {t('Confirm Mismatch')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Cancel Confirmation Dialog ───────────────────────────────────── */}
       <Dialog open={showCancelConfirm} onOpenChange={setShowCancelConfirm}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>{t('Cancel purchase?')}</DialogTitle>
+            <DialogTitle>{t('Leave this purchase?')}</DialogTitle>
             <DialogDescription>
-              {t('All your progress will be lost. Are you sure you want to cancel?')}
+              {t('Hold it to finish later, or discard to lose your progress.')}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-0">
@@ -2696,7 +2769,11 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
               {t('Keep editing')}
             </Button>
             <Button variant="destructive" onClick={confirmCancel}>
-              {t('Cancel')}
+              {t('Discard')}
+            </Button>
+            <Button onClick={holdAndClose} className="gap-1.5">
+              <Bookmark className="h-4 w-4" />
+              {t('Hold & resume later')}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -20,6 +20,7 @@ import { BackupRepository }      from './backup.repository';
 import { SupplierRepository }           from './supplier.repository';
 import { PurchaseRepository }           from './purchase.repository';
 import { RecurringExpenseRepository }   from './recurring-expense.repository';
+import { CycleCountRepository }         from './cycle-count.repository';
 
 export interface Repositories {
   base:        BaseRepository;
@@ -39,6 +40,7 @@ export interface Repositories {
   supplier:           SupplierRepository;
   purchase:           PurchaseRepository;
   recurringExpense:   RecurringExpenseRepository;
+  cycleCount:         CycleCountRepository;
 }
 
 export function createRepositories(
@@ -70,6 +72,7 @@ export function createRepositories(
     supplier:         new SupplierRepository(base),
     purchase:         new PurchaseRepository(base),
     recurringExpense: new RecurringExpenseRepository(base),
+    cycleCount:       new CycleCountRepository(base),
   };
 }
 
@@ -92,4 +95,5 @@ export {
   SupplierRepository,
   PurchaseRepository,
   RecurringExpenseRepository,
+  CycleCountRepository,
 };

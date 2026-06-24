@@ -85,6 +85,12 @@ export function purchaseRoutes(services: ServiceContainer): Router {
     res.json({ data: await services.purchase.getUpcomingSummary() });
   }));
 
+  // Global pending-items list. MUST be declared before GET /:id so Express does not
+  // match the literal "pending-items" segment as a purchase id.
+  router.get('/pending-items', requireMicroPerm('purchases.view'), handle(async (req, res) => {
+    res.json({ data: await services.purchase.getAllPendingItems(req.query as any) });
+  }));
+
   router.post('/:id/items', requireMicroPerm('purchases.manage'), handle(async (req, res) => {
     res.status(201).json({
       data: await services.purchase.addItemsToPurchase(
@@ -105,6 +111,10 @@ export function purchaseRoutes(services: ServiceContainer): Router {
     res.json({ data: await services.purchase.getPayments(Number(req.params.id)) });
   }));
 
+  router.get('/:id/pending-items', requireMicroPerm('purchases.view'), handle(async (req, res) => {
+    res.json({ data: await services.purchase.getPendingItems(Number(req.params.id)) });
+  }));
+
   router.post('/', requireMicroPerm('purchases.manage'), handle(async (req, res) => {
     res.status(201).json({ data: await services.purchase.createPurchase(req.body, req.user!.id) });
   }));
@@ -114,21 +124,26 @@ export function purchaseRoutes(services: ServiceContainer): Router {
   }));
 
   router.delete('/:id', requireMicroPerm('purchases.delete'), handle(async (req, res) => {
-    await services.purchase.deletePurchase(Number(req.params.id), req.user!.id);
+    const force = req.query.force === 'true' && req.user!.role === 'admin';
+    await services.purchase.deletePurchase(Number(req.params.id), req.user!.id, force);
     res.json({ data: { ok: true } });
   }));
 
-  router.patch('/:id/schedule', requireMicroPerm('purchases.edit'), handle(async (req, res) => {
+  // Replace the unpaid installment schedule. Declared before PUT /:id/schedule so the
+  // more specific "/schedule/replace" path wins. Matches preload-rest.js client contract.
+  router.put('/:id/schedule/replace', requireMicroPerm('purchases.edit'), handle(async (req, res) => {
     res.json({
-      data: await services.purchase.updatePaymentSchedule(
+      data: await services.purchase.replaceUnpaidSchedule(
         Number(req.params.id), req.body.payments, req.user!.id
       ),
     });
   }));
 
+  // Update existing installments. The client (purchases.updatePaymentSchedule) uses PUT,
+  // not PATCH — using PATCH here caused this call to hit replaceUnpaidSchedule instead.
   router.put('/:id/schedule', requireMicroPerm('purchases.edit'), handle(async (req, res) => {
     res.json({
-      data: await services.purchase.replaceUnpaidSchedule(
+      data: await services.purchase.updatePaymentSchedule(
         Number(req.params.id), req.body.payments, req.user!.id
       ),
     });
@@ -146,6 +161,55 @@ export function purchaseRoutes(services: ServiceContainer): Router {
         req.body.adjustment_strategy,
       ),
     });
+  }));
+
+  router.put('/payments/:paymentId', requireMicroPerm('purchases.edit'), handle(async (req, res) => {
+    res.json({ data: await services.purchase.updatePayment(Number(req.params.paymentId), req.body, req.user!.id) });
+  }));
+
+  router.post('/payments/:paymentId/unpay', requireMicroPerm('purchases.edit'), handle(async (req, res) => {
+    res.json({ data: await services.purchase.unmarkPaymentPaid(Number(req.params.paymentId), req.user!.id) });
+  }));
+
+  router.delete('/payments/:paymentId', requireMicroPerm('purchases.edit'), handle(async (req, res) => {
+    await services.purchase.deletePayment(Number(req.params.paymentId), req.user!.id);
+    res.json({ data: { ok: true } });
+  }));
+
+  // ─── Item Editing ────────────────────────────────────────────────────────────
+
+  router.put('/items/:itemId', requireMicroPerm('purchases.edit'), handle(async (req, res) => {
+    res.json({ data: await services.purchase.updatePurchaseItem(Number(req.params.itemId), req.body, req.user!.id) });
+  }));
+
+  router.delete('/items/:itemId', requireMicroPerm('purchases.edit'), handle(async (req, res) => {
+    await services.purchase.deletePurchaseItem(Number(req.params.itemId), req.user!.id);
+    res.json({ data: { ok: true } });
+  }));
+
+  // ─── Pending Items ─────────────────────────────────────────────────────────────
+
+  router.post('/pending-items/:pendingItemId/complete', requireMicroPerm('purchases.manage'), handle(async (req, res) => {
+    res.json({ data: await services.purchase.completePendingItem(Number(req.params.pendingItemId), req.body, req.user!.id) });
+  }));
+
+  router.put('/pending-items/:pendingItemId', requireMicroPerm('purchases.manage'), handle(async (req, res) => {
+    res.json({
+      data: await services.purchase.updatePendingItem(
+        Number(req.params.pendingItemId), req.body.rawData, req.body.notes, req.user!.id
+      ),
+    });
+  }));
+
+  router.delete('/pending-items/:pendingItemId', requireMicroPerm('purchases.manage'), handle(async (req, res) => {
+    await services.purchase.deletePendingItem(Number(req.params.pendingItemId), req.user!.id);
+    res.json({ data: { ok: true } });
+  }));
+
+  // ─── Merge Invoices ────────────────────────────────────────────────────────────
+
+  router.post('/:id/merge', requireMicroPerm('purchases.manage'), handle(async (req, res) => {
+    res.json({ data: await services.purchase.mergePurchases(Number(req.params.id), req.body.sourceIds, req.user!.id) });
   }));
 
   return router;

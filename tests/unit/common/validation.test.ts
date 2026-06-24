@@ -125,8 +125,14 @@ describe('Validate', () => {
     it('throws on null', () => {
       expect(() => Validate.id(null)).toThrow(ValidationError);
     });
-    it('throws on string', () => {
-      expect(() => Validate.id('1' as any)).toThrow(ValidationError);
+    it('coerces a numeric string to a number', () => {
+      expect(Validate.id('1' as any)).toBe(1);
+      expect(Validate.id('42' as any)).toBe(42);
+    });
+    it('throws on a non-numeric string', () => {
+      expect(() => Validate.id('abc' as any)).toThrow(ValidationError);
+      expect(() => Validate.id('' as any)).toThrow(ValidationError);
+      expect(() => Validate.id('1.5' as any)).toThrow(ValidationError);
     });
     it('uses custom field name', () => {
       try { Validate.id(0, 'Product'); } catch (e: any) {

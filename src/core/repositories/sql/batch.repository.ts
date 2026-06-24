@@ -16,6 +16,10 @@ export class BatchRepository implements IBatchRepository {
     return row?.id ?? null;
   }
 
+  async inTransaction<T>(work: () => Promise<T>): Promise<T> {
+    return await this.base.inTransaction(work);
+  }
+
   async getByProduct(productId: number): Promise<Batch[]> {
     return await this.base.getAll<Batch>(
       `SELECT b.*, p.name as product_name, p.parent_unit, p.child_unit, p.conversion_factor
@@ -24,6 +28,20 @@ export class BatchRepository implements IBatchRepository {
        WHERE b.product_id = ?
        ORDER BY b.expiry_date, b.id`,
       [productId]
+    );
+  }
+
+  /** Live (active/quarantine) batches for a set of products — used to scope a stock count. */
+  async getBatchesForProducts(productIds: number[]): Promise<Batch[]> {
+    if (productIds.length === 0) return [];
+    const placeholders = productIds.map(() => '?').join(',');
+    return await this.base.getAll<Batch>(
+      `SELECT b.*, p.name as product_name, p.parent_unit, p.child_unit, p.conversion_factor
+       FROM batches b
+       JOIN products p ON b.product_id = p.id
+       WHERE b.product_id IN (${placeholders}) AND b.status IN ('active','quarantine')
+       ORDER BY p.name, b.expiry_date, b.id`,
+      productIds
     );
   }
 
@@ -114,8 +132,8 @@ export class BatchRepository implements IBatchRepository {
       `INSERT INTO batches (product_id, batch_number, expiry_date, quantity_base,
        cost_per_parent, cost_per_child, cost_per_child_override,
        selling_price_parent, selling_price_child,
-       selling_price_parent_override, selling_price_child_override, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+       selling_price_parent_override, selling_price_child_override, status, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 1)`,
       [
         data.product_id,
         data.batch_number ?? null,
@@ -132,8 +150,8 @@ export class BatchRepository implements IBatchRepository {
     );
   }
 
-  async update(id: number, data: Partial<UpdateBatchInput>): Promise<void> {
-    await this.base.runImmediate(
+  async update(id: number, expectedVersion: number, data: Partial<UpdateBatchInput>): Promise<boolean> {
+    const changes = await this.base.runAndGetChanges(
       `UPDATE batches SET
          batch_number = COALESCE(?, batch_number),
          expiry_date = COALESCE(?, expiry_date),
@@ -148,7 +166,7 @@ export class BatchRepository implements IBatchRepository {
          status = COALESCE(?, status),
          version = version + 1,
          updated_at = datetime('now', 'localtime')
-       WHERE id = ?`,
+       WHERE id = ? AND version = ?`,
       [
         data.batch_number ?? null,
         data.expiry_date ?? null,
@@ -162,8 +180,10 @@ export class BatchRepository implements IBatchRepository {
         data.selling_price_child_override ?? null,
         data.status ?? null,
         id,
+        expectedVersion,
       ]
     );
+    return changes > 0;
   }
 
   /**
@@ -190,7 +210,7 @@ export class BatchRepository implements IBatchRepository {
       `SELECT b.*, p.name as product_name, p.parent_unit, p.child_unit, p.conversion_factor
        FROM batches b
        JOIN products p ON b.product_id = p.id
-       WHERE b.status = 'active'
+       WHERE b.status IN ('active', 'quarantine')
          AND b.quantity_base > 0
          AND b.expiry_date >= date('now')
          AND b.expiry_date <= date('now', ?)
@@ -204,7 +224,7 @@ export class BatchRepository implements IBatchRepository {
       `SELECT b.*, p.name as product_name, p.parent_unit, p.child_unit, p.conversion_factor
        FROM batches b
        JOIN products p ON b.product_id = p.id
-       WHERE b.expiry_date < date('now') AND b.status = 'active' AND b.quantity_base > 0
+       WHERE b.expiry_date < date('now') AND b.status IN ('active', 'quarantine') AND b.quantity_base > 0
        ORDER BY b.expiry_date, p.name`
     );
   }
@@ -249,6 +269,18 @@ export class BatchRepository implements IBatchRepository {
     );
   }
 
+  async getAdjustmentById(id: number): Promise<InventoryAdjustment | undefined> {
+    return await this.base.getOne<InventoryAdjustment>(
+      `SELECT ia.*, p.name as product_name, b.batch_number, u.username
+       FROM inventory_adjustments ia
+       LEFT JOIN products p ON ia.product_id = p.id
+       LEFT JOIN batches b ON ia.batch_id = b.id
+       LEFT JOIN users u ON ia.user_id = u.id
+       WHERE ia.id = ?`,
+      [id]
+    );
+  }
+
   async getActiveBatchesForPriceUpdate(productId: number): Promise<Array<{ id: number; batch_number: string | null; quantity_base: number; expiry_date: string }>> {
     return await this.base.getAll(
       `SELECT id, batch_number, quantity_base, expiry_date FROM batches
@@ -263,21 +295,34 @@ export class BatchRepository implements IBatchRepository {
     productId: number,
     sellingPriceParent: number,
     sellingPriceChildBase: number,
-    sellingPriceChildOverride: number | null
+    sellingPriceChildOverride: number | null,
+    preserveOverrides: boolean = false
   ): Promise<number> {
-    const result = await this.base.runAndGetChanges(
-      `UPDATE batches SET
-         selling_price_parent = ?,
-         selling_price_child = ?,
-         selling_price_parent_override = 0,
-         selling_price_child_override = CASE WHEN ? > 0 THEN ? ELSE 0 END,
-         version = version + 1,
-         updated_at = datetime('now', 'localtime')
-       WHERE product_id = ? AND status = 'active' AND quantity_base > 0
-         AND expiry_date >= date('now')`,
-      [sellingPriceParent, sellingPriceChildBase, sellingPriceChildOverride ?? 0, sellingPriceChildOverride ?? 0, productId]
-    );
-    return result;
+    if (preserveOverrides) {
+      return await this.base.runAndGetChanges(
+        `UPDATE batches SET
+           selling_price_parent = ?,
+           selling_price_child = ?,
+           version = version + 1,
+           updated_at = datetime('now', 'localtime')
+         WHERE product_id = ? AND status = 'active' AND quantity_base > 0
+           AND expiry_date >= date('now')`,
+        [sellingPriceParent, sellingPriceChildBase, productId]
+      );
+    } else {
+      return await this.base.runAndGetChanges(
+        `UPDATE batches SET
+           selling_price_parent = ?,
+           selling_price_child = ?,
+           selling_price_parent_override = 0,
+           selling_price_child_override = CASE WHEN ? > 0 THEN ? ELSE 0 END,
+           version = version + 1,
+           updated_at = datetime('now', 'localtime')
+         WHERE product_id = ? AND status = 'active' AND quantity_base > 0
+           AND expiry_date >= date('now')`,
+        [sellingPriceParent, sellingPriceChildBase, sellingPriceChildOverride ?? 0, sellingPriceChildOverride ?? 0, productId]
+      );
+    }
   }
 
   /**
@@ -302,7 +347,7 @@ export class BatchRepository implements IBatchRepository {
          version = version + 1,
          updated_at = datetime('now', 'localtime')
        WHERE product_id = ? AND id != ?
-         AND status IN ('active', 'quarantine')`,
+         AND status = 'active'`,
       [sellingPriceParent, sellingPriceChild, sellingPriceParentOverride, sellingPriceChildOverride, productId, excludeBatchId]
     );
   }
@@ -333,7 +378,11 @@ export class BatchRepository implements IBatchRepository {
   async rescaleQuantitiesForProduct(productId: number, oldCf: number, newCf: number): Promise<void> {
     if (oldCf === newCf) return;
     await this.base.runImmediate(
-      `UPDATE batches SET quantity_base = quantity_base * ? / ? WHERE product_id = ?`,
+      `UPDATE batches SET 
+         quantity_base = quantity_base * ? / ?,
+         version = version + 1,
+         updated_at = datetime('now', 'localtime')
+       WHERE product_id = ?`,
       [newCf, oldCf, productId]
     );
   }

@@ -50,10 +50,13 @@ export const Validate = {
   },
 
   id(val: unknown, fieldName = 'ID'): number {
-    if (typeof val !== 'number' || !Number.isInteger(val) || val <= 0) {
+    // Accept numeric strings ("42") too — IDs arrive as strings from REST URL params,
+    // query strings and form inputs. Still reject non-integers, <= 0, and non-numerics.
+    const n = typeof val === 'string' ? Number(val.trim()) : val;
+    if (typeof n !== 'number' || !Number.isInteger(n) || n <= 0) {
       throw new ValidationError(`Invalid ${fieldName}`, fieldName);
     }
-    return val;
+    return n;
   },
 
   dateString(val: unknown, fieldName: string): string {
@@ -63,6 +66,17 @@ export const Validate = {
     const d = new Date(String(val) + 'T00:00:00Z');
     if (isNaN(d.getTime())) throw new ValidationError(`${fieldName} is not a valid date`, fieldName);
     return String(val);
+  },
+
+  futureDate(val: unknown, fieldName: string): string {
+    const str = Validate.dateString(val, fieldName);
+    const d = new Date(str + 'T00:00:00Z');
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    if (d < today) {
+      throw new ValidationError(`${fieldName} must be a date in the future`, fieldName);
+    }
+    return str;
   },
 
   enum<T extends string>(val: unknown, allowed: readonly T[], fieldName: string): T {

@@ -8,6 +8,20 @@ export type PaymentMethod = 'cash' | 'bank_transfer' | 'mixed';
 export type ShiftStatus = 'open' | 'closed';
 export type AdjustmentType = 'damage' | 'expiry' | 'correction';
 
+export interface InventoryAdjustment {
+  id: number;
+  product_id: number;
+  batch_id: number;
+  quantity_base: number;
+  reason: string | null;
+  type: AdjustmentType;
+  user_id: number;
+  created_at: string;
+  product_name?: string;
+  batch_number?: string;
+  username?: string;
+}
+
 export interface User {
   id: number;
   username: string;
@@ -521,6 +535,8 @@ export interface CreatePurchaseInput {
     reference_number?: string;
   };
   pending_items?: Array<{ raw_data: string; notes?: string }>;
+  force_confirm_mismatch?: boolean;
+  idempotency_key?: string;
 }
 
 export interface PurchaseReport {
@@ -582,7 +598,41 @@ export type SupplierProductPreset =
   | 'price_decreased'
   | 'slow_movers'
   | 'best_margin'
+  | 'worst_margin'
   | 'approaching_expiry';
+
+// ─── Cycle Counts ─────────────────────────────────────────────────────────────
+
+export interface CycleCountItem {
+  id: number;
+  cycle_count_id: number;
+  product_id: number;
+  batch_id: number | null;
+  expected_quantity: number;
+  counted_quantity: number | null;
+  variance: number | null;
+  status: 'pending' | 'counted' | 'verified';
+  product_name?: string;
+  batch_number?: string;
+  parent_unit?: string;
+  child_unit?: string;
+  conversion_factor?: number;
+}
+
+export interface CycleCount {
+  id: number;
+  name: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+  created_by: number;
+  assigned_to: number | null;
+  started_at: string | null;
+  completed_at: string | null;
+  notes: string | null;
+  created_at: string;
+  created_by_username?: string;
+  assigned_to_username?: string;
+  items?: CycleCountItem[];
+}
 
 export type SupplierProductSort =
   | 'last_purchased_desc'
@@ -736,6 +786,7 @@ export interface PharmaSysApi {
   inventory: {
     reportDamage(batchId: number, quantity: number, reason: string, type: AdjustmentType): Promise<{ success: boolean }>;
     getAdjustments(filters?: unknown): Promise<unknown[]>;
+    reverseAdjustment(id: number): Promise<{ success: boolean }>;
   };
 
   cashDrops: {
@@ -800,6 +851,7 @@ export interface PharmaSysApi {
     deadCapital(days: number): Promise<DeadCapitalItem[]>;
     inventoryValuation(filters?: unknown): Promise<InventoryValuationResult>;
     purchaseReport(startDate: string, endDate: string, supplierId?: number, paymentStatus?: string): Promise<PurchaseReport>;
+    inventoryReconciliation(): Promise<any[]>;
   };
 
   dashboard: {
@@ -868,6 +920,15 @@ export interface PharmaSysApi {
     getAllPendingItems(filters?: { search?: string; supplier_id?: number; page?: number; limit?: number }): Promise<PaginatedResult<EnrichedPendingItem>>;
     getProductsBySupplier(supplierId: number, filters?: SupplierProductFilters): Promise<PaginatedResult<SupplierProductRecord>>;
     getSuppliersByProduct(productId: number, page?: number, limit?: number): Promise<PaginatedResult<ProductSupplierRecord>>;
+  };
+
+  cycleCounts: {
+    getAll(): Promise<CycleCount[]>;
+    getById(id: number): Promise<CycleCount>;
+    create(data: { name: string; assigned_to?: number; notes?: string }): Promise<CycleCount>;
+    start(id: number, productIds?: number[]): Promise<CycleCount>;
+    recordCount(itemId: number, counted_quantity: number): Promise<{ success: boolean }>;
+    complete(id: number, applyAdjustments: boolean): Promise<CycleCount>;
   };
 
   pdf: {

@@ -319,9 +319,16 @@ export function BatchForm({
           <div className="space-y-2">
             <Label htmlFor="batch-number">{t('Batch Number')}</Label>
             {isEditMode ? (
-              <p className="text-sm font-medium rounded-md border bg-muted/50 px-3 py-2">
-                {batchNumber || '---'}
-              </p>
+              <div className="flex gap-2">
+                <p className="flex-1 text-sm font-medium rounded-md border bg-muted/50 px-3 py-2">
+                  {batchNumber || '---'}
+                </p>
+                {batch?.version !== undefined && (
+                  <div className="shrink-0 flex items-center justify-center rounded-md border bg-muted/50 px-3 py-2 text-xs text-muted-foreground" title={t('Batch Version')}>
+                    v{batch.version}
+                  </div>
+                )}
+              </div>
             ) : (
               <Input
                 id="batch-number"

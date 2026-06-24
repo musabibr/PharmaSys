@@ -942,7 +942,11 @@ def extract_rows(pdf_path: str) -> list:
 
     with pdfplumber.open(pdf_path) as pdf:
         for page_idx, page in enumerate(pdf.pages):
-            tables = page.extract_tables()
+            try:
+                tables = page.extract_tables()
+            except Exception as e:
+                sys.stderr.write(f'Warning: extract_tables failed on page {page_idx + 1}: {e}\n')
+                continue
             if not tables:
                 continue
 
@@ -1128,7 +1132,10 @@ def extract_rows(pdf_path: str) -> list:
 
     # ── Fallback: word-based extraction if table parsing found nothing ──
     if not results:
-        results = _extract_via_words(pdf_path)
+        try:
+            results = _extract_via_words(pdf_path)
+        except Exception as e:
+            sys.stderr.write(f'Warning: _extract_via_words failed: {e}\n')
 
     return results
 
@@ -1146,11 +1153,13 @@ def main():
         sys.stderr.write(f'File not found: {pdf_path}\n')
         sys.exit(1)
 
+    rows = []
     try:
         rows = extract_rows(pdf_path)
     except Exception as e:
         sys.stderr.write(f'PDF parsing error: {e}\n')
-        sys.exit(1)
+        # Do not exit here; continue to dump whatever partial rows we got
+        # Note: extract_rows might fail before assigning to rows, so rows starts empty
 
     # Output JSON to stdout
     if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':

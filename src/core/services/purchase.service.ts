@@ -1,7 +1,5 @@
 import type { PurchaseRepository } from '../repositories/sql/purchase.repository';
 import type { SupplierRepository } from '../repositories/sql/supplier.repository';
-import type { ExpenseRepository } from '../repositories/sql/expense.repository';
-import type { ShiftRepository } from '../repositories/sql/shift.repository';
 import type { ProductRepository } from '../repositories/sql/product.repository';
 import type { CategoryRepository } from '../repositories/sql/category.repository';
 import type { BaseRepository } from '../repositories/sql/base.repository';
@@ -24,8 +22,6 @@ export class PurchaseService {
   constructor(
     private readonly purchaseRepo: PurchaseRepository,
     private readonly supplierRepo: SupplierRepository,
-    private readonly expenseRepo:  ExpenseRepository,
-    private readonly shiftRepo:    ShiftRepository,
     private readonly base:         BaseRepository,
     private readonly bus:          EventBus,
     private readonly productRepo:  ProductRepository,
@@ -496,6 +492,13 @@ export class PurchaseService {
     const purchaseDate = Validate.dateString(data.purchase_date, 'Purchase date');
     const alertDays = Math.max(0, Math.round(data.alert_days_before ?? 7));
 
+    // Idempotency check
+    const idempotencyKey = data.idempotency_key?.trim();
+    if (idempotencyKey) {
+      const existingPurchase = await this.purchaseRepo.getByIdempotencyKey(idempotencyKey);
+      if (existingPurchase) return existingPurchase;
+    }
+
     // Compute total: trust data.total_amount when provided (user may override the items sum
     // to match the supplier's invoice, e.g. when the invoice includes non-itemised fees).
     // Fall back to summing item costs only when total_amount is absent.
@@ -508,6 +511,22 @@ export class PurchaseService {
       : hasItems
         ? itemsComputedTotal
         : Money.round(Validate.positiveNumber(data.total_amount, 'Total amount'));
+
+    let finalNotes = data.notes ?? null;
+    if (hasItems && data.total_amount && data.total_amount > 0) {
+      const delta = Math.abs(totalAmount - itemsComputedTotal);
+      const threshold = Math.max(0.05 * itemsComputedTotal, 100);
+      if (delta > threshold) {
+        if (!data.force_confirm_mismatch) {
+          throw new ValidationError(
+            `Purchase total (${Money.format(totalAmount)}) differs significantly from the sum of items (${Money.format(itemsComputedTotal)}). Please confirm if this is intentional.`,
+            'TOTAL_MISMATCH'
+          );
+        }
+        const deltaText = `[Delta: ${totalAmount > itemsComputedTotal ? '+' : '-'}${Money.format(delta)}]`;
+        finalNotes = finalNotes ? `${finalNotes}\n${deltaText}` : deltaText;
+      }
+    }
 
     let supplierName: string | null = null;
     if (data.supplier_id) {
@@ -546,8 +565,9 @@ export class PurchaseService {
         total_paid: initialPaid,
         payment_status: initialStatus,
         alert_days_before: alertDays,
-        notes: data.notes ?? null,
+        notes: finalNotes,
         user_id: userId,
+        idempotency_key: idempotencyKey ?? null,
       });
 
       // 2. Process items (create products/batches/purchase_items)
@@ -895,6 +915,14 @@ export class PurchaseService {
   ): Promise<void> {
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
+
+      if (item.quantity <= 0) {
+        throw new ValidationError(`Item quantity must be greater than 0 for "${item.new_product?.name || 'unknown item'}"`);
+      }
+      if (item.cost_per_parent <= 0) {
+        throw new ValidationError(`Item cost must be greater than 0 for "${item.new_product?.name || 'unknown item'}"`);
+      }
+
       const lineTotal = Money.round(item.quantity * item.cost_per_parent);
 
       if (item.product_id) {
@@ -902,12 +930,17 @@ export class PurchaseService {
         const product = await this.productRepo.getById(item.product_id);
         if (!product) throw new NotFoundError('Product', item.product_id);
 
-        // Update barcode on existing product if it has none and the invoice provides one
+        // Update barcode on existing product if it has none and the invoice provides one.
+        // Skip if the barcode already belongs to another product — assigning a duplicate
+        // would break future barcode lookups (the wrong product would be matched).
         if (item.barcode && !product.barcode) {
-          await this.base.run(
-            'UPDATE products SET barcode = ? WHERE id = ?',
-            [item.barcode, item.product_id]
-          );
+          const barcodeOwner = await this.productRepo.findByBarcode(item.barcode);
+          if (!barcodeOwner) {
+            await this.base.run(
+              'UPDATE products SET barcode = ? WHERE id = ?',
+              [item.barcode, item.product_id]
+            );
+          }
         }
 
         const cf = product.conversion_factor || 1;
@@ -946,8 +979,13 @@ export class PurchaseService {
         let existingProduct = np.barcode
           ? await this.productRepo.findByBarcode(np.barcode)
           : undefined;
+        // Track how the match was resolved so a name-based merge (exact normalized
+        // name collision, forced by the partial UNIQUE index on active product name)
+        // is recorded in the audit log instead of happening silently.
+        let matchedBy: 'barcode' | 'name' | null = existingProduct ? 'barcode' : null;
         if (!existingProduct) {
           existingProduct = await this.productRepo.findByName(np.name);
+          if (existingProduct) matchedBy = 'name';
         }
 
         let productId: number;
@@ -955,12 +993,16 @@ export class PurchaseService {
         if (existingProduct) {
           // Use existing product — just add a new batch
           productId = existingProduct.id;
-          // Update barcode if the existing product has none
+          // Update barcode if the existing product has none — but only if no other product
+          // already owns it, to avoid creating duplicate barcodes.
           if (np.barcode && !existingProduct.barcode) {
-            await this.base.run(
-              'UPDATE products SET barcode = ? WHERE id = ?',
-              [np.barcode, productId]
-            );
+            const barcodeOwner = await this.productRepo.findByBarcode(np.barcode);
+            if (!barcodeOwner) {
+              await this.base.run(
+                'UPDATE products SET barcode = ? WHERE id = ?',
+                [np.barcode, productId]
+              );
+            }
           }
         } else {
           // Resolve or create category
@@ -1021,7 +1063,11 @@ export class PurchaseService {
         this.bus.emit('entity:mutated', {
           action: existingProduct ? 'UPDATE_PRODUCT' : 'CREATE_PRODUCT', table: 'products',
           recordId: productId, userId,
-          newValues: { name: np.name, source: 'purchase_import' },
+          newValues: {
+            name: np.name,
+            source: 'purchase_import',
+            ...(matchedBy === 'name' ? { name_merged: true } : {}),
+          },
         });
       } else {
         throw new ValidationError(
@@ -1060,6 +1106,7 @@ export class PurchaseService {
            selling_price_parent_override = ?,
            selling_price_child = ?,
            selling_price_child_override = ?,
+           version = version + 1,
            updated_at = datetime('now', 'localtime')
        WHERE product_id = ?
          AND status = 'active'
@@ -1099,6 +1146,9 @@ export class PurchaseService {
       : Money.divideToChild(sellParent, conversionFactor);
     const quantityBase = item.quantity * conversionFactor;
 
+    // Bound the free-text batch number (length + trim); null when empty.
+    const batchNumber = Validate.optionalString(item.batch_number, 'Batch number', 60);
+
     // Expiry date is NOT NULL in the schema — default to 2 years from now if missing
     let expiryDate = item.expiry_date && item.expiry_date.trim()
       ? item.expiry_date
@@ -1108,6 +1158,8 @@ export class PurchaseService {
     if (dmyMatch) expiryDate = `${dmyMatch[3]}-${dmyMatch[2].padStart(2, '0')}-${dmyMatch[1].padStart(2, '0')}`;
     else if (/^\d{4}-\d{2}$/.test(expiryDate)) expiryDate += '-01';
 
+    Validate.dateString(expiryDate, 'Expiry date');
+
     const result = await this.base.run(
       `INSERT INTO batches (product_id, batch_number, expiry_date, quantity_base,
        cost_per_parent, cost_per_child, cost_per_child_override,
@@ -1115,7 +1167,7 @@ export class PurchaseService {
        selling_price_parent_override, selling_price_child_override, version)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
       [
-        productId, item.batch_number ?? null, expiryDate,
+        productId, batchNumber, expiryDate,
         quantityBase, costParent, costChild, costChild,
         sellParent, sellChild, sellParent, sellChild,
       ]
@@ -1180,6 +1232,12 @@ export class PurchaseService {
     const payment = await this.purchaseRepo.getPaymentById(paymentId);
     if (!payment) throw new NotFoundError('Payment', paymentId);
 
+    // Editing the scheduled amount/due_date of an already-paid installment desyncs it from
+    // the actual paid_amount and corrupts the financial record. Require an unmark first.
+    if (payment.is_paid && (data.amount !== undefined || data.due_date !== undefined)) {
+      throw new BusinessRuleError('Cannot change the amount or due date of a paid payment. Unmark it as paid first.');
+    }
+
     const updateData: Record<string, unknown> = {};
     if (data.amount !== undefined) updateData.amount = Money.round(Validate.positiveNumber(data.amount, 'Amount'));
     if (data.due_date !== undefined) updateData.due_date = Validate.dateString(data.due_date, 'Due date');
@@ -1214,6 +1272,12 @@ export class PurchaseService {
   async deletePayment(paymentId: number, userId: number): Promise<void> {
     const payment = await this.purchaseRepo.getPaymentById(paymentId);
     if (!payment) throw new NotFoundError('Payment', paymentId);
+
+    // Deleting a paid payment silently erases the record of an actual money transfer.
+    // Require unmarking it first so the paid_amount/total reconciliation stays correct.
+    if (payment.is_paid) {
+      throw new BusinessRuleError('Cannot delete a paid payment. Unmark it as paid first to preserve the record of the money transfer.');
+    }
 
     await this.purchaseRepo.deletePayment(paymentId);
 
@@ -1278,7 +1342,21 @@ export class PurchaseService {
 
     const updateData: Record<string, unknown> = {};
     if (data.quantity_received !== undefined) updateData.quantity_received = Validate.positiveInteger(data.quantity_received, 'Quantity');
-    if (data.cost_per_parent !== undefined) updateData.cost_per_parent = Money.round(Validate.positiveNumber(data.cost_per_parent, 'Cost'));
+    if (data.cost_per_parent !== undefined && data.cost_per_parent !== item.cost_per_parent) {
+      if (item.batch_id) {
+        const batchInfo = await this.base.getOne<{ txn_count: number; adj_count: number }>(
+          `SELECT
+             (SELECT COUNT(*) FROM transaction_items WHERE batch_id = ?) as txn_count,
+             (SELECT COUNT(*) FROM inventory_adjustments WHERE batch_id = ?) as adj_count
+           FROM batches WHERE id = ?`,
+          [item.batch_id, item.batch_id, item.batch_id]
+        );
+        if (batchInfo && (batchInfo.txn_count > 0 || batchInfo.adj_count > 0)) {
+          throw new BusinessRuleError('Cannot edit cost of a purchase item whose batch has transaction or adjustment history');
+        }
+      }
+      updateData.cost_per_parent = Money.round(Validate.positiveNumber(data.cost_per_parent, 'Cost'));
+    }
     if (data.selling_price_parent !== undefined) updateData.selling_price_parent = Money.round(data.selling_price_parent);
 
     // Recalculate line_total
@@ -1288,45 +1366,78 @@ export class PurchaseService {
     const newLineTotal = Money.round(qty * cost);
     updateData.line_total = newLineTotal;
 
-    await this.purchaseRepo.updateItem(itemId, updateData);
+    // Wrap all writes (item, batch, purchase totals) in a single transaction so a
+    // partial failure can't leave the purchase total inconsistent with its items.
+    await this.base.inTransaction(async () => {
+      await this.purchaseRepo.updateItem(itemId, updateData);
 
-    // Update associated batch if it exists
-    // BUG 3 FIX: Update _override fields (POS uses override > 0 ? override : base)
-    if (item.batch_id) {
-      const batchUpdate: Record<string, unknown> = {};
-      if (data.cost_per_parent !== undefined) {
-        batchUpdate.cost_per_parent = updateData.cost_per_parent;
-      }
-      if (data.selling_price_parent !== undefined) {
-        batchUpdate.selling_price_parent = updateData.selling_price_parent;
-        batchUpdate.selling_price_parent_override = updateData.selling_price_parent;
-      }
-      if (data.quantity_received !== undefined) {
+      // Update associated batch if it exists
+      // BUG 3 FIX: Update _override fields (POS uses override > 0 ? override : base)
+      if (item.batch_id) {
         const product = await this.productRepo.getById(item.product_id);
         const cf = product?.conversion_factor ?? 1;
-        batchUpdate.quantity_base = qty * cf;
+        const sets: string[] = [];
+        const params: unknown[] = [];
+        if (data.cost_per_parent !== undefined) {
+          sets.push('cost_per_parent = ?');
+          params.push(updateData.cost_per_parent);
+          // Recalculate child cost from parent cost using CF
+          if (cf > 1) {
+            const childCost = Money.divideToChild(updateData.cost_per_parent as number, cf);
+            sets.push('cost_per_child = ?', 'cost_per_child_override = ?');
+            params.push(childCost, childCost);
+          }
+        }
+        if (data.selling_price_parent !== undefined) {
+          sets.push('selling_price_parent = ?', 'selling_price_parent_override = ?');
+          params.push(updateData.selling_price_parent, updateData.selling_price_parent);
+          // Recalculate child selling price from parent price using CF
+          if (cf > 1) {
+            const childSell = Money.divideToChild(updateData.selling_price_parent as number, cf);
+            sets.push('selling_price_child = ?', 'selling_price_child_override = ?');
+            params.push(childSell, childSell);
+          }
+        }
+        if (data.quantity_received !== undefined) {
+          // INTEGRITY FIX: apply the DELTA in base units, never reset to qty*cf — resetting
+          // would wipe out units already sold/adjusted from this batch and inflate stock
+          // (system shows more than actual). Re-derive status from the resulting quantity.
+          const deltaBase = (qty - item.quantity_received) * cf;
+          if (deltaBase !== 0) {
+            const b = await this.base.getOne<{ quantity_base: number; status: string }>(
+              'SELECT quantity_base, status FROM batches WHERE id = ?', [item.batch_id]
+            );
+            if (b) {
+              const newQty = Math.max(0, b.quantity_base + deltaBase);
+              const newStatus = newQty === 0 ? 'sold_out'
+                : (b.status === 'sold_out' ? 'active' : b.status);
+              sets.push('quantity_base = ?', 'status = ?');
+              params.push(newQty, newStatus);
+            }
+          }
+        }
+        if (sets.length > 0) {
+          await this.base.run(
+            `UPDATE batches SET ${sets.join(', ')}, version = version + 1, updated_at = datetime('now', 'localtime') WHERE id = ?`,
+            [...params, item.batch_id]
+          );
+        }
       }
-      if (Object.keys(batchUpdate).length > 0) {
-        await this.base.run(
-          `UPDATE batches SET ${Object.keys(batchUpdate).map(k => `${k} = ?`).join(', ')}, updated_at = datetime('now', 'localtime') WHERE id = ?`,
-          [...Object.values(batchUpdate), item.batch_id]
-        );
+
+      // BUG 6 FIX: Use delta to preserve pending item cost in total
+      // BUG 5 FIX: Also recalculate payment status
+      const purchase = await this.purchaseRepo.getById(item.purchase_id);
+      if (purchase) {
+        const delta = newLineTotal - oldLineTotal;
+        const newTotal = Math.max(0, purchase.total_amount + delta);
+        await this.purchaseRepo.updateTotalAmount(purchase.id, newTotal);
+
+        const paidTotal = await this.purchaseRepo.getPaidTotal(purchase.id);
+        const newStatus = paidTotal >= newTotal ? 'paid' as const
+          : paidTotal > 0 ? 'partial' as const : 'unpaid' as const;
+        await this.purchaseRepo.updateTotals(purchase.id, paidTotal, newStatus);
       }
-    }
-
-    // BUG 6 FIX: Use delta to preserve pending item cost in total
-    // BUG 5 FIX: Also recalculate payment status
-    const purchase = await this.purchaseRepo.getById(item.purchase_id);
-    if (purchase) {
-      const delta = newLineTotal - oldLineTotal;
-      const newTotal = Math.max(0, purchase.total_amount + delta);
-      await this.purchaseRepo.updateTotalAmount(purchase.id, newTotal);
-
-      const paidTotal = await this.purchaseRepo.getPaidTotal(purchase.id);
-      const newStatus = paidTotal >= newTotal ? 'paid' as const
-        : paidTotal > 0 ? 'partial' as const : 'unpaid' as const;
-      await this.purchaseRepo.updateTotals(purchase.id, paidTotal, newStatus);
-    }
+    });
 
     this.bus.emit('entity:mutated', {
       action: 'UPDATE_PURCHASE', table: 'purchase_items',
@@ -1346,42 +1457,57 @@ export class PurchaseService {
     const itemLineTotal = item.line_total ?? Money.round(item.quantity_received * item.cost_per_parent);
     const batchId = item.batch_id;
 
-    // BUG 1 FIX: Delete item FIRST (removes purchase_items FK to batch),
-    // THEN handle batch cleanup safely
-    await this.purchaseRepo.deleteItem(itemId);
+    // Wrap item removal, batch cleanup, adjustment insert and total recalculation in a
+    // single transaction so a mid-sequence failure can't leave the purchase inconsistent.
+    await this.base.inTransaction(async () => {
+      // BUG 1 FIX: Delete item FIRST (removes purchase_items FK to batch),
+      // THEN handle batch cleanup safely
+      await this.purchaseRepo.deleteItem(itemId);
 
-    if (batchId) {
-      // Try safe delete: only if no transaction_items or inventory_adjustments reference it
-      const canDelete = await this.base.getOne<{ cnt: number }>(
-        `SELECT (
-           (SELECT COUNT(*) FROM transaction_items WHERE batch_id = ?) +
-           (SELECT COUNT(*) FROM inventory_adjustments WHERE batch_id = ?)
-         ) as cnt`,
-        [batchId, batchId]
-      );
-      if ((canDelete?.cnt ?? 0) === 0) {
-        await this.base.run('DELETE FROM batches WHERE id = ?', [batchId]);
-      } else {
-        // Soft-delete: zero out stock, mark sold_out
-        await this.base.run(
-          `UPDATE batches SET quantity_base = 0, status = 'sold_out', updated_at = datetime('now', 'localtime') WHERE id = ?`,
-          [batchId]
+      if (batchId) {
+        // Try safe delete: only if no transaction_items or inventory_adjustments reference it
+        const canDelete = await this.base.getOne<{ cnt: number }>(
+          `SELECT (
+             (SELECT COUNT(*) FROM transaction_items WHERE batch_id = ?) +
+             (SELECT COUNT(*) FROM inventory_adjustments WHERE batch_id = ?)
+           ) as cnt`,
+          [batchId, batchId]
         );
+        if ((canDelete?.cnt ?? 0) === 0) {
+          await this.base.run('DELETE FROM batches WHERE id = ?', [batchId]);
+        } else {
+          // Soft-delete: zero out stock, mark sold_out, increment version for optimistic locking
+          const batchRow = await this.base.getOne<{ quantity_base: number; product_id: number }>(
+            'SELECT quantity_base, product_id FROM batches WHERE id = ?', [batchId]
+          );
+          await this.base.run(
+            `UPDATE batches SET quantity_base = 0, status = 'sold_out', version = version + 1, updated_at = datetime('now', 'localtime') WHERE id = ?`,
+            [batchId]
+          );
+          // Create adjustment record so reconciliation stays balanced
+          if (batchRow && batchRow.quantity_base > 0) {
+            await this.base.run(
+              `INSERT INTO inventory_adjustments (product_id, batch_id, quantity_base, reason, type, user_id, created_at)
+               VALUES (?, ?, ?, ?, 'correction', ?, datetime('now', 'localtime'))`,
+              [batchRow.product_id, batchId, batchRow.quantity_base, 'Purchase item deleted — stock removed', userId]
+            );
+          }
+        }
       }
-    }
 
-    // BUG 9 FIX: Use delta, not full recalc (preserves pending item cost)
-    // BUG 5 FIX: Also recalculate payment status
-    const purchase = await this.purchaseRepo.getById(item.purchase_id);
-    if (purchase) {
-      const newTotal = Math.max(0, purchase.total_amount - itemLineTotal);
-      await this.purchaseRepo.updateTotalAmount(purchase.id, newTotal);
+      // BUG 9 FIX: Use delta, not full recalc (preserves pending item cost)
+      // BUG 5 FIX: Also recalculate payment status
+      const purchase = await this.purchaseRepo.getById(item.purchase_id);
+      if (purchase) {
+        const newTotal = Math.max(0, purchase.total_amount - itemLineTotal);
+        await this.purchaseRepo.updateTotalAmount(purchase.id, newTotal);
 
-      const paidTotal = await this.purchaseRepo.getPaidTotal(purchase.id);
-      const newStatus = paidTotal >= newTotal ? 'paid' as const
-        : paidTotal > 0 ? 'partial' as const : 'unpaid' as const;
-      await this.purchaseRepo.updateTotals(purchase.id, paidTotal, newStatus);
-    }
+        const paidTotal = await this.purchaseRepo.getPaidTotal(purchase.id);
+        const newStatus = paidTotal >= newTotal ? 'paid' as const
+          : paidTotal > 0 ? 'partial' as const : 'unpaid' as const;
+        await this.purchaseRepo.updateTotals(purchase.id, paidTotal, newStatus);
+      }
+    });
 
     this.bus.emit('entity:mutated', {
       action: 'DELETE_PURCHASE_ITEM', table: 'purchase_items',
@@ -1510,14 +1636,5 @@ export class PurchaseService {
       if (!merged) throw new InternalError('Failed to retrieve merged purchase');
       return merged;
     });
-  }
-
-  private async _getOrCreateSupplierPaymentCategory(): Promise<number> {
-    const categories = await this.expenseRepo.getCategories();
-    const existing = categories.find(c => c.name === 'Supplier Payment');
-    if (existing) return existing.id;
-
-    const result = await this.expenseRepo.createCategory('Supplier Payment');
-    return result.lastInsertRowid as number;
   }
 }

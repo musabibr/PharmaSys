@@ -187,6 +187,7 @@ export interface TransactionItem {
   discount_percent: number;
   line_total: number;
   gross_profit: number;
+  checkout_discount_allocation: number;
   conversion_factor_snapshot: number;
   created_at: string;
   // Joined fields
@@ -261,6 +262,37 @@ export interface Shift {
 export interface ExpenseCategory {
   id: number;
   name: string;
+}
+
+export interface CycleCount {
+  id: number;
+  name: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+  created_by: number;
+  assigned_to: number | null;
+  started_at: string | null;
+  completed_at: string | null;
+  notes: string | null;
+  created_at: string;
+  created_by_username?: string;
+  assigned_to_username?: string;
+  items?: CycleCountItem[];
+}
+
+export interface CycleCountItem {
+  id: number;
+  cycle_count_id: number;
+  product_id: number;
+  batch_id: number | null;
+  expected_quantity: number;
+  counted_quantity: number | null;
+  variance: number | null;
+  status: 'pending' | 'counted' | 'verified';
+  product_name?: string;
+  batch_number?: string;
+  parent_unit?: string;
+  child_unit?: string;
+  conversion_factor?: number;
 }
 
 export interface Expense {
@@ -945,6 +977,8 @@ export interface CreatePurchaseInput {
     reference_number?: string;
   };
   pending_items?: Array<{ raw_data: string; notes?: string }>;
+  force_confirm_mismatch?: boolean;
+  idempotency_key?: string;
 }
 
 export interface PurchaseFilters {

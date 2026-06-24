@@ -22,28 +22,28 @@ describe('HeldSaleService', () => {
   // getAll
   // ═══════════════════════════════════════════════════════════════════════════
   describe('getAll', () => {
-    it('returns held sales for a user', async () => {
+    it('returns only the requesting non-admin user\'s held sales', async () => {
       const { svc, repo } = createService();
       repo.getAll.mockResolvedValue([sampleHeldSale]);
 
-      const result = await svc.getAll(1);
+      const result = await svc.getAll(1, 'cashier');
       expect(repo.getAll).toHaveBeenCalledWith(1);
       expect(result).toHaveLength(1);
     });
 
-    it('returns all held sales when no userId', async () => {
+    it('returns all held sales for an admin', async () => {
       const { svc, repo } = createService();
       repo.getAll.mockResolvedValue([sampleHeldSale]);
 
-      const result = await svc.getAll();
-      expect(repo.getAll).toHaveBeenCalledWith(undefined);
+      const result = await svc.getAll(1, 'admin');
+      expect(repo.getAll).toHaveBeenCalledWith();
       expect(result).toHaveLength(1);
     });
 
     it('returns empty array when no held sales', async () => {
       const { svc, repo } = createService();
       repo.getAll.mockResolvedValue([]);
-      expect(await svc.getAll(1)).toEqual([]);
+      expect(await svc.getAll(1, 'cashier')).toEqual([]);
     });
   });
 

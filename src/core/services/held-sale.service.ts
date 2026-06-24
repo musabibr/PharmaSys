@@ -2,6 +2,7 @@ import type { HeldSaleRepository } from '../repositories/sql/held-sale.repositor
 import type { EventBus }            from '../events/event-bus';
 import type { HeldSale }            from '../types/models';
 import { Validate }                 from '../common/validation';
+import { Money }                     from '../common/money';
 import { NotFoundError, ValidationError, InternalError } from '../types/errors';
 
 export class HeldSaleService {
@@ -10,8 +11,11 @@ export class HeldSaleService {
     private readonly bus:  EventBus
   ) {}
 
-  async getAll(userId?: number): Promise<HeldSale[]> {
-    return await this.repo.getAll(userId);
+  async getAll(requestingUserId: number, requestingUserRole: string): Promise<HeldSale[]> {
+    if (requestingUserRole === 'admin') {
+      return await this.repo.getAll();
+    }
+    return await this.repo.getAll(requestingUserId);
   }
 
   async save(userId: number, items: unknown[], customerNote?: string): Promise<HeldSale> {
@@ -22,7 +26,7 @@ export class HeldSaleService {
 
     // Calculate total from items (matches legacy saveHeldSale)
     const totalAmount = (items as Array<{ quantity?: unknown; unit_price?: unknown }>).reduce(
-      (s, i) => s + Math.round((Number(i.quantity) || 0) * (Number(i.unit_price) || 0)),
+      (s, i) => s + Money.round((Number(i.quantity) || 0) * (Number(i.unit_price) || 0)),
       0
     );
 

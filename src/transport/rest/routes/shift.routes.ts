@@ -65,7 +65,7 @@ export function shiftRoutes(services: ServiceContainer): Router {
 
   router.post('/:id/close', requireAnyMicroPerm(['finance.shifts.close', 'pos.sales']), handle(async (req, res) => {
     const { actualCash, notes } = req.body;
-    res.json({ data: await services.shift.close(Number(req.params.id), actualCash, notes ?? null, req.user!.id) });
+    res.json({ data: await services.shift.close(Number(req.params.id), actualCash, notes ?? null, req.user!.id, req.user!.role) });
   }));
 
   // Admin-only: force-close any user's shift

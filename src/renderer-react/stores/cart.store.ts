@@ -31,11 +31,19 @@ interface CartState {
   getItemCount: () => number;
 }
 
-function calcLineTotal(item: CartItem): number {
-  const gross = item.unit_price * item.quantity;
+/** Rounded gross for a line (whole SDG). Single source of truth so subtotal, discount,
+ *  and total can never disagree on how a line is rounded. */
+function lineGross(item: CartItem): number {
+  return Math.round(item.unit_price * item.quantity);
+}
+
+function lineDiscount(item: CartItem): number {
   const pct = Math.min(100, Math.max(0, item.discount_percent));
-  const discount = Math.floor(gross * pct / 100);
-  return Math.max(0, gross - discount);
+  return Math.floor(lineGross(item) * pct / 100);
+}
+
+function calcLineTotal(item: CartItem): number {
+  return Math.max(0, lineGross(item) - lineDiscount(item));
 }
 
 export const useCartStore = create<CartState>((set, get) => ({
@@ -73,14 +81,10 @@ export const useCartStore = create<CartState>((set, get) => ({
 
   clear: () => set({ items: [], extraDiscount: 0 }),
 
-  getSubtotal: () => get().items.reduce((s, i) => s + Math.round(i.unit_price * i.quantity), 0),
+  getSubtotal: () => get().items.reduce((s, i) => s + lineGross(i), 0),
 
   getDiscountTotal: () => {
-    const lineDiscounts = get().items.reduce((s, i) => {
-      const gross = Math.round(i.unit_price * i.quantity);
-      const pct = Math.min(100, Math.max(0, i.discount_percent));
-      return s + Math.floor(gross * pct / 100);
-    }, 0);
+    const lineDiscounts = get().items.reduce((s, i) => s + lineDiscount(i), 0);
     return lineDiscounts + get().extraDiscount;
   },
 

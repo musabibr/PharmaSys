@@ -78,6 +78,25 @@ export class PurchaseRepository implements IPurchaseRepository {
     return purchase;
   }
 
+  async getByIdempotencyKey(key: string): Promise<Purchase | undefined> {
+    const purchase = await this.base.getOne<Purchase>(
+      `SELECT p.*,
+              s.name as supplier_name,
+              u.username,
+              (SELECT COUNT(*) FROM purchase_pending_items ppi WHERE ppi.purchase_id = p.id) AS pending_items_count
+       FROM purchases p
+       LEFT JOIN suppliers s ON p.supplier_id = s.id
+       JOIN users u ON p.user_id = u.id
+       WHERE p.idempotency_key = ?`,
+      [key]
+    );
+    if (purchase) {
+      purchase.items = await this.getItems(purchase.id);
+      purchase.payments = await this.getPayments(purchase.id);
+    }
+    return purchase;
+  }
+
   async getItems(purchaseId: number): Promise<PurchaseItem[]> {
     return await this.base.getAll<PurchaseItem>(
       `SELECT pi.*, p.name as product_name, p.parent_unit, p.child_unit, p.conversion_factor
@@ -111,16 +130,18 @@ export class PurchaseRepository implements IPurchaseRepository {
     alert_days_before: number;
     notes: string | null;
     user_id: number;
+    idempotency_key?: string | null;
   }): Promise<number> {
     return await this.base.runReturningId(
       `INSERT INTO purchases (
          purchase_number, supplier_id, invoice_reference, purchase_date,
-         total_amount, total_paid, payment_status, alert_days_before, notes, user_id
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         total_amount, total_paid, payment_status, alert_days_before, notes, user_id, idempotency_key
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.purchase_number, data.supplier_id, data.invoice_reference,
         data.purchase_date, data.total_amount, data.total_paid,
         data.payment_status, data.alert_days_before, data.notes, data.user_id,
+        data.idempotency_key ?? null,
       ]
     );
   }
