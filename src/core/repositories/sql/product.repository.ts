@@ -302,12 +302,13 @@ export class ProductRepository implements IProductRepository {
           } else {
             // New product — create it
             const prodResult = await this.base.run(
-              `INSERT INTO products (name, generic_name, category_id, barcode,
+              `INSERT INTO products (name, generic_name, usage_instructions, category_id, barcode,
                parent_unit, child_unit, conversion_factor, min_stock_level)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [
                 item.name,
                 item.generic_name ?? null,
+                item.usage_instructions ?? null,
                 categoryId,
                 item.barcode ?? null,
                 item.parent_unit ?? 'Box',

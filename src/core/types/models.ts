@@ -559,6 +559,7 @@ export interface BulkCreateProductInput {
   product_id?: number;
   name: string;
   generic_name?: string;
+  usage_instructions?: string;
   category_name?: string;
   barcode?: string;
   parent_unit?: string;

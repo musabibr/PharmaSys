@@ -20,12 +20,14 @@ interface QuickRow {
   productName: string;
   isNew: boolean;
   genericName: string;
+  usageInstructions: string;
   category: string;
   barcode: string;
   parentUnit: string;
   childUnit: string;
   cf: number;
   minStock: number;
+  currentStockBase: number; // existing products: stock on hand, for context
   qtyBase: number;
   cost: number;            // per parent unit
   costSmall: number;        // per small unit
@@ -40,6 +42,17 @@ interface QuickRow {
 
 let _seq = 0;
 const newKey = () => `qse-${Date.now()}-${_seq++}`;
+
+/** Default batch number, same convention as BatchForm / the product form: BN-YYYYMMDD-XXX */
+let _batchSeq = 0;
+function generateBatchNumber(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  _batchSeq = (_batchSeq % 999) + 1;
+  return `BN-${y}${m}${day}-${String(_batchSeq).padStart(3, '0')}`;
+}
 
 function todayStr(): string {
   const d = new Date();
@@ -92,22 +105,26 @@ export function QuickStockEntryPage() {
       productName: p.name,
       isNew: false,
       genericName: p.generic_name ?? '',
+      usageInstructions: p.usage_instructions ?? '',
       category: p.category_name ?? '',
       barcode: p.barcode ?? '',
       parentUnit: p.parent_unit ?? 'Box',
       childUnit: p.child_unit ?? '',
       cf,
       minStock: p.min_stock_level ?? 0,
+      currentStockBase: p.total_stock_base ?? 0,
       qtyBase: 0,
       cost: 0,
       costSmall: 0,
       costSmallTouched: false,
-      sell: 0,
-      sellTouched: false,
-      sellSmall: 0,
-      sellSmallTouched: false,
+      // Prefill with the product's current effective prices so a plain restock
+      // keeps the shelf price unless the user changes it.
+      sell: p.selling_price ?? 0,
+      sellTouched: (p.selling_price ?? 0) > 0,
+      sellSmall: p.selling_price_child ?? 0,
+      sellSmallTouched: (p.selling_price_child ?? 0) > 0,
       expiry: '',
-      batchNumber: '',
+      batchNumber: generateBatchNumber(),
     }]);
     setQuery('');
     setSearchOpen(false);
@@ -121,12 +138,14 @@ export function QuickStockEntryPage() {
       productName: name.trim(),
       isNew: true,
       genericName: '',
+      usageInstructions: '',
       category: '',
       barcode: '',
       parentUnit: 'Box',
       childUnit: '',
       cf: 1,
       minStock: 0,
+      currentStockBase: 0,
       qtyBase: 0,
       cost: 0,
       costSmall: 0,
@@ -136,7 +155,7 @@ export function QuickStockEntryPage() {
       sellSmall: 0,
       sellSmallTouched: false,
       expiry: '',
-      batchNumber: '',
+      batchNumber: generateBatchNumber(),
     }]);
     setQuery('');
     setSearchOpen(false);
@@ -180,6 +199,9 @@ export function QuickStockEntryPage() {
 
   const firstError = rows.map(rowError).find(Boolean) ?? null;
   const canSave = rows.length > 0 && !firstError && !saving;
+  const grandTotal = rows.reduce(
+    (sum, r) => sum + Math.round((r.cost * r.qtyBase) / (r.cf > 1 ? r.cf : 1)), 0,
+  );
 
   async function handleSave() {
     if (rows.length === 0) return;
@@ -191,6 +213,7 @@ export function QuickStockEntryPage() {
         product_id: r.productId,
         name: r.productName.trim(),
         generic_name: r.genericName.trim() || undefined,
+        usage_instructions: r.usageInstructions.trim() || undefined,
         category_name: r.category.trim() || undefined,
         barcode: r.barcode.trim() || undefined,
         parent_unit: r.parentUnit.trim() || 'Box',
@@ -247,9 +270,10 @@ export function QuickStockEntryPage() {
             {t('Search to add existing products, or type a new name to create one. Enter stock in boxes and/or strips.')}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <span className="text-sm text-muted-foreground">
             {t('{{count}} row(s)', { count: rows.length })}
+            {grandTotal > 0 && <> · {t('Total')}: <span className="font-medium text-foreground">{formatCurrency(grandTotal)}</span></>}
           </span>
           <Button onClick={handleSave} disabled={!canSave}>
             {saving && <Loader2 className="me-1.5 h-4 w-4 animate-spin" />}
@@ -363,6 +387,17 @@ export function QuickStockEntryPage() {
                   </Button>
                 </div>
 
+                {/* Existing products: context line (category, unit ratio, stock on hand) */}
+                {!r.isNew && (
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                    {r.category && <span>{r.category}</span>}
+                    {hasSmall && <span>1 {r.parentUnit} = {r.cf} {r.childUnit}</span>}
+                    <span>
+                      {t('In stock')}: {formatQuantity(r.currentStockBase, r.parentUnit, r.childUnit, r.cf)}
+                    </span>
+                  </div>
+                )}
+
                 {/* Product definition fields (full set for new; barcode for existing) */}
                 <div className="flex flex-wrap items-end gap-2">
                   {r.isNew && (
@@ -415,12 +450,13 @@ export function QuickStockEntryPage() {
                           onChange={(e) => update(r._key, { minStock: Math.max(0, Math.round(Number(e.target.value) || 0)) })}
                           className="h-8 w-20" placeholder="0" />
                       </div>
+                      <div className="space-y-1 flex-1 min-w-48">
+                        <Label className="text-xs text-muted-foreground">{t('Usage Instructions')}</Label>
+                        <Input value={r.usageInstructions}
+                          onChange={(e) => update(r._key, { usageInstructions: e.target.value })}
+                          className="h-8" placeholder={t('e.g. 3 times daily')} />
+                      </div>
                     </>
-                  )}
-                  {!r.isNew && hasSmall && (
-                    <p className="text-xs text-muted-foreground pb-2">
-                      1 {r.parentUnit} = {r.cf} {r.childUnit}
-                    </p>
                   )}
                 </div>
 
@@ -473,10 +509,30 @@ export function QuickStockEntryPage() {
                   </div>
                 </div>
 
-                {r.qtyBase > 0 && hasSmall && (
-                  <p className="text-xs text-muted-foreground">
-                    {t('Total')}: {formatQuantity(r.qtyBase, r.parentUnit, r.childUnit, r.cf)}
-                  </p>
+                {/* Summary line: quantity, margin, line total */}
+                {(r.qtyBase > 0 || r.cost > 0) && (
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+                    {r.qtyBase > 0 && (
+                      <span className="text-muted-foreground">
+                        {t('Total')}: {formatQuantity(r.qtyBase, r.parentUnit, r.childUnit, r.cf)}
+                      </span>
+                    )}
+                    {r.cost > 0 && r.sell > 0 && (() => {
+                      const marginPct = Math.round(((r.sell - r.cost) / r.cost) * 100);
+                      const color = marginPct >= defaultMarkup ? 'text-green-600'
+                        : marginPct >= defaultMarkup / 2 ? 'text-yellow-600' : 'text-destructive';
+                      return (
+                        <span className={color}>
+                          {t('Margin')}: {marginPct}% ({formatCurrency(r.sell - r.cost)})
+                        </span>
+                      );
+                    })()}
+                    {r.qtyBase > 0 && r.cost > 0 && (
+                      <span className="font-medium">
+                        {t('Line Total')}: {formatCurrency(Math.round((r.cost * r.qtyBase) / (r.cf > 1 ? r.cf : 1)))}
+                      </span>
+                    )}
+                  </div>
                 )}
                 {err && <p className="text-xs text-destructive">{err}</p>}
               </CardContent>
@@ -491,7 +547,12 @@ export function QuickStockEntryPage() {
 
       {/* Bottom save bar for long lists */}
       {rows.length > 1 && (
-        <div className="flex justify-end">
+        <div className="flex items-center justify-end gap-3">
+          {grandTotal > 0 && (
+            <span className="text-sm text-muted-foreground">
+              {t('Total')}: <span className="font-medium text-foreground">{formatCurrency(grandTotal)}</span>
+            </span>
+          )}
           <Button onClick={handleSave} disabled={!canSave}>
             {saving && <Loader2 className="me-1.5 h-4 w-4 animate-spin" />}
             {t('Save All')}
