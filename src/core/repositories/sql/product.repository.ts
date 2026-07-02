@@ -221,8 +221,8 @@ export class ProductRepository implements IProductRepository {
     };
   }
 
-  async bulkCreate(items: BulkCreateProductInput[]): Promise<Array<{ success: boolean; name: string; error?: string }>> {
-    const results: Array<{ success: boolean; name: string; error?: string }> = [];
+  async bulkCreate(items: BulkCreateProductInput[]): Promise<Array<{ success: boolean; name: string; error?: string; id?: number }>> {
+    const results: Array<{ success: boolean; name: string; error?: string; id?: number }> = [];
 
     await this.base.inTransaction(async () => {
       for (const item of items) {
@@ -339,7 +339,7 @@ export class ProductRepository implements IProductRepository {
             );
           }
 
-          results.push({ success: true, name: item.name });
+          results.push({ success: true, name: item.name, id: productId });
         } catch (err) {
           results.push({ success: false, name: item.name, error: (err as Error).message });
         }

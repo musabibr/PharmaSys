@@ -213,10 +213,18 @@ async function initDatabase(): Promise<ServiceContainer> {
       // Quick open + sanity check
       const testDb = new Database(dbFile, { readonly: true });
       try {
-        const row = testDb.prepare('SELECT COUNT(*) as cnt FROM users').get() as any;
-        console.log(`[DB] Database loaded — ${row?.cnt ?? 0} user(s) found`);
-      } catch { /* table may not exist yet — that's OK */ }
-      testDb.close();
+        // better-sqlite3 opens lazily, so a corrupt / all-zero / non-SQLite file
+        // does NOT fail on `new Database(...)`. Force a real header + schema read
+        // here so corruption is detected. This MUST be outside the users-table
+        // check below — otherwise SQLITE_NOTADB gets swallowed as "table missing".
+        testDb.prepare('SELECT name FROM sqlite_master LIMIT 1').get();
+        try {
+          const row = testDb.prepare('SELECT COUNT(*) as cnt FROM users').get() as any;
+          console.log(`[DB] Database loaded — ${row?.cnt ?? 0} user(s) found`);
+        } catch { /* table may not exist yet — that's OK */ }
+      } finally {
+        testDb.close();
+      }
     } catch (loadErr) {
       // Database file is corrupted — preserve it and attempt recovery
       const corruptPath = `${dbFile}.corrupted.${Date.now()}`;

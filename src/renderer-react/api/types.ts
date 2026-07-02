@@ -764,7 +764,7 @@ export interface PharmaSysApi {
     delete(id: number): Promise<{ success: boolean }>;
     search(query: string): Promise<Product[]>;
     findByBarcode(barcode: string): Promise<Product | null>;
-    bulkCreate(items: unknown[]): Promise<{ success: boolean; created: number; errors: unknown[] }>;
+    bulkCreate(items: unknown[]): Promise<Array<{ success: boolean; name: string; id?: number; error?: string }>>;
     getDeleteInfo(id: number): Promise<{ has_stock: boolean; batch_count: number; txn_count: number } | undefined>;
     bulkDelete(ids: number[]): Promise<{ deleted: number[]; errors: Array<{ id: number; reason: string }> }>;
   };

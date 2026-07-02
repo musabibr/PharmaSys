@@ -59,16 +59,26 @@ src = src.replace(LICENSED_LINE, UNLICENSED_LINE);
 fs.writeFileSync(MAIN_JS, src, 'utf-8');
 console.log('[build:unlicensed] License gate patched in dist-ts/platform/electron/main.js');
 
-// ── 4. Rebuild native modules for Electron ───────────────────────────────
-console.log('[build:unlicensed] Rebuilding native modules for Electron...');
-try {
-  run('npx electron-rebuild -f -w better-sqlite3');
-} catch (e) {
-  console.warn('[build:unlicensed] electron-rebuild failed (module may already be built for Electron). Continuing...');
+// ── 4. Native module — reuse the Electron build from `npm install` ────────
+// better-sqlite3 was already built for this Electron version by
+// `electron-builder install-app-deps` (npm postinstall). There is no prebuilt
+// binary for this Electron ABI on npm, and rebuilding from source here can
+// DELETE the working .node if the build toolchain is missing — so we reuse the
+// existing binary (electron-builder runs with npmRebuild=false below).
+const NODE_BINARY = path.join(ROOT, 'node_modules/better-sqlite3/build/Release/better_sqlite3.node');
+if (!fs.existsSync(NODE_BINARY)) {
+  console.error('[build:unlicensed] ERROR: better_sqlite3.node not found.');
+  console.error('  Run `npx electron-builder install-app-deps` first to build it for Electron.');
+  process.exit(1);
 }
+console.log('[build:unlicensed] Using existing Electron-built better_sqlite3.node');
 
 // ── 5. Package ────────────────────────────────────────────────────────────
 console.log('[build:unlicensed] Packaging with electron-builder → dist-unlicensed/...');
-run('npx electron-builder --win --config.directories.output=dist-unlicensed');
+// npmRebuild=false: better-sqlite3 is already built for this Electron version by
+// `electron-builder install-app-deps` (postinstall). There is no prebuilt binary
+// for this electron ABI on npm, so letting electron-builder rebuild from source
+// fails (needs VS build tools and a free, unlocked .node). Reuse the working binary.
+run('npx electron-builder --win --config.npmRebuild=false --config.directories.output=dist-unlicensed');
 
 console.log('[build:unlicensed] ✓ Done — output: dist-unlicensed/');

@@ -3,8 +3,9 @@ import { useTranslation } from 'react-i18next';
 import * as XLSX from 'xlsx';
 import { Download, Loader2, Search } from 'lucide-react';
 import { api } from '@/api';
-import type { Product } from '@/api/types';
+import type { Product, Batch } from '@/api/types';
 import { formatQuantity } from '@/lib/utils';
+import { PRODUCT_IE_COLUMNS } from './productIeSchema';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -19,28 +20,11 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 // ---------------------------------------------------------------------------
-// Column definitions
+// Column definitions come from the shared import/export schema so that the
+// exported file can be edited and re-imported (round-trip) without any
+// column-mapping surprises. Batch-level columns (cost / expiry / qty) cause the
+// export to emit one row per stock batch.
 // ---------------------------------------------------------------------------
-
-interface ExportColumn {
-  key: keyof Product;
-  label: string;
-  required?: boolean;
-}
-
-const ALL_COLUMNS: ExportColumn[] = [
-  { key: 'name',               label: 'Product Name',            required: true },
-  { key: 'generic_name',       label: 'Generic Name' },
-  { key: 'barcode',            label: 'Barcode' },
-  { key: 'category_name',      label: 'Category' },
-  { key: 'parent_unit',        label: 'Base Unit' },
-  { key: 'child_unit',         label: 'Small Unit' },
-  { key: 'conversion_factor',  label: 'Conv Factor' },
-  { key: 'selling_price',      label: 'Sell Price (Base) SDG' },
-  { key: 'selling_price_child', label: 'Sell Price (Small) SDG' },
-  { key: 'min_stock_level',    label: 'Min Stock Level' },
-  { key: 'usage_instructions', label: 'Usage Instructions' },
-];
 
 // ---------------------------------------------------------------------------
 // Component
@@ -56,7 +40,7 @@ type ExportMode = 'all' | 'select';
 export function ProductExportDialog({ open, onOpenChange }: ProductExportDialogProps) {
   const { t } = useTranslation();
   const [selectedCols, setSelectedCols] = useState<Set<string>>(
-    new Set(ALL_COLUMNS.map(c => c.key))
+    new Set(PRODUCT_IE_COLUMNS.map(c => c.id))
   );
   const [exporting, setExporting] = useState(false);
 
@@ -141,14 +125,34 @@ export function ProductExportDialog({ open, onOpenChange }: ProductExportDialogP
         products = await api.products.getAll();
       }
 
-      const activeCols = ALL_COLUMNS.filter(c => selectedCols.has(c.key));
-      const headers = activeCols.map(c => c.label);
-      const rows = products.map(p =>
-        activeCols.map(c => {
-          const v = p[c.key];
-          return v != null ? v : '';
-        })
-      );
+      const activeCols = PRODUCT_IE_COLUMNS.filter(c => selectedCols.has(c.id));
+      const headers = activeCols.map(c => c.header);
+      const needsBatches = activeCols.some(c => c.level === 'batch');
+
+      // Group active in-stock batches by product so cost/expiry/qty export one
+      // row per batch (true "everything"); products with no active batch still
+      // export a single row with blank batch fields.
+      const batchesByProduct = new Map<number, Batch[]>();
+      if (needsBatches) {
+        const allBatches = await api.batches.getAllAvailable();
+        for (const b of allBatches) {
+          const list = batchesByProduct.get(b.product_id);
+          if (list) list.push(b);
+          else batchesByProduct.set(b.product_id, [b]);
+        }
+      }
+
+      const rows: Array<Array<string | number>> = [];
+      for (const p of products) {
+        const batches = needsBatches ? (batchesByProduct.get(p.id) ?? []) : [];
+        if (batches.length === 0) {
+          rows.push(activeCols.map(c => c.exportValue(p, undefined)));
+        } else {
+          for (const b of batches) {
+            rows.push(activeCols.map(c => c.exportValue(p, b)));
+          }
+        }
+      }
 
       const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
       ws['!cols'] = headers.map(h => ({ wch: Math.max(h.length + 2, 14) }));
@@ -183,16 +187,16 @@ export function ProductExportDialog({ open, onOpenChange }: ProductExportDialogP
           <div className="space-y-2 shrink-0">
             <p className="text-sm font-medium">{t('Columns to export')}</p>
             <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
-              {ALL_COLUMNS.map(col => (
-                <label key={col.key} className="flex items-center gap-2 cursor-pointer select-none">
+              {PRODUCT_IE_COLUMNS.map(col => (
+                <label key={col.id} className="flex items-center gap-2 cursor-pointer select-none">
                   <input
                     type="checkbox"
-                    checked={selectedCols.has(col.key)}
+                    checked={selectedCols.has(col.id)}
                     disabled={col.required}
-                    onChange={() => !col.required && toggleCol(col.key)}
+                    onChange={() => !col.required && toggleCol(col.id)}
                     className="h-4 w-4"
                   />
-                  <span className="text-sm">{col.label}</span>
+                  <span className="text-sm">{t(col.header)}</span>
                   {col.required && (
                     <span className="text-xs text-muted-foreground">{t('(required)')}</span>
                   )}

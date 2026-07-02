@@ -160,7 +160,7 @@ export class ProductService {
   async bulkCreate(
     items: BulkCreateProductInput[],
     userId: number
-  ): Promise<Array<{ success: boolean; name: string; error?: string }>> {
+  ): Promise<Array<{ success: boolean; name: string; error?: string; id?: number }>> {
     if (!Array.isArray(items) || items.length === 0) {
       throw new ValidationError('Items array is required and must not be empty', 'items');
     }

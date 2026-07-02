@@ -15,6 +15,10 @@ dist-release/
 data/
 backups/
 *.sqlite
+*.db
+
+# Generated import template (produced by the app's "Download Template" button)
+pharmasys-import-template.xlsx
 
 # Encryption keys
 .backup-key

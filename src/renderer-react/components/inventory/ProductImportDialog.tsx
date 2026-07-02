@@ -25,9 +25,12 @@ import {
 } from '@/components/ui/tooltip';
 import {
   Upload, ArrowLeft, ArrowRight, CheckCircle2, XCircle,
-  FileSpreadsheet, Loader2, ChevronLeft, ChevronRight, Link2, Plus, RefreshCw, PlusCircle,
+  FileSpreadsheet, Loader2, ChevronLeft, ChevronRight, Link2, Plus, RefreshCw, PlusCircle, Download,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import {
+  TEMPLATE_HEADERS, TEMPLATE_EXAMPLE_ROW, resolveImportRow,
+} from './productIeSchema';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -93,13 +96,47 @@ function isValidDate(dateStr: string): boolean {
   return !isNaN(d.getTime());
 }
 
+function isPastDate(dateStr: string): boolean {
+  const d = new Date(dateStr + 'T00:00:00');
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return d < today;
+}
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/**
+ * Normalize a spreadsheet date value to YYYY-MM-DD. Handles JS Date objects,
+ * Excel serial numbers, ISO strings, and common DD/MM/YYYY or M/D/YYYY inputs
+ * (separators - . or /). Day-first is assumed when the first part is > 12.
+ */
 function normalizeDate(val: unknown): string {
   if (!val) return '';
-  if (val instanceof Date) return val.toISOString().split('T')[0];
+  if (val instanceof Date) {
+    return `${val.getFullYear()}-${pad2(val.getMonth() + 1)}-${pad2(val.getDate())}`;
+  }
   const s = String(val).trim();
+  if (!s) return '';
+  // Excel serial number (date stored as a number).
   if (/^\d{5}$/.test(s)) {
     const d = new Date((Number(s) - 25569) * 86400 * 1000);
-    return d.toISOString().split('T')[0];
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  }
+  // Already ISO (optionally with a time component).
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) return `${iso[1]}-${pad2(Number(iso[2]))}-${pad2(Number(iso[3]))}`;
+  // D/M/Y or M/D/Y with - . or / separators.
+  const dmy = s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})$/);
+  if (dmy) {
+    let [, a, b, y] = dmy;
+    let yr = Number(y);
+    if (yr < 100) yr += 2000;
+    let first = Number(a);
+    let second = Number(b);
+    // If the first field can't be a month, treat it as the day (day-first).
+    const day = first > 12 ? first : (second > 12 ? second : first);
+    const month = first > 12 ? second : (second > 12 ? first : second);
+    return `${yr}-${pad2(month)}-${pad2(day)}`;
   }
   return s;
 }
@@ -115,6 +152,14 @@ function toInt(val: unknown, fallback = 0): number {
   return isNaN(n) ? fallback : n;
 }
 
+/** Float-capable parser — used for quantity so fractional parent units (from
+ *  partial packs in an exported file) survive a round-trip. */
+function toNum(val: unknown, fallback = 0): number {
+  if (val == null || val === '') return fallback;
+  const n = parseFloat(String(val));
+  return isNaN(n) ? fallback : n;
+}
+
 function mapRow(
   raw: Record<string, unknown>,
   rowIndex: number,
@@ -123,42 +168,41 @@ function mapRow(
   defaultUpdateMode: boolean,
 ): ParsedRow {
   const errors: string[] = [];
-  const get = (keywords: string[]): unknown => {
-    for (const key of Object.keys(raw)) {
-      const lower = key.toLowerCase();
-      if (keywords.some(kw => lower.includes(kw))) return raw[key];
-    }
-    return undefined;
-  };
+  const cell = resolveImportRow(raw);
 
-  const name               = toStr(get(['product name', 'product']));
-  const genericName        = toStr(get(['generic']));
-  const category           = toStr(get(['category']));
-  const barcode            = toStr(get(['barcode']));
-  const parentUnit         = toStr(get(['base unit', 'base_unit', 'parent unit', 'parent_unit'])) || 'Unit';
-  const childUnit          = toStr(get(['small unit', 'small_unit', 'child unit', 'child_unit']));
-  const convFactor         = toInt(get(['conv', 'conversion']), 1);
-  const minStock           = toInt(get(['min stock', 'min_stock']), 0);
-  const batchNumber        = toStr(get(['batch']));
-  const expiryDate         = normalizeDate(get(['expiry', 'exp']));
-  const quantity           = toInt(get(['qty', 'quantity']), 0);
-  const costPerParent      = toInt(get(['cost']), 0);
-  const sellPricePerParent = toInt(get(['sell price', 'selling price', 'sell_price', 'selling_price']), 0);
-  const sellPriceChild     = toInt(get(['sell price child', 'sell_price_child', 'small sell', 'small price']), 0);
+  const name               = toStr(cell.name);
+  const genericName        = toStr(cell.generic_name);
+  const category           = toStr(cell.category);
+  const barcode            = toStr(cell.barcode);
+  const parentUnit         = toStr(cell.parent_unit) || 'Unit';
+  const childUnit          = toStr(cell.child_unit);
+  const convFactor         = toInt(cell.conversion_factor, 1);
+  const minStock           = toInt(cell.min_stock_level, 0);
+  const batchNumber        = toStr(cell.batch_number);
+  const expiryDate         = normalizeDate(cell.expiry_date);
+  const quantity           = toNum(cell.quantity, 0);
+  const costPerParent      = toInt(cell.cost_per_parent, 0);
+  const sellPricePerParent = toInt(cell.selling_price_parent, 0);
+  const sellPriceChild     = toInt(cell.selling_price_child, 0);
 
   if (!name)          errors.push(t('Product name is required'));
   if (convFactor < 1) errors.push(t('Conversion factor must be at least 1'));
   if (convFactor > 1 && !childUnit) errors.push(t('Small unit is required when conversion factor > 1'));
 
-  const hasBatchFields = batchNumber || expiryDate || quantity > 0 || costPerParent > 0;
-  if (hasBatchFields) {
+  // A row only adds stock (a batch) when it has a positive quantity. Stray
+  // batch fields without a quantity are ignored (the product is imported on its
+  // own) instead of failing the whole row — this mirrors the backend, which
+  // creates a batch only when quantity_base > 0 AND an expiry date is present.
+  const hasStock = quantity > 0;
+  if (hasStock) {
     if (!expiryDate) {
-      errors.push(t('Expiry date is required'));
+      errors.push(t('Expiry date is required for stock'));
     } else if (!isValidDate(expiryDate)) {
       errors.push(t('Invalid date format (use YYYY-MM-DD)'));
+    } else if (isPastDate(expiryDate)) {
+      errors.push(t('Expiry date is in the past'));
     }
-    if (quantity <= 0) errors.push(t('Quantity must be greater than 0'));
-    if (costPerParent <= 0) errors.push(t('Cost must be greater than 0'));
+    if (costPerParent <= 0) errors.push(t('Cost is required for stock'));
   }
 
   // Match against existing products
@@ -319,6 +363,15 @@ export function ProductImportDialog({ open, onOpenChange, onImported }: ProductI
     }
   }
 
+  // ── Download template ─────────────────────────────────────────────────────────
+  function handleDownloadTemplate() {
+    const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_HEADERS, TEMPLATE_EXAMPLE_ROW]);
+    ws['!cols'] = TEMPLATE_HEADERS.map(h => ({ wch: Math.max(h.length + 2, 15) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Products');
+    XLSX.writeFile(wb, 'pharmasys-import-template.xlsx');
+  }
+
   // ── Row toggles ─────────────────────────────────────────────────────────────
   const toggleRow = (rowIndex: number) => {
     setParsedRows(prev => prev.map(r =>
@@ -387,7 +440,7 @@ export function ProductImportDialog({ open, onOpenChange, onImported }: ProductI
               product_id:           row.matchedProductId,
               batch_number:         row.batchNumber         || undefined,
               expiry_date:          row.expiryDate,
-              quantity_base:        row.quantity * actualCf,
+              quantity_base:        Math.round(row.quantity * actualCf),
               cost_per_parent:      row.costPerParent,
               selling_price_parent: row.sellPricePerParent ||
                 Math.round(row.costPerParent * (1 + defaultMarkup / 100)),
@@ -409,23 +462,25 @@ export function ProductImportDialog({ open, onOpenChange, onImported }: ProductI
             min_stock_level:      row.minStock,
             batch_number:         row.batchNumber     || undefined,
             expiry_date:          row.expiryDate,
-            quantity_base:        row.quantity * row.convFactor,
+            quantity_base:        Math.round(row.quantity * row.convFactor),
             cost_per_parent:      row.costPerParent,
             selling_price_parent: row.sellPricePerParent ||
               Math.round(row.costPerParent * (1 + defaultMarkup / 100)),
           }]);
           const arr   = Array.isArray(result) ? result : (result as { data?: unknown[] }).data ?? [];
           const first = arr[0] as { success?: boolean; id?: number; error?: string } | undefined;
-          if (first?.success && first.id) {
-            productId = first.id;
+          if (first?.success) {
+            productId = first.id;   // present from backend; used for purchase-link below
             created++;
             // Update local cache for subsequent dedup without triggering an API call per row
-            currentExisting.push({
-              id: productId,
-              name: row.name,
-              barcode: row.barcode || null,
-              conversion_factor: row.convFactor,
-            } as any);
+            if (first.id) {
+              currentExisting.push({
+                id: first.id,
+                name: row.name,
+                barcode: row.barcode || null,
+                conversion_factor: row.convFactor,
+              } as any);
+            }
           } else {
             failed++;
             errors.push(`Row ${row.rowIndex}: ${first?.error ?? t('Unknown error')}`);
@@ -696,7 +751,11 @@ export function ProductImportDialog({ open, onOpenChange, onImported }: ProductI
                 className="hidden"
               />
 
-              <DialogFooter>
+              <DialogFooter className="sm:justify-between">
+                <Button variant="outline" onClick={handleDownloadTemplate} className="gap-1.5">
+                  <Download className="h-4 w-4" />
+                  {t('Download Template')}
+                </Button>
                 <Button variant="outline" onClick={() => handleOpenChange(false)}>{t('Cancel')}</Button>
               </DialogFooter>
             </div>

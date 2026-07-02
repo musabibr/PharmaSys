@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
 import { api } from '@/api';
+import { TEMPLATE_HEADERS, TEMPLATE_EXAMPLE_ROW, resolveImportRow } from './productIeSchema';
 import { useSettingsStore } from '@/stores/settings.store';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -51,41 +52,9 @@ interface BulkImportDialogProps {
   onImported: () => void;
 }
 
-// ---------------------------------------------------------------------------
-// Template column headers
-// ---------------------------------------------------------------------------
-
-const TEMPLATE_HEADERS = [
-  'Product Name',
-  'Generic Name',
-  'Category',
-  'Barcode',
-  'Base Unit',
-  'Small Unit',
-  'Conv Factor',
-  'Min Stock Level',
-  'Batch Number',
-  'Expiry Date (YYYY-MM-DD)',
-  'Qty (Parent Units)',
-  'Cost per Parent Unit (SDG)',
-  'Sell Price per Parent Unit (SDG)',
-];
-
-const EXAMPLE_ROW = [
-  'Paracetamol 500mg',
-  'Paracetamol',
-  'Analgesics',
-  '1234567890123',
-  'Box',
-  'Strip',
-  10,
-  5,
-  'B001',
-  '2027-06-30',
-  50,
-  1200,
-  1500,
-];
+// Template columns + example row come from the shared import/export schema
+// (productIeSchema.ts) so the template, export, and both import dialogs all use
+// identical headers.
 
 // ---------------------------------------------------------------------------
 // Parsed row type
@@ -129,19 +98,42 @@ function isValidDate(dateStr: string): boolean {
   return !isNaN(d.getTime());
 }
 
+function isPastDate(dateStr: string): boolean {
+  const d = new Date(dateStr + 'T00:00:00');
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return d < today;
+}
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
 /**
- * Normalize Excel date values — XLSX may parse dates as JS Date objects or serial numbers.
+ * Normalize a spreadsheet date value to YYYY-MM-DD. Handles JS Date objects,
+ * Excel serial numbers, ISO strings, and common DD/MM/YYYY or M/D/YYYY inputs.
  */
 function normalizeDate(val: unknown): string {
   if (!val) return '';
   if (val instanceof Date) {
-    return val.toISOString().split('T')[0];
+    return `${val.getFullYear()}-${pad2(val.getMonth() + 1)}-${pad2(val.getDate())}`;
   }
   const s = String(val).trim();
-  // If it looks like a serial number (e.g., 46387), convert it
+  if (!s) return '';
   if (/^\d{5}$/.test(s)) {
     const d = new Date((Number(s) - 25569) * 86400 * 1000);
-    return d.toISOString().split('T')[0];
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  }
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) return `${iso[1]}-${pad2(Number(iso[2]))}-${pad2(Number(iso[3]))}`;
+  const dmy = s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})$/);
+  if (dmy) {
+    const [, a, b, y] = dmy;
+    let yr = Number(y);
+    if (yr < 100) yr += 2000;
+    const first = Number(a);
+    const second = Number(b);
+    const day = first > 12 ? first : (second > 12 ? second : first);
+    const month = first > 12 ? second : (second > 12 ? first : second);
+    return `${yr}-${pad2(month)}-${pad2(day)}`;
   }
   return s;
 }
@@ -157,6 +149,13 @@ function toInt(val: unknown, fallback = 0): number {
   return isNaN(n) ? fallback : n;
 }
 
+/** Float-capable parser for quantity (preserves fractional parent units). */
+function toNum(val: unknown, fallback = 0): number {
+  if (val == null || val === '') return fallback;
+  const n = parseFloat(String(val));
+  return isNaN(n) ? fallback : n;
+}
+
 /**
  * Map a raw row object (from sheet_to_json) into a ParsedRow.
  * Column matching is case-insensitive and flexible.
@@ -167,29 +166,21 @@ function mapRow(
   t: (key: string) => string
 ): ParsedRow {
   const errors: string[] = [];
+  const cell = resolveImportRow(raw);
 
-  // Find column values by flexible header matching
-  const get = (keywords: string[]): unknown => {
-    for (const key of Object.keys(raw)) {
-      const lower = key.toLowerCase();
-      if (keywords.some((kw) => lower.includes(kw))) return raw[key];
-    }
-    return undefined;
-  };
-
-  const name = toStr(get(['product name', 'product']));
-  const genericName = toStr(get(['generic']));
-  const category = toStr(get(['category']));
-  const barcode = toStr(get(['barcode']));
-  const parentUnit = toStr(get(['base unit', 'base_unit', 'parent unit', 'parent_unit'])) || 'Unit';
-  const childUnit = toStr(get(['small unit', 'small_unit', 'child unit', 'child_unit']));
-  const convFactor = toInt(get(['conv', 'conversion']), 1);
-  const minStock = toInt(get(['min stock', 'min_stock']), 0);
-  const batchNumber = toStr(get(['batch']));
-  const expiryDate = normalizeDate(get(['expiry', 'exp']));
-  const quantity = toInt(get(['qty', 'quantity']), 0);
-  const costPerParent = toInt(get(['cost']), 0);
-  const sellPricePerParent = toInt(get(['sell price', 'selling price', 'sell_price', 'selling_price']), 0);
+  const name = toStr(cell.name);
+  const genericName = toStr(cell.generic_name);
+  const category = toStr(cell.category);
+  const barcode = toStr(cell.barcode);
+  const parentUnit = toStr(cell.parent_unit) || 'Unit';
+  const childUnit = toStr(cell.child_unit);
+  const convFactor = toInt(cell.conversion_factor, 1);
+  const minStock = toInt(cell.min_stock_level, 0);
+  const batchNumber = toStr(cell.batch_number);
+  const expiryDate = normalizeDate(cell.expiry_date);
+  const quantity = toNum(cell.quantity, 0);
+  const costPerParent = toInt(cell.cost_per_parent, 0);
+  const sellPricePerParent = toInt(cell.selling_price_parent, 0);
 
   if (!name) {
     errors.push(t('Product name is required'));
@@ -203,28 +194,22 @@ function mapRow(
     errors.push(t('Small unit is required when conversion factor > 1'));
   }
 
-  const hasBatchFields = batchNumber || expiryDate || quantity > 0 || costPerParent > 0;
+  // Only require batch details when the row actually carries stock (qty > 0).
+  // Mirrors the backend, which creates a batch only when quantity_base > 0 and
+  // an expiry date is present — partial fields no longer fail the whole row.
+  const hasStock = quantity > 0;
 
-  if (hasBatchFields) {
+  if (hasStock) {
     if (!expiryDate) {
-      errors.push(t('Expiry date is required'));
+      errors.push(t('Expiry date is required for stock'));
     } else if (!isValidDate(expiryDate)) {
       errors.push(t('Invalid date format (use YYYY-MM-DD)'));
-    } else {
-      const expDate = new Date(expiryDate + 'T00:00:00');
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      if (expDate < today) {
-        errors.push(t('Expiry date is in the past'));
-      }
-    }
-
-    if (quantity <= 0) {
-      errors.push(t('Quantity must be greater than 0'));
+    } else if (isPastDate(expiryDate)) {
+      errors.push(t('Expiry date is in the past'));
     }
 
     if (costPerParent <= 0) {
-      errors.push(t('Cost must be greater than 0'));
+      errors.push(t('Cost is required for stock'));
     }
   }
 
@@ -289,7 +274,7 @@ export function BulkImportDialog({ open, onOpenChange, onImported }: BulkImportD
 
   // ---- Download template ----
   function handleDownloadTemplate() {
-    const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_HEADERS, EXAMPLE_ROW]);
+    const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_HEADERS, TEMPLATE_EXAMPLE_ROW]);
     ws['!cols'] = TEMPLATE_HEADERS.map((h) => ({ wch: Math.max(h.length + 2, 15) }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Products');
@@ -378,7 +363,7 @@ export function BulkImportDialog({ open, onOpenChange, onImported }: BulkImportD
         min_stock_level: row.minStock,
         batch_number: row.batchNumber || undefined,
         expiry_date: row.expiryDate,
-        quantity_base: row.quantity * row.convFactor,
+        quantity_base: Math.round(row.quantity * row.convFactor),
         cost_per_parent: row.costPerParent,
         selling_price_parent: row.sellPricePerParent || Math.round(row.costPerParent * (1 + defaultMarkup / 100)),
       }));
