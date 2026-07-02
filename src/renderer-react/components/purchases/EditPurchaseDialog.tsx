@@ -65,6 +65,7 @@ interface EditablePayment {
   due_date: string;
   is_paid: boolean;
   paid_amount: number | null;
+  paid_date: string | null;
   original_amount: number;
   original_due_date: string;
 }
@@ -88,6 +89,7 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
   const [dateDisplay, setDateDisplay] = useState('');
   const [notes, setNotes] = useState('');
   const [alertDays, setAlertDays] = useState(7);
+  const [totalAmount, setTotalAmount] = useState(0);
   const [editablePayments, setEditablePayments] = useState<EditablePayment[]>([]);
   const [newInstallments, setNewInstallments] = useState<NewInstallment[]>([]);
   const [removedIds, setRemovedIds] = useState<Set<number>>(new Set());
@@ -113,6 +115,7 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
       setDateDisplay(isoToDisplay(purchase.purchase_date));
       setNotes(purchase.notes ?? '');
       setAlertDays(purchase.alert_days_before ?? 7);
+      setTotalAmount(purchase.total_amount);
 
       const payments = (purchase.payments ?? []).map(p => ({
         id: p.id,
@@ -120,6 +123,7 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
         due_date: p.due_date,
         is_paid: !!p.is_paid,
         paid_amount: p.paid_amount,
+        paid_date: p.paid_date,
         original_amount: p.amount,
         original_due_date: p.due_date,
       }));
@@ -159,8 +163,8 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
   );
 
   const scheduleTotal = paidScheduledTotal + unpaidTotal;
-  const isScheduleValid = scheduleTotal === purchase.total_amount;
-  const remainingToAllocate = purchase.total_amount - paidScheduledTotal - unpaidTotal;
+  const isScheduleValid = scheduleTotal === totalAmount;
+  const remainingToAllocate = totalAmount - paidScheduledTotal - unpaidTotal;
 
   const hasScheduleChanges = useMemo(() =>
     hasStructuralChanges ||
@@ -258,7 +262,18 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
 
     setSaving(true);
     try {
-      // Save schedule first — if it fails, metadata is unchanged (better ordering)
+      // Save metadata first: the backend validates payment schedules against the
+      // STORED purchase total, so an edited total must be persisted before the
+      // schedule update or the schedule would be rejected against the old total.
+      await api.purchases.update(purchase.id, {
+        supplier_id: supplierId === 'none' ? null : parseInt(supplierId, 10),
+        invoice_reference: invoiceRef.trim() || null,
+        purchase_date: purchaseDate,
+        notes: notes.trim() || null,
+        alert_days_before: alertDays,
+        total_amount: totalAmount,
+      });
+
       if (hasScheduleChanges) {
         if (hasStructuralChanges) {
           // Structure changed (adds/removals) — replace all unpaid with new schedule
@@ -273,16 +288,6 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
           await api.purchases.updatePaymentSchedule(purchase.id, payments);
         }
       }
-
-      // Save metadata
-      await api.purchases.update(purchase.id, {
-        supplier_id: supplierId === 'none' ? null : parseInt(supplierId, 10),
-        invoice_reference: invoiceRef.trim() || null,
-        purchase_date: purchaseDate,
-        notes: notes.trim() || null,
-        alert_days_before: alertDays,
-        total_amount: purchase.total_amount,
-      });
 
       toast.success(t('Purchase updated successfully'));
       onOpenChange(false);
@@ -399,11 +404,8 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
             <Input
               type="number"
               min={0}
-              value={purchase.total_amount}
-              onChange={e => {
-                const val = parseInt(e.target.value, 10) || 0;
-                setPurchase(prev => prev ? { ...prev, total_amount: val } : prev);
-              }}
+              value={totalAmount}
+              onChange={e => setTotalAmount(Math.max(0, parseInt(e.target.value, 10) || 0))}
             />
           </div>
 
@@ -424,7 +426,7 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium">{t('Installments')}</label>
                 <span className="text-xs text-muted-foreground">
-                  {t('Total')}: {formatCurrency(purchase.total_amount)}
+                  {t('Total')}: {formatCurrency(totalAmount)}
                 </span>
               </div>
 

@@ -89,9 +89,10 @@ export class ProductService {
       Validate.positiveInteger(data.conversion_factor, 'Conversion factor');
     }
 
-    // Cascade CF change: rescale quantities and recalculate child prices with new CF
+    // Cascade CF change: rescale quantities and recalculate child prices with new CF.
+    // (batchRepo.inTransaction shares the single DB connection with all repos.)
     if (data.conversion_factor !== undefined && data.conversion_factor !== existing.conversion_factor) {
-      await (this.repo as any).base.inTransaction(async () => {
+      await this.batchRepo.inTransaction(async () => {
         await this.repo.update(id, data);
         await this.batchRepo.rescaleQuantitiesForProduct(id, existing.conversion_factor!, data.conversion_factor!);
         await this.batchRepo.recalculateChildPricesForProduct(id, data.conversion_factor!);

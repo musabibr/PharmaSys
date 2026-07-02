@@ -863,6 +863,7 @@ export interface Purchase {
   username?: string;
   items?: PurchaseItem[];
   payments?: PurchasePayment[];
+  items_count?: number;
   pending_items_count?: number;
 }
 

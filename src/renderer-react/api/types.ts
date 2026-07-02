@@ -428,7 +428,7 @@ export interface AppInfo {
 // ─── Purchase Management ─────────────────────────────────────────────────────
 
 export type PurchasePaymentStatus = 'unpaid' | 'partial' | 'paid';
-export type ExpensePaymentMethod = 'cash' | 'bank_transfer';
+// (ExpensePaymentMethod is declared once in the Expenses section above.)
 
 export interface Supplier {
   id: number;
@@ -459,6 +459,7 @@ export interface Purchase {
   username?: string;
   items?: PurchaseItem[];
   payments?: PurchasePayment[];
+  items_count?: number;
   pending_items_count?: number;
 }
 
@@ -923,6 +924,7 @@ export interface PharmaSysApi {
       purchase_date?: string;
       notes?: string | null;
       alert_days_before?: number;
+      total_amount?: number;
     }): Promise<Purchase>;
     delete(id: number, force?: boolean): Promise<{ ok: boolean }>;
     addItems(purchaseId: number, data: { items: CreatePurchaseItemInput[] }): Promise<Purchase>;

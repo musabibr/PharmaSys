@@ -147,7 +147,7 @@ describe('BatchService', () => {
         .mockResolvedValue({ ...sampleBatch, selling_price_parent: 9000 });
 
       const result = await svc.update(1, { selling_price_parent: 9000 } as any, 1);
-      expect(batchRepo.update).toHaveBeenCalledWith(1, expect.any(Object));
+      expect(batchRepo.update).toHaveBeenCalledWith(1, sampleBatch.version, expect.any(Object));
       expect(result.selling_price_parent).toBe(9000);
     });
 
@@ -234,7 +234,7 @@ describe('BatchService', () => {
       batchRepo.getBatchDeleteInfo.mockResolvedValue({ quantity_base: 200, txn_count: 0, adj_count: 0 });
       await svc.update(1, { cost_per_parent: 6000 } as any, 1);
       // 6000 / 20 = 300
-      expect(batchRepo.update).toHaveBeenCalledWith(1, expect.objectContaining({
+      expect(batchRepo.update).toHaveBeenCalledWith(1, sampleBatch.version, expect.objectContaining({
         cost_per_child: 300,
       }));
     });
@@ -246,7 +246,7 @@ describe('BatchService', () => {
         .mockResolvedValue(sampleBatch);
       await svc.update(1, { selling_price_parent_override: 1000 } as any, 1);
       // 1000 / 20 = 50
-      expect(batchRepo.update).toHaveBeenCalledWith(1, expect.objectContaining({
+      expect(batchRepo.update).toHaveBeenCalledWith(1, sampleBatch.version, expect.objectContaining({
         selling_price_child: 50,
       }));
     });
@@ -256,14 +256,16 @@ describe('BatchService', () => {
   // reportDamage
   // ═══════════════════════════════════════════════════════════════════════════
   describe('reportDamage', () => {
-    it('deducts quantity and updates status to quarantine for damage', async () => {
+    it('deducts damaged quantity; remaining stock keeps its previous status', async () => {
       const { svc, batchRepo } = createService();
       batchRepo.getById.mockResolvedValue({ ...sampleBatch, quantity_base: 200 });
       batchRepo.updateQuantityOptimistic.mockResolvedValue(true);
 
+      // Damaged units are removed from stock — the rest of the batch is still
+      // sellable, so it stays 'active' (only drops to 'sold_out' at zero).
       await svc.reportDamage(1, 10, 'broken vials', 'damage', 1);
       expect(batchRepo.updateQuantityOptimistic).toHaveBeenCalledWith(
-        1, 190, 'quarantine', 1
+        1, 190, 'active', 1
       );
     });
 
@@ -383,8 +385,8 @@ describe('BatchService', () => {
       productRepo.getById.mockResolvedValue({ ...sampleProduct, conversion_factor: 10 });
       batchRepo.bulkUpdateSellingPrices.mockResolvedValue(3);
       await svc.updateSellingPricesByProduct(1, 5000, null, 1);
-      // base child = floor(5000 / 10) = 500
-      expect(batchRepo.bulkUpdateSellingPrices).toHaveBeenCalledWith(1, 5000, 500, null);
+      // base child = floor(5000 / 10) = 500; preserveOverrides = true for this flow
+      expect(batchRepo.bulkUpdateSellingPrices).toHaveBeenCalledWith(1, 5000, 500, null, true);
     });
 
     it('emits event when batches are updated', async () => {

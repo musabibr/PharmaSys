@@ -1,6 +1,15 @@
 /**
- * Test database helper — boots an in-memory sql.js database
+ * Test database helper — boots an in-memory better-sqlite3 database
  * with full schema and seed data for integration tests.
+ *
+ * NOTE (issues.md #40): the better-sqlite3 native binding in node_modules is
+ * built for Electron's ABI (postinstall runs electron-builder install-app-deps),
+ * so Node-based Jest cannot load it. The integration/REST suites that use this
+ * helper are excluded from the default `npm test` run via
+ * `testPathIgnorePatterns` in jest.config.js until a dual-ABI build exists.
+ * To run them: rebuild better-sqlite3 for the local Node ABI
+ * (`npm rebuild better-sqlite3`), run the suites, then restore the Electron
+ * build (`npx electron-builder install-app-deps`).
  *
  * Usage:
  *   const ctx = await createTestContext();
@@ -8,8 +17,6 @@
  *   ctx.destroy();
  */
 
-import initSqlJs from 'sql.js';
-import { BaseRepository }      from '@core/repositories/sql/base.repository';
 import { MigrationRepository } from '@core/repositories/sql/migration.repository';
 import { createRepositories, type Repositories } from '@core/repositories/sql/index';
 import { ServiceContainer }    from '@core/services/index';
@@ -23,14 +30,8 @@ export interface TestContext {
 }
 
 export async function createTestContext(): Promise<TestContext> {
-  const SQL = await initSqlJs();
-  const db  = new SQL.Database();
-
-  // Enable foreign keys
-  db.run('PRAGMA foreign_keys=ON;');
-
-  const noop = (): void => {};
-  const repos = createRepositories(db as any, '/tmp/test-data', noop, noop);
+  // ':memory:' gives each test context an isolated in-memory database.
+  const repos = createRepositories(':memory:', '/tmp/test-data');
 
   // Run full schema + migrations + seed data (demo products/users, no historical transactions)
   const migration = new MigrationRepository(repos.base, '/tmp/test-data');
@@ -43,6 +44,6 @@ export async function createTestContext(): Promise<TestContext> {
     repos,
     services,
     bus,
-    destroy: () => db.close(),
+    destroy: () => repos.base.close(),
   };
 }

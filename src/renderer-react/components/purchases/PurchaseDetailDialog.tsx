@@ -66,7 +66,7 @@ export function PurchaseDetailDialog({ purchase: initialPurchase, open, onOpenCh
   const canPay = usePermission('purchases.pay');
   const canEdit = usePermission('purchases.edit');
   const canDelete = usePermission('purchases.delete');
-  const isAdmin = useAuthStore((s) => s.user?.role === 'admin');
+  const isAdmin = useAuthStore((s) => s.currentUser?.role === 'admin');
   const [payingId, setPayingId] = useState<number | null>(null);
   const [expandedPayId, setExpandedPayId] = useState<number | null>(null);
   const [payMethod, setPayMethod] = useState<ExpensePaymentMethod>('cash');

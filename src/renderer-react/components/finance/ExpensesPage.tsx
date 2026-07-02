@@ -377,7 +377,7 @@ export function ExpensesPage() {
 
   // ── Delete / revoke expense ───────────────────────────────────────────────
   async function handleDelete(expense: Expense) {
-    const isRecurring = !!(expense as Record<string, unknown>).is_recurring;
+    const isRecurring = !!(expense as unknown as Record<string, unknown>).is_recurring;
     const message = isRecurring
       ? `${t('Revoke this recurring entry?')}\n\n${expense.category_name ?? t('Expense')} — ${formatCurrency(expense.amount)} (${expense.expense_date})\n\n${t('This entry will be removed and will not regenerate.')}`
       : `${t('Are you sure you want to delete this expense?')}\n\n${expense.category_name ?? t('Expense')} — ${formatCurrency(expense.amount)}`;
