@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import type { Product, BulkPriceUpdatePreviewRow } from '@/api/types';
 import { api } from '@/api';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, unitLabel } from '@/lib/utils';
 import { useSettingsStore } from '@/stores/settings.store';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
@@ -385,7 +385,7 @@ export function BulkPriceUpdatePage() {
                           <TableCell>
                             <div className="font-medium">{r.name}</div>
                             <div className="text-xs text-muted-foreground">
-                              {[r.category, r.cf > 1 ? `1 ${r.parentUnit} = ${r.cf} ${r.childUnit}` : null]
+                              {[r.category, r.cf > 1 ? `1 ${unitLabel(r.parentUnit, t)} = ${r.cf} ${unitLabel(r.childUnit, t)}` : null]
                                 .filter(Boolean).join(' · ')}
                             </div>
                           </TableCell>
@@ -393,7 +393,7 @@ export function BulkPriceUpdatePage() {
                           <TableCell className="text-end tabular-nums text-muted-foreground">
                             {formatCurrency(r.currentSell)}
                             {r.cf > 1 && r.currentSellChild > 0 && (
-                              <div className="text-xs">{formatCurrency(r.currentSellChild)}/{r.childUnit}</div>
+                              <div className="text-xs">{formatCurrency(r.currentSellChild)}/{unitLabel(r.childUnit, t)}</div>
                             )}
                           </TableCell>
                           <TableCell className={`text-end tabular-nums ${marginColor(curMargin)}`}>

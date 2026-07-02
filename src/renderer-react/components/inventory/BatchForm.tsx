@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { api, throwIfError } from '@/api';
 import type { Batch } from '@/api/types';
-import { formatCurrency, formatQuantity } from '@/lib/utils';
+import { formatCurrency, formatQuantity, unitLabel } from '@/lib/utils';
 import { usePermission } from '@/hooks/usePermission';
 import { useSettingsStore } from '@/stores/settings.store';
 
@@ -369,7 +369,7 @@ export function BatchForm({
             />
             {hasChildUnit && conversionFactor > 1 && (
               <p className="text-xs text-muted-foreground">
-                {t('Total')}: {formatQuantity(quantity, parentUnit, childUnit, conversionFactor)}
+                {t('Total')}: {formatQuantity(quantity, unitLabel(parentUnit, t), unitLabel(childUnit, t), conversionFactor)}
               </p>
             )}
             {isEditMode && (!hasChildUnit || conversionFactor <= 1) && (
