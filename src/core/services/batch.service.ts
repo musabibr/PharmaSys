@@ -4,6 +4,7 @@ import type { EventBus }          from '../events/event-bus';
 import type {
   Batch, CreateBatchInput, UpdateBatchInput,
   InventoryAdjustment, AdjustmentFilters, AdjustmentType, BatchFilters,
+  LatestBatchPricing, BulkPriceUpdateOptions, BulkPriceUpdatePreviewRow, BulkPriceUpdateResult,
 } from '../types/models';
 import { Validate }               from '../common/validation';
 import { NotFoundError, ValidationError, ConflictError, BusinessRuleError } from '../types/errors';
@@ -381,6 +382,80 @@ export class BatchService {
       });
     }
     return count;
+  }
+
+  // ─── Bulk margin price update ───────────────────────────────────────────────
+
+  private _validateBulkPriceOpts(opts: BulkPriceUpdateOptions): void {
+    if (opts.mode !== 'margin_over_cost' && opts.mode !== 'increase_current') {
+      throw new ValidationError('Invalid price update mode', 'mode');
+    }
+    const pct = Number(opts.percent);
+    if (!Number.isFinite(pct) || pct < -90 || pct > 500) {
+      throw new ValidationError('Percent must be between -90 and 500', 'percent');
+    }
+    if (opts.rounding !== 1 && opts.rounding !== 50 && opts.rounding !== 100) {
+      throw new ValidationError('Rounding must be 1, 50, or 100', 'rounding');
+    }
+  }
+
+  /** Turn a latest-pricing row into a preview row using the chosen mode/percent/rounding. */
+  private _computeBulkPriceRow(p: LatestBatchPricing, opts: BulkPriceUpdateOptions): BulkPriceUpdatePreviewRow {
+    const cf = p.conversion_factor > 0 ? p.conversion_factor : 1;
+    const basis = opts.mode === 'margin_over_cost' ? p.latest_cost : p.current_sell;
+    const raw = (basis * (100 + opts.percent)) / 100;
+    // Round to the nearest step, but never below one rounding step.
+    const newParent = Math.max(opts.rounding, Math.round(raw / opts.rounding) * opts.rounding);
+    const newChild = Money.divideToChild(newParent, cf);
+    const changePct = p.current_sell > 0
+      ? Math.round(((newParent - p.current_sell) / p.current_sell) * 1000) / 10
+      : 0;
+    return {
+      product_id: p.product_id,
+      product_name: p.product_name,
+      category_name: p.category_name,
+      conversion_factor: cf,
+      basis_cost: basis,
+      current_sell: p.current_sell,
+      new_sell_parent: newParent,
+      new_sell_child: newChild,
+      change_pct: changePct,
+    };
+  }
+
+  /** Fetch latest pricing, drop excluded products/categories, compute new prices. No writes. */
+  private async _buildBulkPriceRows(opts: BulkPriceUpdateOptions): Promise<BulkPriceUpdatePreviewRow[]> {
+    const excludeProducts = new Set(opts.exclude_product_ids ?? []);
+    const excludeCategories = new Set(opts.exclude_category_ids ?? []);
+    const all = await this.repo.getLatestBatchPricingPerProduct();
+    return all
+      .filter((p) => !excludeProducts.has(p.product_id))
+      .filter((p) => p.category_id == null || !excludeCategories.has(p.category_id))
+      .map((p) => this._computeBulkPriceRow(p, opts));
+  }
+
+  async previewBulkPriceUpdate(opts: BulkPriceUpdateOptions): Promise<BulkPriceUpdatePreviewRow[]> {
+    this._validateBulkPriceOpts(opts);
+    return await this._buildBulkPriceRows(opts);
+  }
+
+  async applyBulkPriceUpdate(opts: BulkPriceUpdateOptions, userId: number): Promise<BulkPriceUpdateResult> {
+    this._validateBulkPriceOpts(opts);
+    return await this.repo.inTransaction(async () => {
+      const rows = await this._buildBulkPriceRows(opts);
+      let updatedBatches = 0;
+      for (const r of rows) {
+        updatedBatches += await this.repo.bulkUpdateSellingPrices(
+          r.product_id, r.new_sell_parent, r.new_sell_child, r.new_sell_child, false
+        );
+      }
+      this.bus.emit('entity:mutated', {
+        action: 'BULK_MARGIN_PRICE_UPDATE', table: 'batches',
+        recordId: null, userId,
+        newValues: { updatedProducts: rows.length, updatedBatches, options: opts },
+      });
+      return { updatedProducts: rows.length, updatedBatches };
+    });
   }
 
   async deleteBatch(id: number, userId: number): Promise<void> {

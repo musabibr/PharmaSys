@@ -64,6 +64,14 @@ export function batchRoutes(services: ServiceContainer): Router {
     });
   }));
 
+  router.post('/price-update/preview', requireMicroPerm('inventory.batches.manage'), handle(async (req, res) => {
+    res.json({ data: await services.batch.previewBulkPriceUpdate(req.body) });
+  }));
+
+  router.post('/price-update/apply', requireMicroPerm('inventory.batches.manage'), handle(async (req, res) => {
+    res.json({ data: await services.batch.applyBulkPriceUpdate(req.body, req.user!.id) });
+  }));
+
   router.post('/bulk-delete', requireAdmin, handle(async (req, res) => {
     res.json({ data: await services.batch.bulkDeleteBatches(req.body.ids, req.user!.id) });
   }));

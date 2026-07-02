@@ -11,6 +11,7 @@ import {
   Trash2,
   PackageSearch,
   PackagePlus,
+  TrendingUp,
   Loader2,
   ArrowUpDown,
   X,
@@ -23,6 +24,7 @@ import { BulkImportDialog } from './BulkImportDialog';
 import { ProductExportDialog } from './ProductExportDialog';
 import { ProductImportDialog } from './ProductImportDialog';
 import { QuickStockEntryDialog } from './QuickStockEntryDialog';
+import { BulkPriceUpdateDialog } from './BulkPriceUpdateDialog';
 import { useDebounce } from '@/hooks/useDebounce';
 import { DataPagination } from '@/components/ui/data-pagination';
 import { Input } from '@/components/ui/input';
@@ -490,6 +492,7 @@ export function ProductsTab() {
   const [smartImportOpen, setSmartImportOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [quickEntryOpen, setQuickEntryOpen] = useState(false);
+  const [priceUpdateOpen, setPriceUpdateOpen] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   // Sort
@@ -620,6 +623,10 @@ export function ProductsTab() {
             <Button size="sm" variant="default" onClick={() => setQuickEntryOpen(true)}>
               <PackagePlus className="me-1.5 h-4 w-4" />
               {t('Quick Stock Entry')}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setPriceUpdateOpen(true)}>
+              <TrendingUp className="me-1.5 h-4 w-4" />
+              {t('Bulk Price Update')}
             </Button>
             <Button size="sm" variant="outline" onClick={() => setCategoryDialogOpen(true)}>
               <FolderPlus className="me-1.5 h-4 w-4" />
@@ -839,6 +846,12 @@ export function ProductsTab() {
         open={quickEntryOpen}
         onOpenChange={setQuickEntryOpen}
         onSaved={() => fetchProducts()}
+      />
+
+      <BulkPriceUpdateDialog
+        open={priceUpdateOpen}
+        onOpenChange={setPriceUpdateOpen}
+        onApplied={() => fetchProducts()}
       />
 
       <BulkDeleteProductsDialog

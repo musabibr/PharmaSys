@@ -3,6 +3,7 @@ import type { IBatchRepository, IFIFOBatch } from '../../types/repositories';
 import type {
   Batch, BatchStatus, CreateBatchInput, UpdateBatchInput,
   InventoryAdjustment, AdjustmentFilters, AdjustmentType, BatchFilters,
+  LatestBatchPricing,
 } from '../../types/models';
 export class BatchRepository implements IBatchRepository {
   constructor(private readonly base: BaseRepository) {}
@@ -288,6 +289,36 @@ export class BatchRepository implements IBatchRepository {
          AND expiry_date >= date('now')
        ORDER BY expiry_date`,
       [productId]
+    );
+  }
+
+  /**
+   * One row per active product that has at least one in-stock, unexpired active
+   * batch: the product's latest batch cost and its current effective (FIFO,
+   * override-wins) selling price. Basis for the bulk margin price update.
+   */
+  async getLatestBatchPricingPerProduct(): Promise<LatestBatchPricing[]> {
+    return await this.base.getAll<LatestBatchPricing>(
+      `SELECT p.id AS product_id, p.name AS product_name, p.category_id,
+              c.name AS category_name,
+              COALESCE(NULLIF(p.conversion_factor, 0), 1) AS conversion_factor,
+              lb.cost_per_parent AS latest_cost,
+              (SELECT CASE WHEN b2.selling_price_parent_override > 0
+                           THEN b2.selling_price_parent_override
+                           ELSE b2.selling_price_parent END
+                 FROM batches b2
+                WHERE b2.product_id = p.id AND b2.status = 'active'
+                  AND b2.quantity_base > 0 AND b2.expiry_date >= date('now')
+                ORDER BY b2.expiry_date ASC, b2.id ASC LIMIT 1) AS current_sell
+       FROM products p
+       LEFT JOIN categories c ON p.category_id = c.id
+       JOIN batches lb ON lb.id = (
+              SELECT b.id FROM batches b
+               WHERE b.product_id = p.id AND b.status = 'active'
+                 AND b.quantity_base > 0 AND b.expiry_date >= date('now')
+               ORDER BY b.id DESC LIMIT 1)
+       WHERE p.is_active = 1
+       ORDER BY p.name`
     );
   }
 

@@ -574,6 +574,48 @@ export interface BulkCreateProductInput {
   selling_price_child?: number;
 }
 
+// ─── Bulk Margin Price Update ───
+
+export type BulkPriceUpdateMode = 'margin_over_cost' | 'increase_current';
+export type BulkPriceUpdateRounding = 1 | 50 | 100;
+
+export interface BulkPriceUpdateOptions {
+  /** 'margin_over_cost' = latest batch cost x (1+percent); 'increase_current' = current sell x (1+percent). */
+  mode: BulkPriceUpdateMode;
+  percent: number;
+  rounding: BulkPriceUpdateRounding;
+  exclude_product_ids?: number[];
+  exclude_category_ids?: number[];
+}
+
+/** One row per active product that has at least one in-stock, unexpired active batch. */
+export interface LatestBatchPricing {
+  product_id: number;
+  product_name: string;
+  category_id: number | null;
+  category_name: string | null;
+  conversion_factor: number;
+  latest_cost: number;
+  current_sell: number;
+}
+
+export interface BulkPriceUpdatePreviewRow {
+  product_id: number;
+  product_name: string;
+  category_name: string | null;
+  conversion_factor: number;
+  basis_cost: number;
+  current_sell: number;
+  new_sell_parent: number;
+  new_sell_child: number;
+  change_pct: number;
+}
+
+export interface BulkPriceUpdateResult {
+  updatedProducts: number;
+  updatedBatches: number;
+}
+
 // ─── Filter Types ───
 
 export interface TransactionFilters {

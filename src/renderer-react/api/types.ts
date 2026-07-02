@@ -8,6 +8,30 @@ export type PaymentMethod = 'cash' | 'bank_transfer' | 'mixed';
 export type ShiftStatus = 'open' | 'closed';
 export type AdjustmentType = 'damage' | 'expiry' | 'correction';
 
+// ─── Bulk margin price update ───
+export interface BulkPriceUpdateOptions {
+  mode: 'margin_over_cost' | 'increase_current';
+  percent: number;
+  rounding: 1 | 50 | 100;
+  exclude_product_ids?: number[];
+  exclude_category_ids?: number[];
+}
+export interface BulkPriceUpdatePreviewRow {
+  product_id: number;
+  product_name: string;
+  category_name: string | null;
+  conversion_factor: number;
+  basis_cost: number;
+  current_sell: number;
+  new_sell_parent: number;
+  new_sell_child: number;
+  change_pct: number;
+}
+export interface BulkPriceUpdateResult {
+  updatedProducts: number;
+  updatedBatches: number;
+}
+
 export interface InventoryAdjustment {
   id: number;
   product_id: number;
@@ -779,6 +803,8 @@ export interface PharmaSysApi {
     getExpired(): Promise<Batch[]>;
     getActiveBatchesForPriceUpdate(productId: number): Promise<Array<{ id: number; batch_number: string | null; quantity_base: number; expiry_date: string }>>;
     updatePricesByProduct(data: { productId: number; sellingPriceParent: number; sellingPriceChild?: number }): Promise<number>;
+    previewBulkPriceUpdate(opts: BulkPriceUpdateOptions): Promise<BulkPriceUpdatePreviewRow[]>;
+    applyBulkPriceUpdate(opts: BulkPriceUpdateOptions): Promise<BulkPriceUpdateResult>;
     getDeleteInfo(id: number): Promise<{ quantity_base: number; txn_count: number; adj_count: number } | undefined>;
     bulkDelete(ids: number[]): Promise<{ deleted: number[]; errors: Array<{ id: number; reason: string }> }>;
   };

@@ -199,6 +199,8 @@ contextBridge.exposeInMainWorld('api', {
     getExpired:                    async ()          => get('/api/v1/batches/expired'),
     getActiveBatchesForPriceUpdate: async (productId) => get(`/api/v1/batches/active/${productId}`),
     updatePricesByProduct:         async (data)      => post('/api/v1/batches/update-prices', data),
+    previewBulkPriceUpdate:        async (opts)      => post('/api/v1/batches/price-update/preview', opts),
+    applyBulkPriceUpdate:          async (opts)      => post('/api/v1/batches/price-update/apply', opts),
     getDeleteInfo:                 async (id)        => get(`/api/v1/batches/${id}/delete-info`),
     bulkDelete:                    async (ids)       => post('/api/v1/batches/bulk-delete', { ids }),
   },
