@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Input } from '@/components/ui/input';
-import { cn } from '@/lib/utils';
+import { cn, unitLabel } from '@/lib/utils';
 
 interface QtyInputProps {
   /** Units per parent (conversion factor). cf<=1 → single (small-unit) input. */
@@ -49,6 +49,8 @@ export function QtyInput({ cf, parentUnit, childUnit, valueBase, onChangeBase, d
     onChangeBase((parseInt(b || '0', 10) || 0) * c + (parseInt(s || '0', 10) || 0));
 
   const w = compact ? 'w-14' : 'w-16';
+  const parentLabel = unitLabel(parentUnit, t, t('box'));
+  const childLabel = unitLabel(childUnit, t, t('unit'));
 
   if (!dual) {
     return (
@@ -60,7 +62,7 @@ export function QtyInput({ cf, parentUnit, childUnit, valueBase, onChangeBase, d
           value={strips}
           onChange={(e) => { setStrips(e.target.value); emit(boxes, e.target.value); }}
         />
-        <span className="text-xs text-muted-foreground">{childUnit || t('unit')}</span>
+        <span className="text-xs text-muted-foreground">{childUnit ? childLabel : unitLabel(parentUnit, t, t('unit'))}</span>
       </div>
     );
   }
@@ -74,7 +76,7 @@ export function QtyInput({ cf, parentUnit, childUnit, valueBase, onChangeBase, d
         value={boxes}
         onChange={(e) => { setBoxes(e.target.value); emit(e.target.value, strips); }}
       />
-      <span className="text-xs text-muted-foreground">{parentUnit || t('box')}</span>
+      <span className="text-xs text-muted-foreground">{parentLabel}</span>
       <span className="text-muted-foreground">+</span>
       <Input
         type="number" min={0} disabled={disabled}
@@ -83,7 +85,7 @@ export function QtyInput({ cf, parentUnit, childUnit, valueBase, onChangeBase, d
         value={strips}
         onChange={(e) => { setStrips(e.target.value); emit(boxes, e.target.value); }}
       />
-      <span className="text-xs text-muted-foreground">{childUnit || t('unit')}</span>
+      <span className="text-xs text-muted-foreground">{childLabel}</span>
     </div>
   );
 }

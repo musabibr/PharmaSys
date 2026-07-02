@@ -25,6 +25,23 @@ export function displayInvoiceId(purchase: { invoice_reference?: string | null; 
   return purchase.invoice_reference?.trim() || purchase.purchase_number;
 }
 
+/**
+ * Translate a stored unit name (e.g. "Box", "strip") for display.
+ * Units are free-text user data, so this only maps the common names that have
+ * translations (case-insensitively); unknown units pass through unchanged.
+ */
+export function unitLabel(
+  unit: string | null | undefined,
+  t: (key: string) => string,
+  fallback = '',
+): string {
+  const u = (unit ?? '').trim();
+  if (!u) return fallback;
+  const norm = u.charAt(0).toUpperCase() + u.slice(1).toLowerCase();
+  const translated = t(norm);
+  return translated === norm ? u : translated;
+}
+
 /** Format base quantity into parent + child units */
 export function formatQuantity(
   quantityBase: number,

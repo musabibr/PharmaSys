@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { Search, Plus, Trash2, Check, Loader2, PackagePlus, ArrowLeft, ArrowRight } from 'lucide-react';
 import type { Product } from '@/api/types';
 import { api } from '@/api';
-import { formatCurrency, formatQuantity } from '@/lib/utils';
+import { formatCurrency, formatQuantity, unitLabel } from '@/lib/utils';
 import { useSettingsStore } from '@/stores/settings.store';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -358,6 +358,11 @@ export function QuickStockEntryPage() {
         ) : rows.map((r) => {
           const err = rowError(r);
           const hasSmall = r.cf > 1;
+          const pUnit = unitLabel(r.parentUnit, t, t('unit'));
+          const cUnit = unitLabel(r.childUnit, t, t('unit'));
+          // Don't repeat the generic name when it's already part of the product name.
+          const showGeneric = !!r.genericName
+            && !r.productName.toLowerCase().includes(r.genericName.toLowerCase());
           return (
             <Card key={r._key}>
               <CardContent className="p-4 space-y-3">
@@ -373,7 +378,7 @@ export function QuickStockEntryPage() {
                   ) : (
                     <span className="flex-1 font-medium">
                       {r.productName}
-                      {r.genericName && (
+                      {showGeneric && (
                         <span className="ms-2 text-xs font-normal text-muted-foreground">({r.genericName})</span>
                       )}
                     </span>
@@ -387,18 +392,24 @@ export function QuickStockEntryPage() {
                   </Button>
                 </div>
 
-                {/* Existing products: context line (category, unit ratio, stock on hand) */}
+                {/* Existing products: context line (category, unit ratio, stock, barcode) */}
                 {!r.isNew && (
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                     {r.category && <span>{r.category}</span>}
-                    {hasSmall && <span>1 {r.parentUnit} = {r.cf} {r.childUnit}</span>}
+                    {hasSmall && <span>1 {pUnit} = {r.cf} {cUnit}</span>}
                     <span>
-                      {t('In stock')}: {formatQuantity(r.currentStockBase, r.parentUnit, r.childUnit, r.cf)}
+                      {t('In stock')}: {formatQuantity(r.currentStockBase, pUnit, cUnit, r.cf)}
                     </span>
+                    {r.barcode && (
+                      <span>
+                        {t('Barcode')}: <bdi dir="ltr">{r.barcode}</bdi>
+                      </span>
+                    )}
                   </div>
                 )}
 
-                {/* Product definition fields (full set for new; barcode for existing) */}
+                {/* Product definition fields (full set for new; barcode fill-in for existing) */}
+                {(r.isNew || !r.barcode) && (
                 <div className="flex flex-wrap items-end gap-2">
                   {r.isNew && (
                     <>
@@ -418,11 +429,9 @@ export function QuickStockEntryPage() {
                   )}
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">{t('Barcode')}</Label>
-                    <Input value={r.barcode}
+                    <Input value={r.barcode} dir="ltr"
                       onChange={(e) => update(r._key, { barcode: e.target.value })}
-                      className="h-8 w-36" placeholder={t('Optional')}
-                      disabled={!r.isNew && !!r.barcode}
-                      title={!r.isNew && r.barcode ? t('Barcode already set on this product') : ''} />
+                      className="h-8 w-36" placeholder={t('Optional')} />
                   </div>
                   {r.isNew && (
                     <>
@@ -459,23 +468,25 @@ export function QuickStockEntryPage() {
                     </>
                   )}
                 </div>
+                )}
 
-                {/* Batch fields: quantity + costs + selling prices (both units) */}
-                <div className="flex flex-wrap items-end gap-2">
+                {/* Batch fields: quantity | costs + margin + prices | expiry + batch # */}
+                <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">{t('Quantity')}</Label>
                     <QtyInput compact cf={r.cf} parentUnit={r.parentUnit} childUnit={r.childUnit}
                       valueBase={r.qtyBase} onChangeBase={(b) => update(r._key, { qtyBase: b })} />
                   </div>
+                  <div className="flex flex-wrap items-end gap-2 border-s ps-4">
                   <div className="space-y-1">
-                    <Label className="text-xs text-muted-foreground">{t('Cost')}/{r.parentUnit || t('unit')}</Label>
+                    <Label className="text-xs text-muted-foreground">{t('Cost')}/{pUnit}</Label>
                     <Input type="number" min={0} value={r.cost || ''}
                       onChange={(e) => update(r._key, { cost: Math.round(Number(e.target.value) || 0) })}
                       className="h-8 w-24" placeholder="0" />
                   </div>
                   {hasSmall && (
                     <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">{t('Cost')}/{r.childUnit}</Label>
+                      <Label className="text-xs text-muted-foreground">{t('Cost')}/{cUnit}</Label>
                       <Input type="number" min={0} value={r.costSmall || ''}
                         onChange={(e) => update(r._key, { costSmall: Math.round(Number(e.target.value) || 0), costSmallTouched: true })}
                         className="h-8 w-24" placeholder={t('auto')} />
@@ -496,19 +507,21 @@ export function QuickStockEntryPage() {
                       }} />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs text-muted-foreground">{t('Sell')}/{r.parentUnit || t('unit')}</Label>
+                    <Label className="text-xs text-muted-foreground">{t('Sell')}/{pUnit}</Label>
                     <Input type="number" min={0} value={r.sell || ''}
                       onChange={(e) => update(r._key, { sell: Math.round(Number(e.target.value) || 0), sellTouched: true })}
                       className="h-8 w-24" placeholder={t('auto')} />
                   </div>
                   {hasSmall && (
                     <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">{t('Sell')}/{r.childUnit}</Label>
+                      <Label className="text-xs text-muted-foreground">{t('Sell')}/{cUnit}</Label>
                       <Input type="number" min={0} value={r.sellSmall || ''}
                         onChange={(e) => update(r._key, { sellSmall: Math.round(Number(e.target.value) || 0), sellSmallTouched: true })}
                         className="h-8 w-24" placeholder={t('auto')} />
                     </div>
                   )}
+                  </div>
+                  <div className="flex flex-wrap items-end gap-2 border-s ps-4">
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">{t('Expiry Date')}</Label>
                     <Input type="date" value={r.expiry}
@@ -517,9 +530,10 @@ export function QuickStockEntryPage() {
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">{t('Batch #')}</Label>
-                    <Input value={r.batchNumber}
+                    <Input value={r.batchNumber} dir="ltr"
                       onChange={(e) => update(r._key, { batchNumber: e.target.value })}
-                      className="h-8 w-32" placeholder={t('Optional')} />
+                      className="h-8 w-40" placeholder={t('Optional')} />
+                  </div>
                   </div>
                 </div>
 
@@ -528,7 +542,7 @@ export function QuickStockEntryPage() {
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
                     {r.qtyBase > 0 && (
                       <span className="text-muted-foreground">
-                        {t('Total')}: {formatQuantity(r.qtyBase, r.parentUnit, r.childUnit, r.cf)}
+                        {t('Total')}: {formatQuantity(r.qtyBase, pUnit, cUnit, r.cf)}
                       </span>
                     )}
                     {r.cost > 0 && r.sell > 0 && (() => {
