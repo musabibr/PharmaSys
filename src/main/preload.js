@@ -203,6 +203,9 @@ contextBridge.exposeInMainWorld('api', {
         applyBulkPriceUpdate: (opts) =>
             invoke('batches:applyBulkPriceUpdate', opts),
 
+        applyManualPriceUpdate: (items) =>
+            invoke('batches:applyManualPriceUpdate', items),
+
         getDeleteInfo: (id) =>
             invoke('batches:getDeleteInfo', id),
 

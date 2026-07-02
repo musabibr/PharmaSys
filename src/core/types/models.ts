@@ -569,6 +569,8 @@ export interface BulkCreateProductInput {
   expiry_date: string;
   quantity_base: number;
   cost_per_parent: number;
+  /** Optional explicit small-unit cost; derived from the parent cost when omitted. */
+  cost_per_child?: number;
   selling_price_parent: number;
   /** Optional explicit small-unit price; derived from the parent price when omitted. */
   selling_price_child?: number;
@@ -614,6 +616,14 @@ export interface BulkPriceUpdatePreviewRow {
 export interface BulkPriceUpdateResult {
   updatedProducts: number;
   updatedBatches: number;
+}
+
+/** One product's explicit new prices for the manual (selected-products) update. */
+export interface ManualPriceUpdateItem {
+  product_id: number;
+  selling_price_parent: number;
+  /** Small-unit price; derived by floor division from the parent when omitted. */
+  selling_price_child?: number | null;
 }
 
 // ─── Filter Types ───

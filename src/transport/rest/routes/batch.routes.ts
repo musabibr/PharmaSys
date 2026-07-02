@@ -72,6 +72,10 @@ export function batchRoutes(services: ServiceContainer): Router {
     res.json({ data: await services.batch.applyBulkPriceUpdate(req.body, req.user!.id) });
   }));
 
+  router.post('/price-update/manual', requireMicroPerm('inventory.batches.manage'), handle(async (req, res) => {
+    res.json({ data: await services.batch.applyManualPriceUpdate(req.body, req.user!.id) });
+  }));
+
   router.post('/bulk-delete', requireAdmin, handle(async (req, res) => {
     res.json({ data: await services.batch.bulkDeleteBatches(req.body.ids, req.user!.id) });
   }));

@@ -1,6 +1,6 @@
 import type { IpcRouter }        from '../ipc-router';
 import type { ServiceContainer } from '../../../core/services/index';
-import type { CreateBatchInput, UpdateBatchInput, AdjustmentType, BatchFilters, BulkPriceUpdateOptions } from '../../../core/types/models';
+import type { CreateBatchInput, UpdateBatchInput, AdjustmentType, BatchFilters, BulkPriceUpdateOptions, ManualPriceUpdateItem } from '../../../core/types/models';
 
 export function registerBatchHandlers(router: IpcRouter, services: ServiceContainer): void {
   router.handle('batches:getByProduct', async (_user, productId: number) => {
@@ -71,6 +71,10 @@ export function registerBatchHandlers(router: IpcRouter, services: ServiceContai
 
   router.handle('batches:applyBulkPriceUpdate', async (user, opts: BulkPriceUpdateOptions) => {
     return await services.batch.applyBulkPriceUpdate(opts, user!.id);
+  }, { permission: 'inventory.batches.manage' });
+
+  router.handle('batches:applyManualPriceUpdate', async (user, items: ManualPriceUpdateItem[]) => {
+    return await services.batch.applyManualPriceUpdate(items, user!.id);
   }, { permission: 'inventory.batches.manage' });
 
   router.handle('batches:bulkDelete', async (user, ids: number[]) => {

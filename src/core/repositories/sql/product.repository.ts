@@ -330,7 +330,9 @@ export class ProductRepository implements IProductRepository {
 
             // Use existing product's CF for matched products (BUG 10 backend counterpart)
             const cf = existingProductId ? existingCf : (item.conversion_factor ?? 1);
-            const costChild = Money.divideToChild(item.cost_per_parent, cf);
+            const costChild = item.cost_per_child && item.cost_per_child > 0
+              ? item.cost_per_child
+              : Money.divideToChild(item.cost_per_parent, cf);
             const sellChild = item.selling_price_child && item.selling_price_child > 0
               ? item.selling_price_child
               : Money.divideToChild(sellParent, cf);

@@ -31,6 +31,11 @@ export interface BulkPriceUpdateResult {
   updatedProducts: number;
   updatedBatches: number;
 }
+export interface ManualPriceUpdateItem {
+  product_id: number;
+  selling_price_parent: number;
+  selling_price_child?: number | null;
+}
 
 export interface InventoryAdjustment {
   id: number;
@@ -806,6 +811,7 @@ export interface PharmaSysApi {
     updatePricesByProduct(data: { productId: number; sellingPriceParent: number; sellingPriceChild?: number }): Promise<number>;
     previewBulkPriceUpdate(opts: BulkPriceUpdateOptions): Promise<BulkPriceUpdatePreviewRow[]>;
     applyBulkPriceUpdate(opts: BulkPriceUpdateOptions): Promise<BulkPriceUpdateResult>;
+    applyManualPriceUpdate(items: ManualPriceUpdateItem[]): Promise<BulkPriceUpdateResult>;
     getDeleteInfo(id: number): Promise<{ quantity_base: number; txn_count: number; adj_count: number } | undefined>;
     bulkDelete(ids: number[]): Promise<{ deleted: number[]; errors: Array<{ id: number; reason: string }> }>;
   };

@@ -5,6 +5,7 @@ import type {
   Batch, CreateBatchInput, UpdateBatchInput,
   InventoryAdjustment, AdjustmentFilters, AdjustmentType, BatchFilters,
   LatestBatchPricing, BulkPriceUpdateOptions, BulkPriceUpdatePreviewRow, BulkPriceUpdateResult,
+  ManualPriceUpdateItem,
 } from '../types/models';
 import { Validate }               from '../common/validation';
 import { NotFoundError, ValidationError, ConflictError, BusinessRuleError } from '../types/errors';
@@ -455,6 +456,52 @@ export class BatchService {
         newValues: { updatedProducts: rows.length, updatedBatches, options: opts },
       });
       return { updatedProducts: rows.length, updatedBatches };
+    });
+  }
+
+  /**
+   * Manual (selected-products) price update: set explicit selling prices per
+   * product — parent price required, small-unit price derived by floor
+   * division when not given. All writes in one transaction, one audit event.
+   */
+  async applyManualPriceUpdate(items: ManualPriceUpdateItem[], userId: number): Promise<BulkPriceUpdateResult> {
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new ValidationError('At least one product is required', 'items');
+    }
+    for (const item of items) {
+      Validate.id(item.product_id, 'Product');
+      Validate.positiveNumber(item.selling_price_parent, 'Selling price');
+      if (item.selling_price_child != null && item.selling_price_child < 0) {
+        throw new ValidationError('Small-unit price cannot be negative', 'selling_price_child');
+      }
+    }
+
+    return await this.repo.inTransaction(async () => {
+      let updatedBatches = 0;
+      for (const item of items) {
+        const product = await this.productRepo.getById(item.product_id);
+        if (!product) throw new NotFoundError('Product', item.product_id);
+        const cf = product.conversion_factor && product.conversion_factor > 1 ? product.conversion_factor : 1;
+
+        const sellParent = Money.round(item.selling_price_parent);
+        const derivedChild = cf > 1 ? Money.divideToChild(sellParent, cf) : sellParent;
+        const sellChild = item.selling_price_child != null && item.selling_price_child > 0
+          ? Money.round(item.selling_price_child)
+          : derivedChild;
+
+        updatedBatches += await this.repo.bulkUpdateSellingPrices(
+          item.product_id, sellParent, derivedChild, sellChild, false
+        );
+      }
+      this.bus.emit('entity:mutated', {
+        action: 'BULK_MANUAL_PRICE_UPDATE', table: 'batches',
+        recordId: null, userId,
+        newValues: {
+          updatedProducts: items.length, updatedBatches,
+          items: items.map((i) => ({ product_id: i.product_id, selling_price_parent: i.selling_price_parent, selling_price_child: i.selling_price_child ?? null })),
+        },
+      });
+      return { updatedProducts: items.length, updatedBatches };
     });
   }
 

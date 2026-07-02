@@ -20,11 +20,10 @@ import type { Product, Category } from '@/api/types';
 import { api } from '@/api';
 import { formatQuantity } from '@/lib/utils';
 import { usePermission } from '@/hooks/usePermission';
+import { useNavigate } from 'react-router-dom';
 import { BulkImportDialog } from './BulkImportDialog';
 import { ProductExportDialog } from './ProductExportDialog';
 import { ProductImportDialog } from './ProductImportDialog';
-import { QuickStockEntryDialog } from './QuickStockEntryDialog';
-import { BulkPriceUpdateDialog } from './BulkPriceUpdateDialog';
 import { useDebounce } from '@/hooks/useDebounce';
 import { DataPagination } from '@/components/ui/data-pagination';
 import { Input } from '@/components/ui/input';
@@ -491,8 +490,7 @@ export function ProductsTab() {
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [smartImportOpen, setSmartImportOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
-  const [quickEntryOpen, setQuickEntryOpen] = useState(false);
-  const [priceUpdateOpen, setPriceUpdateOpen] = useState(false);
+  const navigate = useNavigate();
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   // Sort
@@ -620,11 +618,11 @@ export function ProductsTab() {
 
         {canManage && (
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="default" onClick={() => setQuickEntryOpen(true)}>
+            <Button size="sm" variant="default" onClick={() => navigate('/inventory/quick-entry')}>
               <PackagePlus className="me-1.5 h-4 w-4" />
               {t('Quick Stock Entry')}
             </Button>
-            <Button size="sm" variant="outline" onClick={() => setPriceUpdateOpen(true)}>
+            <Button size="sm" variant="outline" onClick={() => navigate('/inventory/price-update')}>
               <TrendingUp className="me-1.5 h-4 w-4" />
               {t('Bulk Price Update')}
             </Button>
@@ -840,18 +838,6 @@ export function ProductsTab() {
         open={smartImportOpen}
         onOpenChange={setSmartImportOpen}
         onImported={() => fetchProducts()}
-      />
-
-      <QuickStockEntryDialog
-        open={quickEntryOpen}
-        onOpenChange={setQuickEntryOpen}
-        onSaved={() => fetchProducts()}
-      />
-
-      <BulkPriceUpdateDialog
-        open={priceUpdateOpen}
-        onOpenChange={setPriceUpdateOpen}
-        onApplied={() => fetchProducts()}
       />
 
       <BulkDeleteProductsDialog

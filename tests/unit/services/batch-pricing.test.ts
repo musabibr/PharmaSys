@@ -1,5 +1,5 @@
 import { BatchService } from '@core/services/batch.service';
-import { ValidationError } from '@core/types/errors';
+import { ValidationError, NotFoundError } from '@core/types/errors';
 import { createMockBatchRepo, createMockProductRepo, createMockBus } from '../../helpers/mocks';
 import type { BulkPriceUpdateOptions, LatestBatchPricing } from '@core/types/models';
 
@@ -140,6 +140,61 @@ describe('BatchService — bulk margin price update', () => {
       const { svc, batchRepo } = createService();
       await expect(svc.applyBulkPriceUpdate(opts({ rounding: 7 as any }), 1)).rejects.toThrow(ValidationError);
       expect(batchRepo.getLatestBatchPricingPerProduct).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('applyManualPriceUpdate', () => {
+    it('derives the small-unit price from the parent by floor division when omitted', async () => {
+      const { svc, batchRepo, productRepo } = createService();
+      productRepo.getById.mockResolvedValue({ id: 1, conversion_factor: 3 });
+      batchRepo.bulkUpdateSellingPrices.mockResolvedValue(2);
+
+      const result = await svc.applyManualPriceUpdate([{ product_id: 1, selling_price_parent: 1000 }], 7);
+
+      // derived child = floor(1000 / 3) = 333
+      expect(batchRepo.bulkUpdateSellingPrices).toHaveBeenCalledWith(1, 1000, 333, 333, false);
+      expect(result).toEqual({ updatedProducts: 1, updatedBatches: 2 });
+    });
+
+    it('uses the explicit small-unit price when provided', async () => {
+      const { svc, batchRepo, productRepo } = createService();
+      productRepo.getById.mockResolvedValue({ id: 1, conversion_factor: 10 });
+      batchRepo.bulkUpdateSellingPrices.mockResolvedValue(1);
+
+      await svc.applyManualPriceUpdate([{ product_id: 1, selling_price_parent: 1200, selling_price_child: 150 }], 7);
+
+      // base child stays floor(1200/10)=120; the explicit 150 becomes the override
+      expect(batchRepo.bulkUpdateSellingPrices).toHaveBeenCalledWith(1, 1200, 120, 150, false);
+    });
+
+    it('emits a single BULK_MANUAL_PRICE_UPDATE event for the whole batch', async () => {
+      const { svc, batchRepo, productRepo, bus } = createService();
+      productRepo.getById.mockResolvedValue({ id: 1, conversion_factor: 1 });
+      batchRepo.bulkUpdateSellingPrices.mockResolvedValue(1);
+
+      await svc.applyManualPriceUpdate([
+        { product_id: 1, selling_price_parent: 500 },
+        { product_id: 2, selling_price_parent: 700 },
+      ], 7);
+
+      expect(bus.emit).toHaveBeenCalledTimes(1);
+      expect(bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
+        action: 'BULK_MANUAL_PRICE_UPDATE',
+      }));
+    });
+
+    it('rejects an empty list and non-positive prices', async () => {
+      const { svc } = createService();
+      await expect(svc.applyManualPriceUpdate([], 7)).rejects.toThrow(ValidationError);
+      await expect(svc.applyManualPriceUpdate([{ product_id: 1, selling_price_parent: 0 }], 7))
+        .rejects.toThrow(ValidationError);
+    });
+
+    it('throws NotFoundError for an unknown product', async () => {
+      const { svc, productRepo } = createService();
+      productRepo.getById.mockResolvedValue(undefined);
+      await expect(svc.applyManualPriceUpdate([{ product_id: 99, selling_price_parent: 100 }], 7))
+        .rejects.toThrow(NotFoundError);
     });
   });
 });
