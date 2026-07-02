@@ -19,6 +19,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { DataPagination } from '@/components/ui/data-pagination';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 
 const BUILDER_PAGE_SIZE = 12;
 const DETAIL_PAGE_SIZE = 25;
@@ -40,6 +41,7 @@ function fmtUnits(base: number, cf?: number, parent?: string, child?: string): s
 
 export function CycleCountsTab() {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const [innerTab, setInnerTab] = useState<'counts' | 'variance'>('counts');
   const [counts, setCounts] = useState<CycleCount[]>([]);
   const [loading, setLoading] = useState(true);
@@ -139,7 +141,7 @@ export function CycleCountsTab() {
     catch (err: any) { toast.error(err.message || t('Failed to start')); }
   };
   const handleComplete = async (id: number) => {
-    if (!confirm(t('Complete cycle count and apply adjustments?'))) return;
+    if (!(await confirm({ description: t('Complete cycle count and apply adjustments?') }))) return;
     try { const { throwIfError } = await import('@/api'); throwIfError(await api.cycleCounts.complete(id, true) as any); setSelectedCountId(null); }
     catch (err: any) { toast.error(err.message || t('Failed to complete')); }
   };
@@ -156,6 +158,19 @@ export function CycleCountsTab() {
     if (d.boxes === '' && d.strips === '') return; // nothing entered
     recordItem(item.id, boxes * cf + strips);
   };
+
+  // ── Variance tab data (hooks must stay ABOVE the detail-view early return —
+  //    a hook after a conditional return crashes React with "Rendered fewer hooks
+  //    than expected" when navigating between list and detail) ─────────────────
+  const loadVariance = async (id: number) => {
+    setVarCountId(id);
+    try { setVarCount(await api.cycleCounts.getById(id)); } catch (err) { console.error(err); }
+  };
+  const completedCounts = counts.filter(c => c.status === 'completed' || c.status === 'in_progress');
+  // Default the variance view to the most recent completed/in-progress count.
+  useEffect(() => {
+    if (innerTab === 'variance' && varCountId == null && completedCounts.length > 0) loadVariance(completedCounts[0].id);
+  }, [innerTab, counts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ════════════════════════════════════════════════════════════════════════════
   // Count detail (product-level: count totals as boxes + strips)
@@ -253,16 +268,9 @@ export function CycleCountsTab() {
 
   // ════════════════════════════════════════════════════════════════════════════
   // Main view — internal tabs: Counts | Variance
+  // (loadVariance / completedCounts / variance-default effect are declared above
+  //  the detail-view early return so hook order stays stable.)
   // ════════════════════════════════════════════════════════════════════════════
-  const loadVariance = async (id: number) => {
-    setVarCountId(id);
-    try { setVarCount(await api.cycleCounts.getById(id)); } catch (err) { console.error(err); }
-  };
-  const completedCounts = counts.filter(c => c.status === 'completed' || c.status === 'in_progress');
-  // Default the variance view to the most recent completed/in-progress count.
-  useEffect(() => {
-    if (innerTab === 'variance' && varCountId == null && completedCounts.length > 0) loadVariance(completedCounts[0].id);
-  }, [innerTab, counts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const varItems = (varCount?.items ?? []).filter(it => {
     if (it.variance == null || it.variance === 0) return false;

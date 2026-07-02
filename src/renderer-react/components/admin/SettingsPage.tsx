@@ -49,6 +49,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { useTourContext } from '@/tours/TourProvider';
 import { HelpCircle, Check, Play } from 'lucide-react';
 
@@ -162,6 +163,7 @@ function SettingsSkeleton() {
 
 export function SettingsPage() {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const loadSettings = useSettingsStore((s) => s.loadSettings);
   const currentUser = useAuthStore((s) => s.currentUser);
   const { getAvailableTours, startTour, isCompleted, resetAllTours } = useTourContext();
@@ -475,9 +477,10 @@ export function SettingsPage() {
   }
 
   async function handleRestoreBackup(filename: string) {
-    const confirmed = window.confirm(
-      t('Are you sure you want to restore this backup? All current data will be overwritten. This action cannot be undone.')
-    );
+    const confirmed = await confirm({
+      description: t('Are you sure you want to restore this backup? All current data will be overwritten. This action cannot be undone.'),
+      destructive: true,
+    });
     if (!confirmed) return;
 
     setRestoringBackup(filename);
@@ -497,9 +500,10 @@ export function SettingsPage() {
   }
 
   async function handleRestoreFromFile() {
-    const confirmed = window.confirm(
-      t('Are you sure you want to restore a backup from file? All current data will be overwritten. This action cannot be undone.')
-    );
+    const confirmed = await confirm({
+      description: t('Are you sure you want to restore a backup from file? All current data will be overwritten. This action cannot be undone.'),
+      destructive: true,
+    });
     if (!confirmed) return;
 
     setRestoringFromFile(true);

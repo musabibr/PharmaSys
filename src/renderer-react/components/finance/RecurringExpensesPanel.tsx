@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { toast } from 'sonner';
 import {
   Plus,
@@ -144,6 +145,7 @@ export function RecurringExpensesPanel({
   canManage,
 }: RecurringExpensesPanelProps) {
   const { t } = useTranslation();
+  const confirm = useConfirm();
 
   // ── Data state ──────────────────────────────────────────────────────────
   const [items, setItems] = useState<RecurringExpense[]>([]);
@@ -268,7 +270,7 @@ export function RecurringExpensesPanel({
 
   // ── Delete ────────────────────────────────────────────────────────────
   async function handleDelete(item: RecurringExpense) {
-    if (!window.confirm(t('Delete recurring expense "{{name}}"?', { name: item.name }))) return;
+    if (!(await confirm({ description: t('Delete recurring expense "{{name}}"?', { name: item.name }), destructive: true }))) return;
     try {
       await api.recurringExpenses.delete(item.id);
       toast.success(t('Recurring expense deleted'));

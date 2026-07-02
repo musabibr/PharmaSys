@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { toast } from 'sonner';
 import { useShiftStore } from '@/stores/shift.store';
 import { useSettingsStore } from '@/stores/settings.store';
@@ -19,6 +20,7 @@ import { AlertTriangle } from 'lucide-react';
 
 export function POSPage() {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const currentShift = useShiftStore((s) => s.currentShift);
   const isStaleShift = useShiftStore((s) => s.isStaleShift);
   const shiftsEnabled = useSettingsStore((s) => s.getSetting('shifts_enabled') !== 'false');
@@ -96,9 +98,9 @@ export function POSPage() {
     setHeldSalesOpen(true);
   }
 
-  function handleRetrieveItems(items: CartItem[]) {
+  async function handleRetrieveItems(items: CartItem[]) {
     if (cartStore.items.length > 0) {
-      if (!window.confirm(t('Your current cart has items. Retrieving will replace them. Continue?'))) {
+      if (!(await confirm({ description: t('Your current cart has items. Retrieving will replace them. Continue?') }))) {
         return;
       }
     }

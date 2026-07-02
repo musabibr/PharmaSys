@@ -1,48 +1,21 @@
-Issue 1 — New batch should update old batches' selling prices
-Confirmed missing. purchase.service.ts:981-1017 _createBatch() only inserts a new row. Old batches keep their old selling_price_parent / selling_price_parent_override / selling_price_child*. Since POS sells FIFO from the oldest-expiry batch, the new price doesn't take effect until all older batches are sold.
+the system currently face defficulty when there is fresh data entry it mean the data entry of product , even if the products exist "exported and imported form another system" creating new batches can only be done on by one.
+i want a way to create and insert list of existing or new products and batches.
 
-Proposed fix: in _processItems() after _createBatch succeeds, run an UPDATE batches SET selling_price_parent_override = ?, selling_price_child_override = ? WHERE product_id = ? AND status = 'active' AND id != newBatchId. Two open questions for you:
+also i want to be able to update product prices using  a products latest batch list and be able to pumb up the sell prices "buy setting the margin" for all products with exception of specific products or specific categories.
 
-(a) Update active batches only, or also quarantine ones?
-(b) Should this also overwrite cost on old batches? (recommended: no — cost is per-batch for accurate margin/COGS).
-Issue 2 — Data loss in purchases. Four distinct causes, in order of severity:
-2A. Concurrency bug in inTransaction — SILENT data loss (most serious)
-base.repository.ts:90-120. The _txDepth counter is shared across all callers on the single shared BaseRepository. Trace under two concurrent calls:
+think of what i told you creatively and smartly to find the best way to implement it.
 
+also fix this issue:
+Rendered fewer hooks than expected. This may be caused by an accidental early return statement.
 
-Call A: txDepth 0→1, BEGIN
-Call A awaits getById(supplier)
-Call B starts: txDepth 1→2 (NO begin — uses A's tx)
-Call B does its writes, returns: txDepth 2→1, NO commit
-Call A awaits another query — throws
-Catch: txDepth 1→0, ROLLBACK ← this rolls back B's already-"successful" writes
-Effect: B's caller got a success response, the data was rolled back. This explains "items did not appear in inventory" right after a successful submit — particularly under server mode (concurrent REST requests) or when the user double-clicks submit / submits two purchases in quick succession.
-
-Proposed fix: make transactions actually serial. Cleanest option is a per-BaseRepository mutex (a chained Promise queue) that wraps inTransaction. Each transaction waits for the previous one to fully commit/rollback before it starts. Drops nested-transaction support, which we don't actually use anyway (every caller is the outermost one).
-
-2B. Async disk-write durability gap — root cause for "invoice disappears after restart"
-main.ts:300-324. saveFn() exports the DB and worker.postMessage(...)s to a worker thread. It returns immediately, before the worker has written to disk. inTransaction.COMMIT calls this non-blocking saveFn and returns. If the process is killed before the worker completes — Task Manager, BSOD, power loss, OS update reboot — the in-memory commit is lost. Only will-quit (clean shutdown) triggers the synchronous flush.
-
-Proposed fix: for transactional commits (purchases, sales, etc.) wait for worker ack before resolving. Two ways:
-
-(a) Convert saveFn to return a Promise that resolves when the worker posts back; inTransaction awaits it. Adds ~5–20ms per transaction but makes commits durable.
-(b) Use the synchronous path (syncSaveFn style) on commit. Slower (~30–80ms blocking) but absolutely durable. Recommended for sale/purchase commits, which are infrequent enough to absorb the cost.
-2C. Auto-restore from old backup — root cause for "after a few days"
-main.ts:223-251. On corrupt DB load (caused by 2A/2B above), the system silently restores from the most recent .bak. Auto-backups run every 2 hours by default (main.ts:714-728). If corruption happens between backups, everything post-backup is lost. The user sees a "few days" gap because:
-
-The corruption alert may have been dismissed/missed
-After restore, the system keeps running normally — old data is invisible until the user looks for it days later
-Subsequent backups overwrite the disk file with the restored (older) state
-Proposed fix: Tighten 2A and 2B (which prevents corruption in the first place), and either:
-
-Increase auto-backup frequency (every 30 min), or
-Make the corruption alert blocking + require user confirmation before restoring, listing how old the backup is
-2D. find-by-name / find-by-barcode merging — explains "products disappear from inventory"
-purchase.service.ts:889-913. When a new_product has the same barcode (or, falling back, the same name) as an existing active product, the new batch is silently attached to the existing product. From the user's POV the new product they entered isn't in inventory because it was merged. Under specific symptoms reported:
-
-User enters "peprasol" as a manual item with no barcode → findByName("peprasol") matches an existing active "peprasol" → batch attaches there → invoice review shows the product, but inventory listing doesn't show a new product entry (because there isn't one — it's a new batch on the existing one).
-If the existing match is a different product spelt similarly (e.g. "Peprasol 20mg" vs "Peprasol 40mg"), the batch lands on the wrong product.
-Proposed fix: when findByName/findByBarcode matches, do not silently merge. Either:
-
-(a) Return a structured warning per item to the frontend so the user explicitly chooses "merge" vs "create separate". Most correct, but UI work.
-(b) Quick mitigation — only auto-merge when barcode matches (a hard identifier). For name-only matches, create a new product. Lower-risk and avoids most accidental merges; user can manually consolidate via inventory if needed.
+Error: Rendered fewer hooks than expected. This may be caused by an accidental early return statement.
+    at renderWithHooks (http://localhost:5173/@fs/D:/Noon/wroking%20code/PharmaSys/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=3c2af5cb:11595:19)
+    at updateFunctionComponent (http://localhost:5173/@fs/D:/Noon/wroking%20code/PharmaSys/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=3c2af5cb:14582:28)
+    at beginWork (http://localhost:5173/@fs/D:/Noon/wroking%20code/PharmaSys/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=3c2af5cb:15924:22)
+    at beginWork$1 (http://localhost:5173/@fs/D:/Noon/wroking%20code/PharmaSys/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=3c2af5cb:19753:22)
+    at performUnitOfWork (http://localhost:5173/@fs/D:/Noon/wroking%20code/PharmaSys/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=3c2af5cb:19198:20)
+    at workLoopSync (http://localhost:5173/@fs/D:/Noon/wroking%20code/PharmaSys/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=3c2af5cb:19137:13)
+    at renderRootSync (http://localhost:5173/@fs/D:/Noon/wroking%20code/PharmaSys/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=3c2af5cb:19116:15)
+    at recoverFromConcurrentError (http://localhost:5173/@fs/D:/Noon/wroking%20code/PharmaSys/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=3c2af5cb:18736:28)
+    at performConcurrentWorkOnRoot (http://localhost:5173/@fs/D:/Noon/wroking%20code/PharmaSys/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=3c2af5cb:18684:30)
+    at workLoop (http://localhost:5173/@fs/D:/Noon/wroking%20code/PharmaSys/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=3c2af5cb:197:42)

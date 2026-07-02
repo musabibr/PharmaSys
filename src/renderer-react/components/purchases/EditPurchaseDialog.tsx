@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { Loader2, Plus, Trash2, SplitSquareHorizontal, Bookmark, ChevronDown, ChevronRight, Pencil, Download, CheckCircle2, Undo2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { api, throwIfError } from '@/api';
@@ -77,6 +78,7 @@ interface NewInstallment {
 
 export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: EditPurchaseDialogProps) {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const { data: suppliers } = useApiCall(() => api.suppliers.getAll(), []);
   const [saving, setSaving] = useState(false);
 
@@ -479,7 +481,7 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
                           <div className="flex gap-1">
                             <Button variant="ghost" size="icon" className="h-7 w-7 text-amber-600" title={t('Mark as unpaid')}
                               onClick={async () => {
-                                if (!window.confirm(t('Revert this payment to unpaid?'))) return;
+                                if (!(await confirm({ description: t('Revert this payment to unpaid?') }))) return;
                                 try {
                                   await api.purchases.unmarkPaymentPaid(p.id);
                                   toast.success(t('Payment reverted to unpaid'));
@@ -496,7 +498,7 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
                             </Button>
                             <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" title={t('Delete payment')}
                               onClick={async () => {
-                                if (!window.confirm(t('Delete this paid payment? This cannot be undone.'))) return;
+                                if (!(await confirm({ description: t('Delete this paid payment? This cannot be undone.'), destructive: true }))) return;
                                 try {
                                   await api.purchases.deletePayment(p.id);
                                   toast.success(t('Payment deleted'));
@@ -706,7 +708,7 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
                               title={t('Complete — add to inventory')} disabled={isBusy}
                               onClick={async () => {
                                 if (!parsed.name.trim()) { toast.error(t('Name is required')); return; }
-                                if (!window.confirm(t('Complete this parked item and add it to inventory?'))) return;
+                                if (!(await confirm({ description: t('Complete this parked item and add it to inventory?') }))) return;
                                 setCompletingPendingId(pi.id);
                                 try {
                                   const itemData: CreatePurchaseItemInput = {
@@ -749,7 +751,7 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
                               className="h-7 w-7 text-muted-foreground hover:text-destructive"
                               title={t('Delete')} disabled={isBusy}
                               onClick={async () => {
-                                if (!window.confirm(t('Remove this parked item permanently?'))) return;
+                                if (!(await confirm({ description: t('Remove this parked item permanently?'), destructive: true }))) return;
                                 setDeletingPendingId(pi.id);
                                 try {
                                   throwIfError(await api.purchases.deletePendingItem(pi.id));

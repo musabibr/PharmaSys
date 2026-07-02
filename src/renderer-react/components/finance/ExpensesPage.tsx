@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import {
   Plus,
   Trash2,
@@ -154,6 +155,7 @@ function ExpensesSkeleton() {
 
 export function ExpensesPage() {
   const { t, i18n } = useTranslation();
+  const confirm = useConfirm();
   const currentUser = useAuthStore((s) => s.currentUser);
   const canManageExpenses = usePermission('finance.expenses.manage');
   const canDeleteExpenses = usePermission('finance.expenses.delete');
@@ -379,7 +381,7 @@ export function ExpensesPage() {
     const message = isRecurring
       ? `${t('Revoke this recurring entry?')}\n\n${expense.category_name ?? t('Expense')} — ${formatCurrency(expense.amount)} (${expense.expense_date})\n\n${t('This entry will be removed and will not regenerate.')}`
       : `${t('Are you sure you want to delete this expense?')}\n\n${expense.category_name ?? t('Expense')} — ${formatCurrency(expense.amount)}`;
-    if (!window.confirm(message)) return;
+    if (!(await confirm({ description: message, destructive: true }))) return;
 
     try {
       await api.expenses.delete(expense.id);
@@ -832,8 +834,8 @@ export function ExpensesPage() {
                             variant="ghost" size="icon"
                             className="h-7 w-7 text-destructive hover:text-destructive"
                             title={t('Delete category')}
-                            onClick={() => {
-                              if (!window.confirm(t('Delete category "{{name}}"?', { name: cat.name }))) return;
+                            onClick={async () => {
+                              if (!(await confirm({ description: t('Delete category "{{name}}"?', { name: cat.name }), destructive: true }))) return;
                               api.expenses.deleteCategory(cat.id)
                                 .then(() => { toast.success(t('Category deleted')); fetchCategories(); })
                                 .catch((err: unknown) => toast.error(err instanceof Error ? err.message : t('Failed')));

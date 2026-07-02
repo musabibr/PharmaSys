@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { Loader2, CheckCircle, Clock, CreditCard, AlertTriangle, Pencil, Trash2, Download } from 'lucide-react';
 import { api } from '@/api';
 import type { Purchase, PurchasePayment, ExpensePaymentMethod, PaymentAdjustmentStrategy } from '@/api/types';
@@ -61,6 +62,7 @@ function isOverdue(dueDate: string): boolean {
 
 export function PurchaseDetailDialog({ purchase: initialPurchase, open, onOpenChange, onPaymentMade, onDeleted }: PurchaseDetailDialogProps) {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const canPay = usePermission('purchases.pay');
   const canEdit = usePermission('purchases.edit');
   const canDelete = usePermission('purchases.delete');
@@ -427,7 +429,7 @@ export function PurchaseDetailDialog({ purchase: initialPurchase, open, onOpenCh
                             </Button>
                             <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" title={t('Delete item')}
                               onClick={async () => {
-                                if (!window.confirm(t('Delete this item and its stock batch? This cannot be undone.'))) return;
+                                if (!(await confirm({ description: t('Delete this item and its stock batch? This cannot be undone.'), destructive: true }))) return;
                                 try {
                                   await api.purchases.deleteItem(item.id);
                                   toast.success(t('Item deleted'));

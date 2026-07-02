@@ -375,7 +375,16 @@ function createWindow(): void {
     mainWindow!.show();
     // DevTools: use Ctrl+Shift+I manually if needed
     if (!isDev) mainWindow!.maximize();
+    // Explicitly focus the web contents after showing. On Electron/Windows the freshly
+    // shown window sometimes does not route keyboard input to inputs (the "frozen login
+    // field, fixed by minimize/maximize" bug) until webContents is focused.
+    mainWindow!.focus();
+    mainWindow!.webContents.focus();
   });
+  // Re-assert web-contents focus when the window regains focus or is restored — otherwise
+  // input fields can stay unresponsive after alt-tab / minimize-restore on Windows.
+  mainWindow.on('focus', () => mainWindow?.webContents.focus());
+  mainWindow.on('restore', () => mainWindow?.webContents.focus());
   mainWindow.on('closed', () => {
     mainWindow = null;
     currentUser = null;
@@ -600,6 +609,7 @@ async function bootMainApp(): Promise<void> {
       defaultPath: defaultName,
       filters: [{ name: 'PharmaSys Backup', extensions: [ext] }],
     });
+    win.webContents.focus(); // native dialog can leave inputs unresponsive until refocus
     if (canceled || !filePath) return { success: false };
     try {
       fs.copyFileSync(sourcePath, filePath);
@@ -618,6 +628,7 @@ async function bootMainApp(): Promise<void> {
       filters: [{ name: 'PharmaSys Backup', extensions: ['bak', 'enc', 'sqlite'] }],
       properties: ['openFile'],
     });
+    win.webContents.focus(); // native dialog can leave inputs unresponsive until refocus
     if (canceled || filePaths.length === 0) return { success: false };
     const selectedFile = filePaths[0];
     const backupDir = path.join(dataPath, 'backups');

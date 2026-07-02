@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { Minus, Plus, ShoppingCart, Trash2, X } from 'lucide-react';
 import { useCartStore } from '@/stores/cart.store';
 import { usePermission } from '@/hooks/usePermission';
@@ -24,6 +25,7 @@ interface CartPanelProps {
 
 export function CartPanel({ onCheckout, onHold, onRetrieveHeld, shiftOpen }: CartPanelProps) {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const canHeld = usePermission('pos.held_sales');
 
   const items = useCartStore((s) => s.items);
@@ -43,9 +45,9 @@ export function CartPanel({ onCheckout, onHold, onRetrieveHeld, shiftOpen }: Car
 
   // ── Clear cart with confirmation ──────────────────────────────────────────
 
-  function handleClear() {
+  async function handleClear() {
     if (isEmpty) return;
-    const confirmed = window.confirm(t('Are you sure you want to clear the cart?'));
+    const confirmed = await confirm({ description: t('Are you sure you want to clear the cart?'), destructive: true });
     if (confirmed) clear();
   }
 

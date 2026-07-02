@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { DirectionProvider } from '@radix-ui/react-direction';
 import { Toaster, toast } from 'sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { ConfirmProvider } from '@/components/ui/confirm-dialog';
 import { useAuthStore } from '@/stores/auth.store';
 import { useUiStore } from '@/stores/ui.store';
 import { useSettingsStore } from '@/stores/settings.store';
@@ -203,6 +204,7 @@ export function App() {
   // Authenticated → show app shell with routes
   return (
     <DirectionProvider dir={dir}>
+    <ConfirmProvider>
     <TourProvider>
     <TooltipProvider delayDuration={300}>
       <Routes>
@@ -284,6 +286,7 @@ export function App() {
       </Routes>
     </TooltipProvider>
     </TourProvider>
+    </ConfirmProvider>
     <Toaster
       position={dir === 'rtl' ? 'top-left' : 'top-right'}
       dir={dir}
