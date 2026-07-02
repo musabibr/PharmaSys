@@ -1827,7 +1827,7 @@
   "Failed to apply price update": "فشل تطبيق تحديث الأسعار",
   "Failed to build preview": "فشل إنشاء المعاينة",
   "Back to Inventory": "العودة إلى المخزون",
-  "Fill new prices by formula, then adjust any product inline before applying. Only checked rows are updated.": "املأ الأسعار الجديدة بالمعادلة، ثم عدّل أي منتج مباشرة قبل التطبيق. يتم تحديث الصفوف المحددة فقط.",
+  "Products load at their current prices and margins. Recalculate by formula or edit prices and margins inline — only checked rows are updated.": "تُحمّل المنتجات بأسعارها وهوامشها الحالية. أعد الاحتساب بالمعادلة أو عدّل الأسعار والهوامش مباشرة — يتم تحديث الصفوف المحددة فقط.",
   "Recalculate prices": "إعادة احتساب الأسعار",
   "Recalculate overwrites all new prices, including manual edits.": "إعادة الاحتساب تستبدل جميع الأسعار الجديدة، بما فيها التعديلات اليدوية.",
   "Reload": "إعادة تحميل",
