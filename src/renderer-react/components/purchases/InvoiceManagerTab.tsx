@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import * as XLSX from 'xlsx';
 import {
   Search, ChevronLeft, ChevronRight, GitMerge,
@@ -92,6 +93,7 @@ interface InvoiceManagerTabProps {
 
 export function InvoiceManagerTab({ onRefreshList }: InvoiceManagerTabProps) {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const canManage = usePermission('purchases.manage');
   const { data: suppliers } = useApiCall(() => api.suppliers.getAll(), []);
 
@@ -217,7 +219,7 @@ export function InvoiceManagerTab({ onRefreshList }: InvoiceManagerTabProps) {
   };
 
   const deleteItem = async (pi: EnrichedPendingItem) => {
-    if (!window.confirm(t('Remove this parked item permanently?'))) return;
+    if (!(await confirm({ description: t('Remove this parked item permanently?'), destructive: true }))) return;
     setDeletingId(pi.id);
     try {
       throwIfError(await api.purchases.deletePendingItem(pi.id));
@@ -285,14 +287,14 @@ export function InvoiceManagerTab({ onRefreshList }: InvoiceManagerTabProps) {
     doBulkComplete(items);
   };
 
-  const handleCompleteAll = () => {
-    if (!window.confirm(t('Complete all {{count}} parked items?', { count: parkedItems.length }))) return;
+  const handleCompleteAll = async () => {
+    if (!(await confirm({ description: t('Complete all {{count}} parked items?', { count: parkedItems.length }) }))) return;
     doBulkComplete(parkedItems);
   };
 
   const handleBulkDelete = async () => {
     const count = selectedIds.size;
-    if (!window.confirm(t('Delete {{count}} parked items permanently?', { count }))) return;
+    if (!(await confirm({ description: t('Delete {{count}} parked items permanently?', { count }), destructive: true }))) return;
 
     setBulkProcessing(true);
     setBulkProgress({ done: 0, total: count, errors: 0 });

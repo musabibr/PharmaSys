@@ -6,6 +6,7 @@ import { useApiCall } from '@/api/hooks';
 import { useSettingsStore } from '@/stores/settings.store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { QtyInput } from '@/components/ui/qty-input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import {
@@ -332,16 +333,15 @@ export function PendingItemEditDialog({ item, open, onOpenChange, onSave }: Pend
             {/* Pricing */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label htmlFor="pi-qty">
+                <Label>
                   {t('Qty')} <span className="text-destructive">*</span>
                 </Label>
-                <Input
-                  id="pi-qty"
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={draft.quantity || ''}
-                  onChange={e => update('quantity', Math.round(Number(e.target.value) || 0))}
+                <QtyInput
+                  cf={draft.convFactor || 1}
+                  parentUnit={draft.parentUnit}
+                  childUnit={draft.childUnit}
+                  valueBase={Math.round((draft.quantity || 0) * (draft.convFactor || 1))}
+                  onChangeBase={base => update('quantity', base / (draft.convFactor || 1))}
                 />
               </div>
               <div className="space-y-1.5">

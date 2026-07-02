@@ -221,8 +221,13 @@ export class ProductRepository implements IProductRepository {
     };
   }
 
-  async bulkCreate(items: BulkCreateProductInput[]): Promise<Array<{ success: boolean; name: string; error?: string; id?: number }>> {
+  async bulkCreate(
+    items: BulkCreateProductInput[],
+    opts?: { defaultMarkupPercent?: number }
+  ): Promise<Array<{ success: boolean; name: string; error?: string; id?: number }>> {
     const results: Array<{ success: boolean; name: string; error?: string; id?: number }> = [];
+    const markupPct = opts?.defaultMarkupPercent && opts.defaultMarkupPercent > 0
+      ? opts.defaultMarkupPercent : 20;
 
     await this.base.inTransaction(async () => {
       for (const item of items) {
@@ -249,7 +254,19 @@ export class ProductRepository implements IProductRepository {
           let existingProductId: number | null = null;
           let existingCf: number = item.conversion_factor ?? 1;
 
-          if (item.barcode) {
+          // Quick Stock Entry: an explicit product_id targets that product directly
+          // (no barcode/name matching) and opts the item into price propagation.
+          if (item.product_id) {
+            const byId = await this.base.getOne<{ id: number; conversion_factor: number }>(
+              `SELECT id, conversion_factor FROM products WHERE id = ? AND is_active = 1`,
+              [item.product_id]
+            );
+            if (!byId) throw new Error(`Product #${item.product_id} not found or inactive`);
+            existingProductId = byId.id;
+            existingCf = byId.conversion_factor ?? 1;
+          }
+
+          if (!existingProductId && item.barcode) {
             const byBarcode = await this.base.getOne<{ id: number; conversion_factor: number }>(
               `SELECT id, conversion_factor FROM products WHERE barcode = ? AND is_active = 1`,
               [item.barcode]
@@ -306,18 +323,22 @@ export class ProductRepository implements IProductRepository {
           const hasBatchData = item.quantity_base > 0 && item.expiry_date && item.expiry_date.trim() !== '';
 
           if (hasBatchData) {
-            // BUG 2 FIX: Ensure selling price is positive
+            // BUG 2 FIX: Ensure selling price is positive (markup fallback from settings)
             const sellParent = item.selling_price_parent > 0
               ? item.selling_price_parent
-              : Math.round(item.cost_per_parent * 1.2); // 20% markup fallback
+              : Money.markup(item.cost_per_parent, markupPct);
 
             // Use existing product's CF for matched products (BUG 10 backend counterpart)
             const cf = existingProductId ? existingCf : (item.conversion_factor ?? 1);
-            const costChild = Money.divideToChild(item.cost_per_parent, cf);
-            const sellChild = Money.divideToChild(sellParent, cf);
+            const costChild = item.cost_per_child && item.cost_per_child > 0
+              ? item.cost_per_child
+              : Money.divideToChild(item.cost_per_parent, cf);
+            const sellChild = item.selling_price_child && item.selling_price_child > 0
+              ? item.selling_price_child
+              : Money.divideToChild(sellParent, cf);
 
             // BUG 9 FIX: Explicitly set status = 'active'
-            await this.base.run(
+            const batchResult = await this.base.run(
               `INSERT INTO batches (product_id, batch_number, expiry_date, quantity_base,
                cost_per_parent, cost_per_child, cost_per_child_override,
                selling_price_parent, selling_price_child,
@@ -337,6 +358,25 @@ export class ProductRepository implements IProductRepository {
                 sellChild,
               ]
             );
+
+            // Quick Stock Entry (explicit product_id): propagate this batch's selling
+            // prices to the product's other active batches so the shelf price stays
+            // consistent — mirrors BatchService.create. File import (matched by
+            // barcode/name, no product_id) is left untouched so exports round-trip.
+            if (item.product_id) {
+              const newBatchId = batchResult.lastInsertRowid as number;
+              await this.base.run(
+                `UPDATE batches SET
+                   selling_price_parent = ?,
+                   selling_price_child = ?,
+                   selling_price_parent_override = ?,
+                   selling_price_child_override = ?,
+                   version = version + 1,
+                   updated_at = datetime('now', 'localtime')
+                 WHERE product_id = ? AND id != ? AND status = 'active'`,
+                [sellParent, sellChild, sellParent, sellChild, productId, newBatchId]
+              );
+            }
           }
 
           results.push({ success: true, name: item.name, id: productId });

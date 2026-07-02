@@ -10,6 +10,8 @@ import {
   Pencil,
   Trash2,
   PackageSearch,
+  PackagePlus,
+  TrendingUp,
   Loader2,
   ArrowUpDown,
   X,
@@ -18,6 +20,7 @@ import type { Product, Category } from '@/api/types';
 import { api } from '@/api';
 import { formatQuantity } from '@/lib/utils';
 import { usePermission } from '@/hooks/usePermission';
+import { useNavigate } from 'react-router-dom';
 import { BulkImportDialog } from './BulkImportDialog';
 import { ProductExportDialog } from './ProductExportDialog';
 import { ProductImportDialog } from './ProductImportDialog';
@@ -487,6 +490,7 @@ export function ProductsTab() {
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [smartImportOpen, setSmartImportOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const navigate = useNavigate();
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   // Sort
@@ -613,7 +617,15 @@ export function ProductsTab() {
         </div>
 
         {canManage && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="default" onClick={() => navigate('/inventory/quick-entry')}>
+              <PackagePlus className="me-1.5 h-4 w-4" />
+              {t('Quick Stock Entry')}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => navigate('/inventory/price-update')}>
+              <TrendingUp className="me-1.5 h-4 w-4" />
+              {t('Bulk Price Update')}
+            </Button>
             <Button size="sm" variant="outline" onClick={() => setCategoryDialogOpen(true)}>
               <FolderPlus className="me-1.5 h-4 w-4" />
               {t('Add Category')}

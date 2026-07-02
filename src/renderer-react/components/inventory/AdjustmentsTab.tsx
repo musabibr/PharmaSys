@@ -20,6 +20,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Undo2, Plus, Pencil, Search, RotateCcw } from 'lucide-react';
 import { usePermission } from '@/hooks/usePermission';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { BatchHistoryTab } from './BatchHistoryTab';
 
 const TYPES: AdjustmentType[] = ['damage', 'expiry', 'correction'];
@@ -51,6 +52,7 @@ export function AdjustmentsTab() {
   const [submitting, setSubmitting] = useState(false);
 
   const canManage = usePermission('inventory.batches.damage');
+  const confirm = useConfirm();
 
   const fetchAdjustments = useCallback(async () => {
     setLoading(true);
@@ -87,7 +89,7 @@ export function AdjustmentsTab() {
   };
 
   const handleReverse = async (id: number) => {
-    if (!window.confirm(t('Are you sure you want to reverse this adjustment? This will restore the inventory quantity.'))) return;
+    if (!(await confirm({ description: t('Are you sure you want to reverse this adjustment? This will restore the inventory quantity.'), destructive: true }))) return;
     setReversing(id);
     try {
       await api.inventory.reverseAdjustment(id);

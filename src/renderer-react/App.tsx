@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { DirectionProvider } from '@radix-ui/react-direction';
 import { Toaster, toast } from 'sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { ConfirmProvider } from '@/components/ui/confirm-dialog';
 import { useAuthStore } from '@/stores/auth.store';
 import { useUiStore } from '@/stores/ui.store';
 import { useSettingsStore } from '@/stores/settings.store';
@@ -16,6 +17,8 @@ import { ProtectedRoute } from '@/components/layout/ProtectedRoute';
 import { DashboardPage } from '@/components/dashboard/DashboardPage';
 import { POSPage } from '@/components/pos/POSPage';
 import { InventoryPage } from '@/components/inventory/InventoryPage';
+import { QuickStockEntryPage } from '@/components/inventory/QuickStockEntryPage';
+import { BulkPriceUpdatePage } from '@/components/inventory/BulkPriceUpdatePage';
 import { TransactionsPage } from '@/components/finance/TransactionsPage';
 import { ExpensesPage } from '@/components/finance/ExpensesPage';
 import { ShiftsPage } from '@/components/finance/ShiftsPage';
@@ -203,6 +206,7 @@ export function App() {
   // Authenticated → show app shell with routes
   return (
     <DirectionProvider dir={dir}>
+    <ConfirmProvider>
     <TourProvider>
     <TooltipProvider delayDuration={300}>
       <Routes>
@@ -220,6 +224,16 @@ export function App() {
           <Route path="/inventory" element={
             <ProtectedRoute anyPermission={['inventory.products.view', 'inventory.batches.view', 'inventory.categories.view', 'inventory.valuation', 'inventory.expiry_alerts', 'inventory.low_stock']}>
               <InventoryPage />
+            </ProtectedRoute>
+          } />
+          <Route path="/inventory/quick-entry" element={
+            <ProtectedRoute permission="inventory.products.manage">
+              <QuickStockEntryPage />
+            </ProtectedRoute>
+          } />
+          <Route path="/inventory/price-update" element={
+            <ProtectedRoute permission="inventory.batches.manage">
+              <BulkPriceUpdatePage />
             </ProtectedRoute>
           } />
 
@@ -284,6 +298,7 @@ export function App() {
       </Routes>
     </TooltipProvider>
     </TourProvider>
+    </ConfirmProvider>
     <Toaster
       position={dir === 'rtl' ? 'top-left' : 'top-right'}
       dir={dir}

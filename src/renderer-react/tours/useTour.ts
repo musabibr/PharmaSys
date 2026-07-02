@@ -78,8 +78,9 @@ export function useTour() {
       startTimerRef.current = null;
     }
     if (tourRef.current) {
+      // Shepherd v15: Tour has no destroy(); cancel() dismisses the tour and
+      // tears down its step elements.
       tourRef.current.cancel();
-      tourRef.current.destroy();
       tourRef.current = null;
     }
   }, []);
@@ -169,12 +170,10 @@ export function useTour() {
         tour.on('complete', () => {
           markCompleted(tourId);
           toast.success(t('Tour completed!'));
-          tour.destroy();
           tourRef.current = null;
         });
 
         tour.on('cancel', () => {
-          tour.destroy();
           tourRef.current = null;
         });
 

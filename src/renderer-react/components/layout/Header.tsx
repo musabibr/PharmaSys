@@ -1,5 +1,6 @@
 import { useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { useAuthStore } from '@/stores/auth.store';
 import { useUiStore } from '@/stores/ui.store';
 import { useShiftStore } from '@/stores/shift.store';
@@ -58,17 +59,19 @@ interface HeaderProps {
 export function Header({ onChangePassword }: HeaderProps) {
   const { pathname } = useLocation();
   const { t, i18n } = useTranslation();
+  const confirm = useConfirm();
   const isRtl = i18n.dir() === 'rtl';
   const { currentUser, logout } = useAuthStore();
   const { theme, toggleTheme, sidebarCollapsed, toggleSidebar, density, cycleDensity } = useUiStore();
   const { currentShift } = useShiftStore();
   const shiftsEnabled = useSettingsStore((s) => s.getSetting('shifts_enabled') !== 'false');
 
-  function handleLogout() {
+  async function handleLogout() {
     if (shiftsEnabled && currentShift) {
-      const confirmed = window.confirm(
-        t('You have an open shift. Are you sure you want to logout without closing it?')
-      );
+      const confirmed = await confirm({
+        description: t('You have an open shift. Are you sure you want to logout without closing it?'),
+        destructive: true,
+      });
       if (!confirmed) return;
     }
     logout();

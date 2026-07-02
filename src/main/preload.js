@@ -197,6 +197,15 @@ contextBridge.exposeInMainWorld('api', {
         updatePricesByProduct: (data) =>
             invoke('batches:updatePricesByProduct', data),
 
+        previewBulkPriceUpdate: (opts) =>
+            invoke('batches:previewBulkPriceUpdate', opts),
+
+        applyBulkPriceUpdate: (opts) =>
+            invoke('batches:applyBulkPriceUpdate', opts),
+
+        applyManualPriceUpdate: (items) =>
+            invoke('batches:applyManualPriceUpdate', items),
+
         getDeleteInfo: (id) =>
             invoke('batches:getDeleteInfo', id),
 

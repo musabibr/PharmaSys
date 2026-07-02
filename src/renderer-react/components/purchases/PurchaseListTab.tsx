@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { Search, FileText, ChevronLeft, ChevronRight, Printer, CreditCard, PackagePlus, GitMerge, Bookmark } from 'lucide-react';
 import { api } from '@/api';
 import type { Purchase, PurchasePaymentStatus, Supplier } from '@/api/types';
@@ -81,6 +82,7 @@ function createDefaultFilters(supplierId?: number | null, status?: string) {
 
 export function PurchaseListTab({ onSelect, initialSupplierId, initialStatus, hideStatusFilter, excludePaid }: PurchaseListTabProps) {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const canPay = usePermission('purchases.pay');
   const canCreate = usePermission('purchases.manage');
   const [addItemsTarget, setAddItemsTarget] = useState<Purchase | null>(null);
@@ -152,10 +154,10 @@ export function PurchaseListTab({ onSelect, initialSupplierId, initialStatus, hi
     const targetId = Math.min(...ids);
     const sourceIds = ids.filter(id => id !== targetId);
     const targetP = purchases.find(p => p.id === targetId);
-    if (!window.confirm(t('Merge {{n}} invoices into {{id}}? This cannot be undone.', {
+    if (!(await confirm({ description: t('Merge {{n}} invoices into {{id}}? This cannot be undone.', {
       n: ids.length,
       id: targetP?.purchase_number ?? String(targetId),
-    }))) return;
+    }), destructive: true }))) return;
     setMerging(true);
     try {
       await api.purchases.merge(targetId, sourceIds);

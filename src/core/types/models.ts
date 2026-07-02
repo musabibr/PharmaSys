@@ -553,6 +553,10 @@ export interface CreateCashDropInput {
 }
 
 export interface BulkCreateProductInput {
+  /** When set, add stock to this exact existing product (Quick Stock Entry) instead
+   *  of matching by barcode/name. Also triggers selling-price propagation to the
+   *  product's other active batches, keeping its shelf price consistent. */
+  product_id?: number;
   name: string;
   generic_name?: string;
   category_name?: string;
@@ -565,7 +569,61 @@ export interface BulkCreateProductInput {
   expiry_date: string;
   quantity_base: number;
   cost_per_parent: number;
+  /** Optional explicit small-unit cost; derived from the parent cost when omitted. */
+  cost_per_child?: number;
   selling_price_parent: number;
+  /** Optional explicit small-unit price; derived from the parent price when omitted. */
+  selling_price_child?: number;
+}
+
+// ─── Bulk Margin Price Update ───
+
+export type BulkPriceUpdateMode = 'margin_over_cost' | 'increase_current';
+export type BulkPriceUpdateRounding = 1 | 50 | 100;
+
+export interface BulkPriceUpdateOptions {
+  /** 'margin_over_cost' = latest batch cost x (1+percent); 'increase_current' = current sell x (1+percent). */
+  mode: BulkPriceUpdateMode;
+  percent: number;
+  rounding: BulkPriceUpdateRounding;
+  exclude_product_ids?: number[];
+  exclude_category_ids?: number[];
+}
+
+/** One row per active product that has at least one in-stock, unexpired active batch. */
+export interface LatestBatchPricing {
+  product_id: number;
+  product_name: string;
+  category_id: number | null;
+  category_name: string | null;
+  conversion_factor: number;
+  latest_cost: number;
+  current_sell: number;
+}
+
+export interface BulkPriceUpdatePreviewRow {
+  product_id: number;
+  product_name: string;
+  category_name: string | null;
+  conversion_factor: number;
+  basis_cost: number;
+  current_sell: number;
+  new_sell_parent: number;
+  new_sell_child: number;
+  change_pct: number;
+}
+
+export interface BulkPriceUpdateResult {
+  updatedProducts: number;
+  updatedBatches: number;
+}
+
+/** One product's explicit new prices for the manual (selected-products) update. */
+export interface ManualPriceUpdateItem {
+  product_id: number;
+  selling_price_parent: number;
+  /** Small-unit price; derived by floor division from the parent when omitted. */
+  selling_price_child?: number | null;
 }
 
 // ─── Filter Types ───
@@ -815,6 +873,7 @@ export interface Purchase {
   username?: string;
   items?: PurchaseItem[];
   payments?: PurchasePayment[];
+  items_count?: number;
   pending_items_count?: number;
 }
 

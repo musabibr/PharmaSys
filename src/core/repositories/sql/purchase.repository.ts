@@ -46,6 +46,7 @@ export class PurchaseRepository implements IPurchaseRepository {
       `SELECT p.*,
               s.name as supplier_name,
               u.username,
+              (SELECT COUNT(*) FROM purchase_items pi WHERE pi.purchase_id = p.id) AS items_count,
               (SELECT COUNT(*) FROM purchase_pending_items ppi WHERE ppi.purchase_id = p.id) AS pending_items_count
        FROM purchases p
        LEFT JOIN suppliers s ON p.supplier_id = s.id
@@ -64,6 +65,7 @@ export class PurchaseRepository implements IPurchaseRepository {
       `SELECT p.*,
               s.name as supplier_name,
               u.username,
+              (SELECT COUNT(*) FROM purchase_items pi WHERE pi.purchase_id = p.id) AS items_count,
               (SELECT COUNT(*) FROM purchase_pending_items ppi WHERE ppi.purchase_id = p.id) AS pending_items_count
        FROM purchases p
        LEFT JOIN suppliers s ON p.supplier_id = s.id

@@ -115,7 +115,7 @@ export interface IProductRepository {
   softDelete(id: number): Promise<void>;
   hasActiveBatches(id: number): Promise<boolean>;
   getDeleteInfo(id: number): Promise<{ has_stock: boolean; batch_count: number; txn_count: number }>;
-  bulkCreate(items: BulkCreateProductInput[]): Promise<Array<{ success: boolean; name: string; error?: string }>>;
+  bulkCreate(items: BulkCreateProductInput[], opts?: { defaultMarkupPercent?: number }): Promise<Array<{ success: boolean; name: string; error?: string }>>;
 }
 
 // ─── Batch ───

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { api } from '@/api';
 import { formatCurrency } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -57,6 +58,7 @@ function parseHeldItems(items: unknown): CartItem[] {
 
 export function HeldSalesSheet({ open, onOpenChange, onRetrieve }: HeldSalesSheetProps) {
   const { t } = useTranslation();
+  const confirm = useConfirm();
 
   const [heldSales, setHeldSales] = useState<HeldSale[]>([]);
   const [loading, setLoading] = useState(false);
@@ -90,7 +92,7 @@ export function HeldSalesSheet({ open, onOpenChange, onRetrieve }: HeldSalesShee
       return;
     }
 
-    if (!window.confirm(t('Stock was not reserved while this sale was held. Please verify that all items are still physically available before completing the sale. Continue?'))) {
+    if (!(await confirm({ description: t('Stock was not reserved while this sale was held. Please verify that all items are still physically available before completing the sale. Continue?') }))) {
       return;
     }
 

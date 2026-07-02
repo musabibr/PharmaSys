@@ -12,6 +12,7 @@ import { formatCurrency, cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { QtyInput } from '@/components/ui/qty-input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import {
@@ -761,14 +762,13 @@ export function AddItemsDialog({ purchaseId, purchaseNumber, open, onOpenChange,
                           />
                         </TableCell>
                         <TableCell className="whitespace-nowrap">
-                          <Input
-                            type="number"
-                            step="1"
-                            min="0"
-                            value={item.quantity || ''}
-                            onChange={e => updateItem(item._key, 'quantity', Math.round(Number(e.target.value) || 0))}
-                            className={`h-8 text-xs w-16 ${item.quantity <= 0 ? 'ring-1 ring-destructive' : ''}`}
-                            placeholder="0"
+                          <QtyInput
+                            compact
+                            cf={item.convFactor || 1}
+                            parentUnit={item.parentUnit}
+                            childUnit={item.childUnit}
+                            valueBase={Math.round((item.quantity || 0) * (item.convFactor || 1))}
+                            onChangeBase={base => updateItem(item._key, 'quantity', base / (item.convFactor || 1))}
                           />
                         </TableCell>
                         <TableCell className="whitespace-nowrap">
@@ -1534,16 +1534,15 @@ function EditItemDialog({ item, onClose, onSave, categories, onCreateCategory, d
             {/* Pricing */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label htmlFor="ei-qty">
+                <Label>
                   {t('Qty')} <span className="text-destructive">*</span>
                 </Label>
-                <Input
-                  id="ei-qty"
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={draft.quantity || ''}
-                  onChange={e => update('quantity', Math.round(Number(e.target.value) || 0))}
+                <QtyInput
+                  cf={draft.convFactor || 1}
+                  parentUnit={draft.parentUnit}
+                  childUnit={draft.childUnit}
+                  valueBase={Math.round((draft.quantity || 0) * (draft.convFactor || 1))}
+                  onChangeBase={base => update('quantity', base / (draft.convFactor || 1))}
                 />
               </div>
               <div className="space-y-1.5">

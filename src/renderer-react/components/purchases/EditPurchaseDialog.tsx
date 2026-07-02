@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { Loader2, Plus, Trash2, SplitSquareHorizontal, Bookmark, ChevronDown, ChevronRight, Pencil, Download, CheckCircle2, Undo2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { api, throwIfError } from '@/api';
@@ -64,6 +65,7 @@ interface EditablePayment {
   due_date: string;
   is_paid: boolean;
   paid_amount: number | null;
+  paid_date: string | null;
   original_amount: number;
   original_due_date: string;
 }
@@ -77,6 +79,7 @@ interface NewInstallment {
 
 export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: EditPurchaseDialogProps) {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const { data: suppliers } = useApiCall(() => api.suppliers.getAll(), []);
   const [saving, setSaving] = useState(false);
 
@@ -86,6 +89,7 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
   const [dateDisplay, setDateDisplay] = useState('');
   const [notes, setNotes] = useState('');
   const [alertDays, setAlertDays] = useState(7);
+  const [totalAmount, setTotalAmount] = useState(0);
   const [editablePayments, setEditablePayments] = useState<EditablePayment[]>([]);
   const [newInstallments, setNewInstallments] = useState<NewInstallment[]>([]);
   const [removedIds, setRemovedIds] = useState<Set<number>>(new Set());
@@ -111,6 +115,7 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
       setDateDisplay(isoToDisplay(purchase.purchase_date));
       setNotes(purchase.notes ?? '');
       setAlertDays(purchase.alert_days_before ?? 7);
+      setTotalAmount(purchase.total_amount);
 
       const payments = (purchase.payments ?? []).map(p => ({
         id: p.id,
@@ -118,6 +123,7 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
         due_date: p.due_date,
         is_paid: !!p.is_paid,
         paid_amount: p.paid_amount,
+        paid_date: p.paid_date,
         original_amount: p.amount,
         original_due_date: p.due_date,
       }));
@@ -157,8 +163,8 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
   );
 
   const scheduleTotal = paidScheduledTotal + unpaidTotal;
-  const isScheduleValid = scheduleTotal === purchase.total_amount;
-  const remainingToAllocate = purchase.total_amount - paidScheduledTotal - unpaidTotal;
+  const isScheduleValid = scheduleTotal === totalAmount;
+  const remainingToAllocate = totalAmount - paidScheduledTotal - unpaidTotal;
 
   const hasScheduleChanges = useMemo(() =>
     hasStructuralChanges ||
@@ -256,7 +262,18 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
 
     setSaving(true);
     try {
-      // Save schedule first — if it fails, metadata is unchanged (better ordering)
+      // Save metadata first: the backend validates payment schedules against the
+      // STORED purchase total, so an edited total must be persisted before the
+      // schedule update or the schedule would be rejected against the old total.
+      await api.purchases.update(purchase.id, {
+        supplier_id: supplierId === 'none' ? null : parseInt(supplierId, 10),
+        invoice_reference: invoiceRef.trim() || null,
+        purchase_date: purchaseDate,
+        notes: notes.trim() || null,
+        alert_days_before: alertDays,
+        total_amount: totalAmount,
+      });
+
       if (hasScheduleChanges) {
         if (hasStructuralChanges) {
           // Structure changed (adds/removals) — replace all unpaid with new schedule
@@ -271,16 +288,6 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
           await api.purchases.updatePaymentSchedule(purchase.id, payments);
         }
       }
-
-      // Save metadata
-      await api.purchases.update(purchase.id, {
-        supplier_id: supplierId === 'none' ? null : parseInt(supplierId, 10),
-        invoice_reference: invoiceRef.trim() || null,
-        purchase_date: purchaseDate,
-        notes: notes.trim() || null,
-        alert_days_before: alertDays,
-        total_amount: purchase.total_amount,
-      });
 
       toast.success(t('Purchase updated successfully'));
       onOpenChange(false);
@@ -397,11 +404,8 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
             <Input
               type="number"
               min={0}
-              value={purchase.total_amount}
-              onChange={e => {
-                const val = parseInt(e.target.value, 10) || 0;
-                setPurchase(prev => prev ? { ...prev, total_amount: val } : prev);
-              }}
+              value={totalAmount}
+              onChange={e => setTotalAmount(Math.max(0, parseInt(e.target.value, 10) || 0))}
             />
           </div>
 
@@ -422,7 +426,7 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium">{t('Installments')}</label>
                 <span className="text-xs text-muted-foreground">
-                  {t('Total')}: {formatCurrency(purchase.total_amount)}
+                  {t('Total')}: {formatCurrency(totalAmount)}
                 </span>
               </div>
 
@@ -479,7 +483,7 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
                           <div className="flex gap-1">
                             <Button variant="ghost" size="icon" className="h-7 w-7 text-amber-600" title={t('Mark as unpaid')}
                               onClick={async () => {
-                                if (!window.confirm(t('Revert this payment to unpaid?'))) return;
+                                if (!(await confirm({ description: t('Revert this payment to unpaid?') }))) return;
                                 try {
                                   await api.purchases.unmarkPaymentPaid(p.id);
                                   toast.success(t('Payment reverted to unpaid'));
@@ -496,7 +500,7 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
                             </Button>
                             <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" title={t('Delete payment')}
                               onClick={async () => {
-                                if (!window.confirm(t('Delete this paid payment? This cannot be undone.'))) return;
+                                if (!(await confirm({ description: t('Delete this paid payment? This cannot be undone.'), destructive: true }))) return;
                                 try {
                                   await api.purchases.deletePayment(p.id);
                                   toast.success(t('Payment deleted'));
@@ -706,7 +710,7 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
                               title={t('Complete — add to inventory')} disabled={isBusy}
                               onClick={async () => {
                                 if (!parsed.name.trim()) { toast.error(t('Name is required')); return; }
-                                if (!window.confirm(t('Complete this parked item and add it to inventory?'))) return;
+                                if (!(await confirm({ description: t('Complete this parked item and add it to inventory?') }))) return;
                                 setCompletingPendingId(pi.id);
                                 try {
                                   const itemData: CreatePurchaseItemInput = {
@@ -749,7 +753,7 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
                               className="h-7 w-7 text-muted-foreground hover:text-destructive"
                               title={t('Delete')} disabled={isBusy}
                               onClick={async () => {
-                                if (!window.confirm(t('Remove this parked item permanently?'))) return;
+                                if (!(await confirm({ description: t('Remove this parked item permanently?'), destructive: true }))) return;
                                 setDeletingPendingId(pi.id);
                                 try {
                                   throwIfError(await api.purchases.deletePendingItem(pi.id));

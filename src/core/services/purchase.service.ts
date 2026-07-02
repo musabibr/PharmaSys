@@ -1144,7 +1144,9 @@ export class PurchaseService {
     const sellChild  = item.selling_price_child && item.selling_price_child > 0
       ? Money.round(item.selling_price_child)
       : Money.divideToChild(sellParent, conversionFactor);
-    const quantityBase = item.quantity * conversionFactor;
+    // Round to whole base units: dual-unit entry (e.g. 3 box + 5 strip) arrives as a
+    // fractional parent quantity, so quantity * cf can carry float noise (5/3 × 3 = 5.0001).
+    const quantityBase = Math.round(item.quantity * conversionFactor);
 
     // Bound the free-text batch number (length + trim); null when empty.
     const batchNumber = Validate.optionalString(item.batch_number, 'Batch number', 60);

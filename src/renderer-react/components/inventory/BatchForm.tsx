@@ -20,6 +20,7 @@ function generateBatchNumber(): string {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { QtyInput } from '@/components/ui/qty-input';
 import { Separator } from '@/components/ui/separator';
 import {
   Dialog,
@@ -129,7 +130,8 @@ export function BatchForm({
       setSellChildTouched(false);
       setBatchNumber(generateBatchNumber());
       setExpiryDate('');
-      setQuantity(1);
+      // quantity is stored in BASE (small) units; default to one parent unit
+      setQuantity(conversionFactor > 1 ? conversionFactor : 1);
       setCostPerParent(0);
       setSellPricePerParent(0);
       setCostPerChild(0);
@@ -260,13 +262,12 @@ export function BatchForm({
         throwIfError(await api.batches.update(batch.id, updateData as Partial<Batch>));
         toast.success(t('Batch updated successfully'));
       } else {
-        // Create mode: create new batch
-        const cf = conversionFactor || 1;
+        // Create mode: create new batch. quantity is already in BASE (small) units.
         const createData: Record<string, unknown> = {
           product_id: productId,
           batch_number: batchNumber.trim() || null,
           expiry_date: expiryDate,
-          quantity_base: quantity * cf,
+          quantity_base: quantity,
           cost_per_parent: costPerParent,
           selling_price_parent: sellPricePerParent || Math.round(costPerParent * 1.2),
         };
@@ -355,22 +356,20 @@ export function BatchForm({
 
           {/* ---- Quantity ---- */}
           <div className="space-y-2">
-            <Label htmlFor="batch-qty">
-              {isEditMode ? t('Stock Quantity') : t('Quantity')} ({isEditMode && childUnit ? childUnit : parentUnit}) {!isEditMode && '*'}
+            <Label>
+              {isEditMode ? t('Stock Quantity') : t('Quantity')} {!isEditMode && '*'}
             </Label>
-            <Input
-              id="batch-qty"
-              type="number"
-              min={isEditMode ? 0 : 1}
-              step={1}
-              value={quantity}
-              onChange={(e) => setQuantity(Math.max(isEditMode ? 0 : 1, parseInt(e.target.value, 10) || (isEditMode ? 0 : 1)))}
+            <QtyInput
+              cf={conversionFactor}
+              parentUnit={parentUnit}
+              childUnit={childUnit}
+              valueBase={quantity}
+              onChangeBase={setQuantity}
               disabled={loading}
             />
-            {isEditMode && hasChildUnit && conversionFactor > 1 && (
+            {hasChildUnit && conversionFactor > 1 && (
               <p className="text-xs text-muted-foreground">
-                {t('Enter in {{unit}} — equivalent to', { unit: childUnit })}{' '}
-                {formatQuantity(quantity, parentUnit, childUnit, conversionFactor)}
+                {t('Total')}: {formatQuantity(quantity, parentUnit, childUnit, conversionFactor)}
               </p>
             )}
             {isEditMode && (!hasChildUnit || conversionFactor <= 1) && (

@@ -35,13 +35,18 @@ export interface IeColumn {
   exportValue: (p: Product, b?: Batch) => string | number;
 }
 
-/** Quantity stored in base units → expressed in parent units for display/export.
- *  The importer reverses this with `parentQty * conversionFactor`. */
-export function baseToParentQty(quantityBase: number, conversionFactor: number): number {
+/** Whole parent units in a base-unit quantity (e.g. 105 strips @ cf 10 → 10 boxes).
+ *  Paired with {@link baseToSmallRemainder} so export splits cleanly into two
+ *  columns and re-imports exactly: `base = parentWhole * cf + smallRemainder`. */
+export function baseToParentWhole(quantityBase: number, conversionFactor: number): number {
   const cf = conversionFactor > 0 ? conversionFactor : 1;
-  const parent = quantityBase / cf;
-  // Trim floating-point noise (e.g. 25.499999) while preserving real fractions.
-  return Math.round(parent * 1000) / 1000;
+  return Math.floor(quantityBase / cf);
+}
+
+/** Leftover small units after taking whole parents (e.g. 105 @ cf 10 → 5). */
+export function baseToSmallRemainder(quantityBase: number, conversionFactor: number): number {
+  const cf = conversionFactor > 0 ? conversionFactor : 1;
+  return quantityBase % cf;
 }
 
 export const PRODUCT_IE_COLUMNS: IeColumn[] = [
@@ -97,8 +102,13 @@ export const PRODUCT_IE_COLUMNS: IeColumn[] = [
   },
   {
     id: 'quantity', header: 'Qty (Parent Units)', level: 'batch',
-    keywords: ['qty', 'quantity', 'الكمية', 'كمية'],
-    exportValue: (p, b) => (b ? baseToParentQty(b.quantity_base, b.conversion_factor ?? p.conversion_factor ?? 1) : ''),
+    keywords: ['qty (parent', 'qty parent', 'quantity (parent', 'parent units', 'qty', 'quantity', 'الكمية (وحدات كبيرة)', 'الكمية', 'كمية'],
+    exportValue: (p, b) => (b ? baseToParentWhole(b.quantity_base, b.conversion_factor ?? p.conversion_factor ?? 1) : ''),
+  },
+  {
+    id: 'quantity_small', header: 'Qty (Small Units)', level: 'batch',
+    keywords: ['qty (small', 'qty small', 'quantity (small', 'small units', 'الكمية (وحدات صغيرة)', 'كمية صغيرة'],
+    exportValue: (p, b) => (b ? baseToSmallRemainder(b.quantity_base, b.conversion_factor ?? p.conversion_factor ?? 1) : ''),
   },
   {
     id: 'cost_per_parent', header: 'Cost per Parent Unit (SDG)', level: 'batch',
@@ -148,6 +158,7 @@ export const TEMPLATE_EXAMPLE_ROW: Array<string | number> = [
   'B001',              // Batch Number
   '2027-06-30',        // Expiry Date
   50,                  // Qty (Parent Units)
+  5,                   // Qty (Small Units)
   1200,                // Cost per Parent Unit
   1500,                // Sell Price per Parent Unit
   150,                 // Sell Price per Small Unit
