@@ -1795,6 +1795,7 @@
   "or switch to \"Add Items\" to enter line items": "أو انتقل إلى \"إضافة عناصر\" لإدخال العناصر",
   "or switch to \"Total Only\" for a quick entry": "أو انتقل إلى \"المجموع فقط\" للإدخال السريع",
   "unit": "وحدة",
+  "box": "علبة",
   "{{count}} new products will be created": "سيتم إنشاء {{count}} منتج جديد",
   "{{n}} invoice(s) will be merged.": "سيتم دمج {{n}} فاتورة.",
 

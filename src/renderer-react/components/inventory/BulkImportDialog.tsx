@@ -73,6 +73,7 @@ interface ParsedRow {
   batchNumber: string;
   expiryDate: string;
   quantity: number;
+  quantitySmall: number;
   costPerParent: number;
   sellPricePerParent: number;
   valid: boolean;
@@ -179,6 +180,7 @@ function mapRow(
   const batchNumber = toStr(cell.batch_number);
   const expiryDate = normalizeDate(cell.expiry_date);
   const quantity = toNum(cell.quantity, 0);
+  const quantitySmall = toInt(cell.quantity_small, 0);
   const costPerParent = toInt(cell.cost_per_parent, 0);
   const sellPricePerParent = toInt(cell.selling_price_parent, 0);
 
@@ -197,7 +199,7 @@ function mapRow(
   // Only require batch details when the row actually carries stock (qty > 0).
   // Mirrors the backend, which creates a batch only when quantity_base > 0 and
   // an expiry date is present — partial fields no longer fail the whole row.
-  const hasStock = quantity > 0;
+  const hasStock = quantity > 0 || quantitySmall > 0;
 
   if (hasStock) {
     if (!expiryDate) {
@@ -226,6 +228,7 @@ function mapRow(
     batchNumber,
     expiryDate,
     quantity,
+    quantitySmall,
     costPerParent,
     sellPricePerParent,
     valid: errors.length === 0,
@@ -363,7 +366,7 @@ export function BulkImportDialog({ open, onOpenChange, onImported }: BulkImportD
         min_stock_level: row.minStock,
         batch_number: row.batchNumber || undefined,
         expiry_date: row.expiryDate,
-        quantity_base: Math.round(row.quantity * row.convFactor),
+        quantity_base: Math.round(row.quantity * row.convFactor) + row.quantitySmall,
         cost_per_parent: row.costPerParent,
         selling_price_parent: row.sellPricePerParent || Math.round(row.costPerParent * (1 + defaultMarkup / 100)),
       }));
@@ -566,7 +569,9 @@ export function BulkImportDialog({ open, onOpenChange, onImported }: BulkImportD
                       <TableCell className="hidden xl:table-cell">{row.batchNumber || '---'}</TableCell>
                       <TableCell>{row.expiryDate || '---'}</TableCell>
                       <TableCell className="text-end tabular-nums">
-                        {row.quantity || '---'}
+                        {row.quantity > 0 || row.quantitySmall > 0
+                          ? `${row.quantity || 0}${row.quantitySmall > 0 ? ` + ${row.quantitySmall}` : ''}`
+                          : '---'}
                       </TableCell>
                       <TableCell className="text-end tabular-nums">
                         {row.costPerParent || '---'}

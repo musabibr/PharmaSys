@@ -63,6 +63,7 @@ interface ParsedRow {
   batchNumber: string;
   expiryDate: string;
   quantity: number;
+  quantitySmall: number;
   costPerParent: number;
   sellPricePerParent: number;
   sellPriceChild: number;
@@ -181,6 +182,7 @@ function mapRow(
   const batchNumber        = toStr(cell.batch_number);
   const expiryDate         = normalizeDate(cell.expiry_date);
   const quantity           = toNum(cell.quantity, 0);
+  const quantitySmall      = toInt(cell.quantity_small, 0);
   const costPerParent      = toInt(cell.cost_per_parent, 0);
   const sellPricePerParent = toInt(cell.selling_price_parent, 0);
   const sellPriceChild     = toInt(cell.selling_price_child, 0);
@@ -193,7 +195,7 @@ function mapRow(
   // batch fields without a quantity are ignored (the product is imported on its
   // own) instead of failing the whole row — this mirrors the backend, which
   // creates a batch only when quantity_base > 0 AND an expiry date is present.
-  const hasStock = quantity > 0;
+  const hasStock = quantity > 0 || quantitySmall > 0;
   if (hasStock) {
     if (!expiryDate) {
       errors.push(t('Expiry date is required for stock'));
@@ -222,7 +224,7 @@ function mapRow(
 
   return {
     rowIndex, name, genericName, category, barcode, parentUnit, childUnit,
-    convFactor, minStock, batchNumber, expiryDate, quantity, costPerParent,
+    convFactor, minStock, batchNumber, expiryDate, quantity, quantitySmall, costPerParent,
     sellPricePerParent, sellPriceChild,
     matchedProductId, matchedProductName, importMode,
     selected: errors.length === 0,
@@ -432,15 +434,15 @@ export function ProductImportDialog({ open, onOpenChange, onImported }: ProductI
 
           // Add batch if cost/expiry/qty provided AND we are not linking to a purchase
           // (if linking to a purchase, the purchase flow will create the batch to prevent double-stock)
-          if (row.expiryDate && row.quantity > 0 && row.costPerParent > 0 && assignPurchaseId === 'none') {
+          if (row.expiryDate && (row.quantity > 0 || row.quantitySmall > 0) && row.costPerParent > 0 && assignPurchaseId === 'none') {
             const matchedProduct = currentExisting.find(p => p.id === row.matchedProductId);
             const actualCf = matchedProduct?.conversion_factor ?? row.convFactor;
-            
+
             await api.batches.create({
               product_id:           row.matchedProductId,
               batch_number:         row.batchNumber         || undefined,
               expiry_date:          row.expiryDate,
-              quantity_base:        Math.round(row.quantity * actualCf),
+              quantity_base:        Math.round(row.quantity * actualCf) + row.quantitySmall,
               cost_per_parent:      row.costPerParent,
               selling_price_parent: row.sellPricePerParent ||
                 Math.round(row.costPerParent * (1 + defaultMarkup / 100)),
@@ -462,7 +464,7 @@ export function ProductImportDialog({ open, onOpenChange, onImported }: ProductI
             min_stock_level:      row.minStock,
             batch_number:         row.batchNumber     || undefined,
             expiry_date:          row.expiryDate,
-            quantity_base:        Math.round(row.quantity * row.convFactor),
+            quantity_base:        Math.round(row.quantity * row.convFactor) + row.quantitySmall,
             cost_per_parent:      row.costPerParent,
             selling_price_parent: row.sellPricePerParent ||
               Math.round(row.costPerParent * (1 + defaultMarkup / 100)),
@@ -489,10 +491,10 @@ export function ProductImportDialog({ open, onOpenChange, onImported }: ProductI
         }
 
         // Collect for purchase link
-        if (productId && assignPurchaseId !== 'none' && row.expiryDate && row.quantity > 0 && row.costPerParent > 0) {
+        if (productId && assignPurchaseId !== 'none' && row.expiryDate && (row.quantity > 0 || row.quantitySmall > 0) && row.costPerParent > 0) {
           purchaseItems.push({
             product_id:           productId,
-            quantity:             row.quantity,
+            quantity:             row.quantity + (row.quantitySmall > 0 ? row.quantitySmall / (row.convFactor || 1) : 0),
             cost_per_parent:      row.costPerParent,
             selling_price_parent: row.sellPricePerParent ||
               Math.round(row.costPerParent * (1 + defaultMarkup / 100)),
@@ -932,9 +934,11 @@ export function ProductImportDialog({ open, onOpenChange, onImported }: ProductI
                         {/* Expiry */}
                         <TableCell className="text-xs">{row.expiryDate || '---'}</TableCell>
 
-                        {/* Qty */}
+                        {/* Qty (parent + small units) */}
                         <TableCell className="text-end tabular-nums text-sm">
-                          {row.quantity > 0 ? row.quantity : '---'}
+                          {row.quantity > 0 || row.quantitySmall > 0
+                            ? `${row.quantity || 0}${row.quantitySmall > 0 ? ` + ${row.quantitySmall}` : ''}`
+                            : '---'}
                         </TableCell>
 
                         {/* Cost */}
