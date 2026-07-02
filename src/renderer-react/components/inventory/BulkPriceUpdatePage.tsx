@@ -412,10 +412,24 @@ export function BulkPriceUpdatePage() {
                               <span className="text-xs text-muted-foreground">—</span>
                             )}
                           </TableCell>
-                          <TableCell className="text-end tabular-nums">
-                            <span className={marginColor(newMargin)}>
-                              {newMargin === null ? '—' : `${newMargin}%`}
-                            </span>
+                          <TableCell className="text-end">
+                            {r.cost > 0 ? (
+                              <div className="flex items-center justify-end gap-1">
+                                {/* Editable margin: typing a % sets the base price (whole SDG, no step rounding). */}
+                                <Input type="number"
+                                  className={`h-8 w-20 text-end tabular-nums ${marginColor(newMargin)}`}
+                                  value={newMargin ?? ''}
+                                  disabled={!r.included}
+                                  onChange={(e) => {
+                                    const m = Number(e.target.value);
+                                    if (!Number.isFinite(m)) return;
+                                    updateRow(r.productId, { newSell: Math.max(0, Math.round(r.cost * (1 + m / 100))) });
+                                  }} />
+                                <span className="text-xs text-muted-foreground">%</span>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
                             {changePct !== null && changePct !== 0 && (
                               <div className={`text-xs ${changePct > 0 ? 'text-green-600' : 'text-destructive'}`}>
                                 {changePct > 0

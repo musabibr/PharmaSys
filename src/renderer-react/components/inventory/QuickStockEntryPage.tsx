@@ -482,6 +482,20 @@ export function QuickStockEntryPage() {
                     </div>
                   )}
                   <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">{t('Margin')} %</Label>
+                    {/* Typing a margin sets the base sell price from the cost. */}
+                    <Input type="number"
+                      className="h-8 w-20 text-end"
+                      value={r.cost > 0 && r.sell > 0 ? Math.round(((r.sell - r.cost) / r.cost) * 100) : ''}
+                      disabled={r.cost <= 0}
+                      placeholder="%"
+                      onChange={(e) => {
+                        const m = Number(e.target.value);
+                        if (!Number.isFinite(m) || r.cost <= 0) return;
+                        update(r._key, { sell: Math.max(0, Math.round(r.cost * (1 + m / 100))), sellTouched: true });
+                      }} />
+                  </div>
+                  <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">{t('Sell')}/{r.parentUnit || t('unit')}</Label>
                     <Input type="number" min={0} value={r.sell || ''}
                       onChange={(e) => update(r._key, { sell: Math.round(Number(e.target.value) || 0), sellTouched: true })}
