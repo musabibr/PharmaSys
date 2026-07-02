@@ -93,21 +93,27 @@ export function BulkPriceUpdatePage() {
       const byId = new Map<number, Product>(products.map((p) => [p.id, p]));
       setRows(preview.map((r: BulkPriceUpdatePreviewRow) => {
         const p = byId.get(r.product_id);
+        const cf = r.conversion_factor > 1 ? r.conversion_factor : 1;
+        const currentSellChild = p?.selling_price_child ?? 0;
         return {
           productId: r.product_id,
           name: r.product_name,
           generic: p?.generic_name ?? '',
           barcode: p?.barcode ?? '',
           category: r.category_name ?? '',
-          cf: r.conversion_factor > 1 ? r.conversion_factor : 1,
+          cf,
           parentUnit: p?.parent_unit ?? 'Box',
           childUnit: p?.child_unit ?? '',
           cost: r.basis_cost,           // fetched with margin_over_cost → latest batch cost
           currentSell: r.current_sell,
-          currentSellChild: p?.selling_price_child ?? 0,
+          currentSellChild,
           included: true,
-          newSell: r.new_sell_parent,
-          newSellChild: r.new_sell_child,
+          // Start each product at ITS OWN current price/margin — nothing changes
+          // until the user recalculates by formula or edits a row.
+          newSell: r.current_sell,
+          newSellChild: cf > 1
+            ? (currentSellChild || (r.current_sell > 0 ? Math.floor(r.current_sell / cf) : 0))
+            : 0,
           childTouched: false,
         };
       }));
@@ -234,7 +240,7 @@ export function BulkPriceUpdatePage() {
             {t('Bulk Price Update')}
           </h1>
           <p className="text-sm text-muted-foreground">
-            {t('Fill new prices by formula, then adjust any product inline before applying. Only checked rows are updated.')}
+            {t('Products load at their current prices and margins. Recalculate by formula or edit prices and margins inline — only checked rows are updated.')}
           </p>
         </div>
         <Button onClick={handleApply} disabled={includedRows.length === 0 || applying || loading}>
