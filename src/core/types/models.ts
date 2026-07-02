@@ -553,6 +553,10 @@ export interface CreateCashDropInput {
 }
 
 export interface BulkCreateProductInput {
+  /** When set, add stock to this exact existing product (Quick Stock Entry) instead
+   *  of matching by barcode/name. Also triggers selling-price propagation to the
+   *  product's other active batches, keeping its shelf price consistent. */
+  product_id?: number;
   name: string;
   generic_name?: string;
   category_name?: string;
@@ -566,6 +570,8 @@ export interface BulkCreateProductInput {
   quantity_base: number;
   cost_per_parent: number;
   selling_price_parent: number;
+  /** Optional explicit small-unit price; derived from the parent price when omitted. */
+  selling_price_child?: number;
 }
 
 // ─── Filter Types ───

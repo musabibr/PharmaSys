@@ -1,6 +1,7 @@
 import type { ProductRepository }  from '../repositories/sql/product.repository';
 import type { CategoryRepository } from '../repositories/sql/category.repository';
 import type { BatchRepository }    from '../repositories/sql/batch.repository';
+import type { SettingsRepository } from '../repositories/sql/settings.repository';
 import type { EventBus }           from '../events/event-bus';
 import type { Product, ProductFilters, PaginatedResult, CreateProductInput, UpdateProductInput, BulkCreateProductInput } from '../types/models';
 import { Validate }                from '../common/validation';
@@ -12,7 +13,8 @@ export class ProductService {
     private readonly repo:     ProductRepository,
     private readonly catRepo:  CategoryRepository,
     private readonly batchRepo: BatchRepository,
-    private readonly bus:      EventBus
+    private readonly bus:      EventBus,
+    private readonly settingsRepo?: SettingsRepository
   ) {}
 
   async getAll(search?: string): Promise<Product[]> {
@@ -164,7 +166,13 @@ export class ProductService {
     if (!Array.isArray(items) || items.length === 0) {
       throw new ValidationError('Items array is required and must not be empty', 'items');
     }
-    const results = await this.repo.bulkCreate(items);
+    let defaultMarkupPercent = 20;
+    if (this.settingsRepo) {
+      const raw = await this.settingsRepo.get('default_markup_percent');
+      const parsed = Number(raw);
+      if (Number.isFinite(parsed) && parsed > 0) defaultMarkupPercent = parsed;
+    }
+    const results = await this.repo.bulkCreate(items, { defaultMarkupPercent });
     const successCount = results.filter(r => r.success).length;
     const failedCount = results.length - successCount;
     const errors = results.filter(r => !r.success).map(r => `${r.name}: ${r.error}`);

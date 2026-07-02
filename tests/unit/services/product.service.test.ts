@@ -2,7 +2,7 @@ import { ProductService } from '@core/services/product.service';
 import { ValidationError, NotFoundError } from '@core/types/errors';
 import {
   createMockProductRepo, createMockCategoryRepo, createMockBatchRepo,
-  createMockBus, sampleProduct, runResult,
+  createMockBus, createMockSettingsRepo, sampleProduct, runResult,
 } from '../../helpers/mocks';
 
 function createService() {
@@ -12,11 +12,12 @@ function createService() {
   const categoryRepo = createMockCategoryRepo();
   const batchRepo    = createMockBatchRepo();
   const bus          = createMockBus();
+  const settingsRepo = createMockSettingsRepo();
 
   const svc = new ProductService(
-    productRepo as any, categoryRepo as any, batchRepo as any, bus
+    productRepo as any, categoryRepo as any, batchRepo as any, bus, settingsRepo as any
   );
-  return { svc, productRepo, categoryRepo, batchRepo, bus };
+  return { svc, productRepo, categoryRepo, batchRepo, bus, settingsRepo };
 }
 
 describe('ProductService', () => {
@@ -263,18 +264,48 @@ describe('ProductService', () => {
       expect(results).toHaveLength(2);
       expect(bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
         action: 'BULK_CREATE_PRODUCTS',
-        newValues: { count: 2 },
+        newValues: expect.objectContaining({ count: 2, failedCount: 0 }),
       }));
     });
 
-    it('does not emit event when all items fail', async () => {
+    it('emits event with failure counts when items fail', async () => {
       const { svc, productRepo, bus } = createService();
       productRepo.bulkCreate.mockResolvedValue([
         { success: false, name: 'Drug A', error: 'duplicate' },
       ]);
 
       await svc.bulkCreate([{} as any], 1);
-      expect(bus.emit).not.toHaveBeenCalled();
+      expect(bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
+        action: 'BULK_CREATE_PRODUCTS',
+        newValues: expect.objectContaining({ count: 0, failedCount: 1 }),
+      }));
+    });
+
+    it('passes the configured default markup percent to repo.bulkCreate', async () => {
+      const { svc, productRepo, settingsRepo } = createService();
+      settingsRepo.get.mockResolvedValue('35');
+      productRepo.bulkCreate.mockResolvedValue([{ success: true, name: 'Drug A' }]);
+
+      await svc.bulkCreate([{} as any], 1);
+
+      expect(settingsRepo.get).toHaveBeenCalledWith('default_markup_percent');
+      expect(productRepo.bulkCreate).toHaveBeenCalledWith(
+        [expect.any(Object)],
+        { defaultMarkupPercent: 35 },
+      );
+    });
+
+    it('falls back to 20% markup when the setting is unset or invalid', async () => {
+      const { svc, productRepo, settingsRepo } = createService();
+      settingsRepo.get.mockResolvedValue(null);
+      productRepo.bulkCreate.mockResolvedValue([{ success: true, name: 'Drug A' }]);
+
+      await svc.bulkCreate([{} as any], 1);
+
+      expect(productRepo.bulkCreate).toHaveBeenCalledWith(
+        [expect.any(Object)],
+        { defaultMarkupPercent: 20 },
+      );
     });
   });
 });

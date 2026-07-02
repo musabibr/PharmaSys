@@ -10,6 +10,7 @@ import {
   Pencil,
   Trash2,
   PackageSearch,
+  PackagePlus,
   Loader2,
   ArrowUpDown,
   X,
@@ -21,6 +22,7 @@ import { usePermission } from '@/hooks/usePermission';
 import { BulkImportDialog } from './BulkImportDialog';
 import { ProductExportDialog } from './ProductExportDialog';
 import { ProductImportDialog } from './ProductImportDialog';
+import { QuickStockEntryDialog } from './QuickStockEntryDialog';
 import { useDebounce } from '@/hooks/useDebounce';
 import { DataPagination } from '@/components/ui/data-pagination';
 import { Input } from '@/components/ui/input';
@@ -487,6 +489,7 @@ export function ProductsTab() {
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [smartImportOpen, setSmartImportOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [quickEntryOpen, setQuickEntryOpen] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   // Sort
@@ -613,7 +616,11 @@ export function ProductsTab() {
         </div>
 
         {canManage && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="default" onClick={() => setQuickEntryOpen(true)}>
+              <PackagePlus className="me-1.5 h-4 w-4" />
+              {t('Quick Stock Entry')}
+            </Button>
             <Button size="sm" variant="outline" onClick={() => setCategoryDialogOpen(true)}>
               <FolderPlus className="me-1.5 h-4 w-4" />
               {t('Add Category')}
@@ -826,6 +833,12 @@ export function ProductsTab() {
         open={smartImportOpen}
         onOpenChange={setSmartImportOpen}
         onImported={() => fetchProducts()}
+      />
+
+      <QuickStockEntryDialog
+        open={quickEntryOpen}
+        onOpenChange={setQuickEntryOpen}
+        onSaved={() => fetchProducts()}
       />
 
       <BulkDeleteProductsDialog

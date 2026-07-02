@@ -82,7 +82,8 @@ export class ServiceContainer {
       this.repos.product,
       this.repos.category,
       this.repos.batch,
-      this.bus
+      this.bus,
+      this.repos.settings
     ));
   }
 
