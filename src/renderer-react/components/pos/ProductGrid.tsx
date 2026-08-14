@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Search, PackageSearch } from 'lucide-react';
 import type { Product, Category } from '@/api/types';
@@ -71,7 +71,7 @@ function EmptyState({ message }: { message: string }) {
 // ProductGrid
 // ---------------------------------------------------------------------------
 
-export function ProductGrid({ onProductSelect, refreshKey }: ProductGridProps) {
+export const ProductGrid = memo(function ProductGrid({ onProductSelect, refreshKey }: ProductGridProps) {
   const { t } = useTranslation();
 
   // ── State ──────────────────────────────────────────────────────────────
@@ -273,7 +273,7 @@ export function ProductGrid({ onProductSelect, refreshKey }: ProductGridProps) {
               <ProductCard
                 key={product.id}
                 product={product}
-                onClick={() => onProductSelect(product.id)}
+                onSelect={onProductSelect}
               />
             ))}
           </div>
@@ -281,4 +281,4 @@ export function ProductGrid({ onProductSelect, refreshKey }: ProductGridProps) {
       </ScrollArea>
     </div>
   );
-}
+});

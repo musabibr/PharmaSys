@@ -1,3 +1,4 @@
+import { memo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Package, Info } from 'lucide-react';
 import type { Product } from '@/api/types';
@@ -17,7 +18,13 @@ import { cn } from '@/lib/utils';
 
 interface ProductCardProps {
   product: Product;
-  onClick: () => void;
+  /**
+   * Receives the product id rather than a pre-bound closure. A per-card
+   * `() => onSelect(p.id)` in the parent would be a new function identity on
+   * every render, defeating the memo below and re-rendering the whole grid
+   * every time the cart changes.
+   */
+  onSelect: (productId: number) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -46,7 +53,7 @@ function getPrice(product: Product, type: 'parent' | 'child'): number | null {
 // ProductCard
 // ---------------------------------------------------------------------------
 
-export function ProductCard({ product, onClick }: ProductCardProps) {
+export const ProductCard = memo(function ProductCard({ product, onSelect }: ProductCardProps) {
   const { t } = useTranslation();
   const stockLevel = getStockLevel(product);
   const isOutOfStock = stockLevel === 'out';
@@ -54,6 +61,8 @@ export function ProductCard({ product, onClick }: ProductCardProps) {
   const parentPrice = getPrice(product, 'parent');
   const childPrice = product.conversion_factor > 1 ? getPrice(product, 'child') : null;
   const hasUsageInstructions = !!product.usage_instructions;
+
+  const onClick = useCallback(() => onSelect(product.id), [onSelect, product.id]);
 
   return (
     <Card
@@ -159,4 +168,4 @@ export function ProductCard({ product, onClick }: ProductCardProps) {
       </CardContent>
     </Card>
   );
-}
+});
