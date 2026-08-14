@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { toast } from 'sonner';
@@ -25,7 +25,11 @@ export function POSPage() {
   const isStaleShift = useShiftStore((s) => s.isStaleShift);
   const shiftsEnabled = useSettingsStore((s) => s.getSetting('shifts_enabled') !== 'false');
   const isAdmin = useAuthStore((s) => s.currentUser?.role === 'admin');
-  const cartStore = useCartStore();
+  // POSPage renders no cart data of its own — CartPanel subscribes to the cart
+  // directly. Subscribing to the whole store here made every cart mutation
+  // re-render the page, the product grid, and every product card in it.
+  // Handlers read the cart imperatively instead.
+  const getCart = useCartStore.getState;
 
   const [shiftModalOpen, setShiftModalOpen] = useState(false);
   const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
@@ -45,37 +49,38 @@ export function POSPage() {
 
   const shiftOpen = !shiftsEnabled || currentShift != null || isAdmin;
 
-  function handleProductSelect(productId: number) {
+  const handleProductSelect = useCallback((productId: number) => {
     setSelectedProductId(productId);
     setAddToCartOpen(true);
-  }
+  }, []);
 
-  function handleCheckout() {
+  const handleCheckout = useCallback(() => {
     if (!shiftOpen) {
       toast.error(t('You must open a shift before making sales.'));
       return;
     }
-    if (cartStore.items.length === 0) return;
+    if (getCart().items.length === 0) return;
     setCheckoutOpen(true);
-  }
+  }, [shiftOpen, t, getCart]);
 
-  function handleCheckoutComplete(transaction: Transaction) {
+  const handleCheckoutComplete = useCallback((transaction: Transaction) => {
     setCheckoutOpen(false);
     setLastTransaction(transaction);
     setReceiptOpen(true);
     setProductRefreshKey((k) => k + 1);
-  }
+  }, []);
 
-  async function handleHold() {
+  const handleHold = useCallback(async () => {
     if (!shiftOpen) {
       toast.error(t('You must open a shift before holding sales.'));
       return;
     }
-    if (cartStore.items.length === 0) return;
+    const cart = getCart();
+    if (cart.items.length === 0) return;
     try {
       // Spread items into plain objects to avoid IPC serialization issues
       // with reactive Zustand state proxies
-      const plainItems = cartStore.items.map(item => ({ ...item }));
+      const plainItems = cart.items.map(item => ({ ...item }));
       // window.prompt may not work in all Electron sandbox configs,
       // so treat null/failure as "no note" rather than cancelling
       let note: string | undefined;
@@ -87,27 +92,28 @@ export function POSPage() {
         // prompt unavailable — proceed without a note
       }
       await api.held.save(plainItems, note);
-      cartStore.clear();
+      cart.clear();
       toast.success(t('Sale held successfully'));
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : t('Failed to hold sale'));
     }
-  }
+  }, [shiftOpen, t, getCart]);
 
-  function handleRetrieveHeld() {
+  const handleRetrieveHeld = useCallback(() => {
     setHeldSalesOpen(true);
-  }
+  }, []);
 
-  async function handleRetrieveItems(items: CartItem[]) {
-    if (cartStore.items.length > 0) {
+  const handleRetrieveItems = useCallback(async (items: CartItem[]) => {
+    const cart = getCart();
+    if (cart.items.length > 0) {
       if (!(await confirm({ description: t('Your current cart has items. Retrieving will replace them. Continue?') }))) {
         return;
       }
     }
-    cartStore.clear();
-    items.forEach((item) => cartStore.addItem(item));
+    cart.clear();
+    items.forEach((item) => cart.addItem(item));
     setHeldSalesOpen(false);
-  }
+  }, [confirm, t, getCart]);
 
   return (
     <div className="flex h-full flex-col">
