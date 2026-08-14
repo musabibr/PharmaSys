@@ -1,6 +1,12 @@
 # PharmaSys — Comprehensive Bug & Issue Audit
 
 > Full-system audit performed on **2026-06-20**. Issues sorted by severity.
+>
+> **Superseded for new work.** A second-generation audit was performed on **2026-08-14** —
+> see [SYSTEM-AUDIT-2026-08.md](SYSTEM-AUDIT-2026-08.md) (52 findings, none duplicated from
+> this file, with a deep dive on product/transaction history and POS performance).
+> This document remains the record of the 2026-06-20 pass and its resolutions; the
+> still-open items listed at the bottom (#9, #23, #27, #30, #40b) are carried forward there.
 
 ---
 
