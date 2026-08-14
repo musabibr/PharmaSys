@@ -5,6 +5,7 @@ import type { SettingsRepository } from '../repositories/sql/settings.repository
 import type { EventBus }           from '../events/event-bus';
 import type { Product, ProductFilters, PaginatedResult, CreateProductInput, UpdateProductInput, BulkCreateProductInput } from '../types/models';
 import { Validate }                from '../common/validation';
+import { diffValues }              from '../common/audit-diff';
 import { NotFoundError, ValidationError } from '../types/errors';
 import { Money }                   from '../common/money';
 
@@ -108,10 +109,20 @@ export class ProductService {
       await this.repo.update(id, data);
     }
 
+    // Record the PREVIOUS value of every field the patch actually changed —
+    // without this the audit log can only show what a product became, never
+    // what it was, so a price/barcode/min-stock edit is unrecoverable.
+    const { oldValues, newValues } = diffValues(
+      existing as unknown as Record<string, unknown>,
+      data as Record<string, unknown>,
+    );
+
     this.bus.emit('entity:mutated', {
       action: 'UPDATE_PRODUCT', table: 'products',
       recordId: id, userId,
-      oldValues: { name: existing.name }, newValues: data as Record<string, unknown>,
+      // `product_name` identifies the row in the log without looking like a change.
+      oldValues,
+      newValues: { product_name: existing.name, ...newValues },
     });
 
     return await this.getById(id);

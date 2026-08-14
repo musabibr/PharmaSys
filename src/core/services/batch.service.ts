@@ -8,6 +8,7 @@ import type {
   ManualPriceUpdateItem,
 } from '../types/models';
 import { Validate }               from '../common/validation';
+import { diffValues }             from '../common/audit-diff';
 import { NotFoundError, ValidationError, ConflictError, BusinessRuleError } from '../types/errors';
 import { Money }                  from '../common/money';
 
@@ -101,6 +102,11 @@ export class BatchService {
         product_id: data.product_id,
         quantity: data.quantity_base,
         expiry: data.expiry_date,
+        // Opening prices — without these the log shows a batch appearing with no
+        // cost basis, so a later price edit has nothing to diff against.
+        cost_per_parent:      costParent,
+        selling_price_parent: sellParent,
+        batch_number:         data.batch_number ?? null,
       },
     });
 
@@ -229,9 +235,19 @@ export class BatchService {
       }
     }
 
+    // Record the PREVIOUS value of every field the patch actually changed. A batch
+    // edit moves stock and money, so "it is 4500 now" is not an audit trail —
+    // "it was 3000, X changed it to 4500" is.
+    const { oldValues, newValues } = diffValues(
+      existing as unknown as Record<string, unknown>,
+      data as Record<string, unknown>,
+    );
+
     this.bus.emit('entity:mutated', {
       action: 'UPDATE_BATCH', table: 'batches',
-      recordId: id, userId, newValues: data,
+      recordId: id, userId,
+      oldValues,
+      newValues: { product_id: existing.product_id, ...newValues },
     });
 
     return await this.getById(id);
@@ -522,7 +538,19 @@ export class BatchService {
     this.bus.emit('entity:mutated', {
       action: 'DELETE_BATCH', table: 'batches',
       recordId: id, userId,
-      oldValues: { product_name: (batch as any).product_name, batch_number: batch.batch_number, expiry_date: batch.expiry_date },
+      oldValues: {
+        product_name: (batch as any).product_name,
+        batch_number: batch.batch_number,
+        expiry_date:  batch.expiry_date,   // consumed by AuditRepository.getDeletedBatchExpiry
+        // The destroyed stock and its cost basis. Without these the log records
+        // that a batch vanished but not how much inventory went with it, so the
+        // loss cannot even be quantified after the fact.
+        product_id:           batch.product_id,
+        quantity_base:        batch.quantity_base,
+        status:               batch.status,
+        cost_per_parent:      batch.cost_per_parent,
+        selling_price_parent: batch.selling_price_parent,
+      },
     });
   }
 
