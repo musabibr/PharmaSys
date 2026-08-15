@@ -13,6 +13,7 @@
  */
 
 import Database from 'better-sqlite3';
+import { AsyncLocalStorage } from 'async_hooks';
 import type { IBaseRepository, RunResult } from '../../types/repositories';
 import { InternalError } from '../../types/errors';
 
@@ -30,6 +31,28 @@ export class BaseRepository implements IBaseRepository {
    */
   private _txQueue: Promise<unknown> = Promise.resolve();
 
+  /**
+   * True while a BEGIN...COMMIT/ROLLBACK is open on `this.db`. All repositories
+   * share one connection, so a plain run()/rawRun() call issued while *any*
+   * transaction is open would otherwise silently join that transaction and be
+   * committed or rolled back with it — e.g. an audit-listener write firing
+   * between two awaits inside createSale's transaction gets discarded if the
+   * sale retries after a ConflictError (audit finding F1). Write methods
+   * check this flag and wait for the queue instead of writing directly.
+   */
+  private _txActive = false;
+
+  /**
+   * Tags the async call chain currently executing inside a transaction's own
+   * callback, so nested inTransaction() calls — and any run()/rawRun() calls
+   * made by services invoked from within that callback — can tell "I am part
+   * of the open transaction" apart from "a transaction is open, but it isn't
+   * mine". Without this distinction, a nested inTransaction() call would
+   * queue behind the outer transaction's completion promise, which can only
+   * resolve after the nested call returns: a guaranteed deadlock (F2).
+   */
+  private readonly _txContext = new AsyncLocalStorage<true>();
+
   constructor(dbPath: string) {
     this.dbPath = dbPath;
     this.db = new Database(dbPath);
@@ -45,7 +68,20 @@ export class BaseRepository implements IBaseRepository {
     return this.db.prepare(sql).all(...params) as T[];
   }
 
+  /**
+   * Await any *foreign* in-flight transaction before writing (F1). A call
+   * made from within the active transaction's own callback (same
+   * AsyncLocalStorage context) is not foreign — it's part of that unit of
+   * work, so it proceeds immediately without waiting on itself.
+   */
+  private async _awaitForeignTx(): Promise<void> {
+    if (this._txActive && !this._txContext.getStore()) {
+      await this._txQueue.catch(() => { /* prior tx errors are not ours */ });
+    }
+  }
+
   async run(sql: string, params: unknown[] = []): Promise<RunResult> {
+    await this._awaitForeignTx();
     const result = this.db.prepare(sql).run(...params);
     return {
       lastInsertRowid: Number(result.lastInsertRowid),
@@ -60,6 +96,16 @@ export class BaseRepository implements IBaseRepository {
   }
 
   async inTransaction<T>(fn: () => Promise<T>): Promise<T> {
+    // F2: a call nested inside an already-open transaction's own callback
+    // must NOT queue — queueing would wait on the outer transaction's
+    // completion promise, which can only resolve after this nested call
+    // returns. Join the outer transaction instead: run fn() inline, with no
+    // new BEGIN/COMMIT (the outer call owns those and will commit/roll back
+    // whatever this nested call did as part of the same unit of work).
+    if (this._txContext.getStore()) {
+      return await fn();
+    }
+
     // Wait for any in-flight transaction to fully commit/rollback
     const prev = this._txQueue.catch(() => { /* prior tx errors are not ours */ });
     let releaseQueue!: () => void;
@@ -67,9 +113,10 @@ export class BaseRepository implements IBaseRepository {
     this._txQueue = done;
     await prev;
 
+    this._txActive = true;
     this.db.exec('BEGIN TRANSACTION');
     try {
-      const result = await fn();
+      const result = await this._txContext.run(true, () => fn());
       this.db.exec('COMMIT');
       return result;
     } catch (error) {
@@ -86,18 +133,21 @@ export class BaseRepository implements IBaseRepository {
       }
       throw error;
     } finally {
+      this._txActive = false;
       releaseQueue();
     }
   }
 
   /** Run an INSERT and return the new row's ID. */
   async runReturningId(sql: string, params: unknown[] = []): Promise<number> {
+    await this._awaitForeignTx();
     const result = this.db.prepare(sql).run(...params);
     return Number(result.lastInsertRowid);
   }
 
   /** Run an UPDATE/DELETE and return the number of affected rows. */
   async runAndGetChanges(sql: string, params: unknown[] = []): Promise<number> {
+    await this._awaitForeignTx();
     const result = this.db.prepare(sql).run(...params);
     return result.changes;
   }
@@ -109,6 +159,7 @@ export class BaseRepository implements IBaseRepository {
 
   /** Execute a raw run without tracking save. For schema use. */
   async rawRun(sql: string, params: unknown[] = []): Promise<void> {
+    await this._awaitForeignTx();
     if (params.length === 0) {
       this.db.exec(sql);
     } else {
@@ -118,6 +169,7 @@ export class BaseRepository implements IBaseRepository {
 
   /** Run an INSERT without scheduling a save; return new row ID. For bulk seeding use. */
   async rawRunReturningId(sql: string, params: unknown[] = []): Promise<number> {
+    await this._awaitForeignTx();
     const result = this.db.prepare(sql).run(...params);
     return Number(result.lastInsertRowid);
   }
