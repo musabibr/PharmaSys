@@ -52,8 +52,8 @@ export class ShiftRepository implements IShiftRepository {
       `SELECT s.*, u.username,
          COALESCE((SELECT SUM(cash_tendered) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'sale'), 0) as total_cash_sales,
          COALESCE((SELECT SUM(cash_tendered) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'return'), 0) as total_cash_returns,
-         COALESCE((SELECT SUM(total_amount - cash_tendered) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'sale'), 0) as total_bank_sales,
-         COALESCE((SELECT SUM(total_amount - cash_tendered) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'return'), 0) as total_bank_returns,
+         COALESCE((SELECT SUM(CASE WHEN payment_method = 'cash' THEN 0 ELSE total_amount - cash_tendered END) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'sale'), 0) as total_bank_sales,
+         COALESCE((SELECT SUM(CASE WHEN payment_method = 'cash' THEN 0 ELSE total_amount - cash_tendered END) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'return'), 0) as total_bank_returns,
          COALESCE((SELECT SUM(total_amount) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'sale'), 0) as total_sales,
          COALESCE((SELECT SUM(total_amount) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'return'), 0) as total_returns,
          COALESCE((SELECT SUM(amount) FROM expenses WHERE shift_id = s.id AND is_revoked = 0 AND id NOT IN (SELECT expense_id FROM purchase_payments WHERE expense_id IS NOT NULL)), 0) as total_expenses
@@ -126,15 +126,17 @@ export class ShiftRepository implements IShiftRepository {
       [shiftId]
     );
 
-    // Bank portion of sales (total_amount - cash_tendered = bank amount)
+    // Bank portion of sales (total_amount - cash_tendered = bank amount; a
+    // pure-cash sale must contribute 0 here even if cash_tendered was ever
+    // stored above total_amount by a pre-fix row — never let it go negative).
     const bankIn = await this.base.getOne<{ total: number }>(
-      `SELECT COALESCE(SUM(total_amount - cash_tendered), 0) as total FROM transactions
+      `SELECT COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN 0 ELSE total_amount - cash_tendered END), 0) as total FROM transactions
        WHERE shift_id = ? AND is_voided = 0 AND transaction_type = 'sale'`,
       [shiftId]
     );
     // Bank portion of returns
     const bankOut = await this.base.getOne<{ total: number }>(
-      `SELECT COALESCE(SUM(total_amount - cash_tendered), 0) as total FROM transactions
+      `SELECT COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN 0 ELSE total_amount - cash_tendered END), 0) as total FROM transactions
        WHERE shift_id = ? AND is_voided = 0 AND transaction_type = 'return'`,
       [shiftId]
     );

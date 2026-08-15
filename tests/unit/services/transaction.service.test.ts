@@ -88,6 +88,26 @@ describe('TransactionService', () => {
       expect(deps.txnRepo.insertItem).toHaveBeenCalled();
     });
 
+    it('clamps stored cash_tendered to the total and keeps the raw amount as cash_received (A1)', async () => {
+      const deps = createService();
+      setupSaleScenario(deps);
+      // saleInput: total 8000, cash_tendered (amount handed over) 10000 → 2000 change
+      await deps.svc.createSale(saleInput, 1);
+      expect(deps.txnRepo.insert).toHaveBeenCalledWith(expect.objectContaining({
+        cash_tendered: 8000,
+        cash_received: 10000,
+      }));
+    });
+
+    it('does not set cash_received for non-cash payments', async () => {
+      const deps = createService();
+      setupSaleScenario(deps);
+      await deps.svc.createSale({ ...saleInput, payment_method: 'bank_transfer', cash_tendered: 0, bank_name: 'Bank of Khartoum', reference_number: 'REF1' } as any, 1);
+      expect(deps.txnRepo.insert).toHaveBeenCalledWith(expect.objectContaining({
+        cash_received: null,
+      }));
+    });
+
     it('emits transaction:created and entity:mutated', async () => {
       const deps = createService();
       setupSaleScenario(deps);
@@ -248,6 +268,38 @@ describe('TransactionService', () => {
         items: [{ product_id: 1, batch_id: 5, quantity: 1, unit_type: 'parent', unit_price: 8000 }],
       }, 1);
       expect(deps.batchRepo.getById).toHaveBeenCalledWith(5);
+    });
+
+    it('throws when the given batch_id belongs to a different product (B3)', async () => {
+      const deps = createService();
+      setupSaleScenario(deps);
+      deps.batchRepo.getById.mockResolvedValue({ ...sampleFIFOBatch, id: 5, product_id: 99 });
+      await expect(deps.svc.createSale({
+        ...saleInput,
+        items: [{ product_id: 1, batch_id: 5, quantity: 1, unit_type: 'parent', unit_price: 8000 }],
+      }, 1)).rejects.toThrow(ValidationError);
+      expect(deps.batchRepo.updateQuantityOptimistic).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundError when the given batch_id does not exist (B3)', async () => {
+      const deps = createService();
+      setupSaleScenario(deps);
+      deps.batchRepo.getById.mockResolvedValue(undefined);
+      await expect(deps.svc.createSale({
+        ...saleInput,
+        items: [{ product_id: 1, batch_id: 999, quantity: 1, unit_type: 'parent', unit_price: 8000 }],
+      }, 1)).rejects.toThrow(NotFoundError);
+    });
+
+    it('throws when the given batch_id is expired (B3)', async () => {
+      const deps = createService();
+      setupSaleScenario(deps);
+      deps.batchRepo.getById.mockResolvedValue({ ...sampleFIFOBatch, id: 5, expiry_date: '2020-01-01' });
+      await expect(deps.svc.createSale({
+        ...saleInput,
+        items: [{ product_id: 1, batch_id: 5, quantity: 1, unit_type: 'parent', unit_price: 8000 }],
+      }, 1)).rejects.toThrow(ValidationError);
+      expect(deps.batchRepo.updateQuantityOptimistic).not.toHaveBeenCalled();
     });
 
     it('handles child unit sales', async () => {

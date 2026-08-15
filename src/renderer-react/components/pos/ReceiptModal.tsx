@@ -362,12 +362,20 @@ export function ReceiptModal({ open, onOpenChange, transaction }: ReceiptModalPr
                   <span>{transaction.bank_name}</span>
                 </div>
               )}
-              {transaction.payment_method === 'cash' && transaction.cash_tendered > transaction.total_amount && (
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t('Change')}</span>
-                  <span className="tabular-nums">{formatCurrency(transaction.cash_tendered - transaction.total_amount)}</span>
-                </div>
-              )}
+              {(() => {
+                // cash_tendered is clamped to total_amount (cash retained, for
+                // reconciliation) — the raw amount handed over is cash_received.
+                // Fall back to cash_tendered for rows written before that split
+                // existed, so old receipts still show a change line correctly.
+                const received = transaction.cash_received ?? transaction.cash_tendered;
+                if (transaction.payment_method !== 'cash' || received <= transaction.total_amount) return null;
+                return (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{t('Change')}</span>
+                    <span className="tabular-nums">{formatCurrency(received - transaction.total_amount)}</span>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* ---- Notes ---- */}

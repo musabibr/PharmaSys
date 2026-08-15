@@ -600,14 +600,27 @@ export class TransactionService {
         ? item.quantity * cf
         : item.quantity;
 
-      // If caller specified a batch, use only that one; otherwise FIFO all batches
+      // If caller specified a batch, use only that one; otherwise FIFO all batches.
+      // A stale/malformed batch_id (cart line captured before the product was
+      // switched, or any REST caller) must never be allowed to deduct stock
+      // from a batch belonging to a different product, or sell expired stock
+      // that the FIFO path would have excluded.
       const batches: IFIFOBatch[] = item.batch_id
         ? await (async () => {
             const b = await this.batchRepo.getById(item.batch_id!) as unknown as IFIFOBatch | undefined;
-            if (b && b.status !== 'active') {
+            if (!b) throw new NotFoundError('Batch', item.batch_id!);
+            if (b.product_id !== item.product_id) {
+              throw new ValidationError(
+                `Batch ${item.batch_id} does not belong to product ${item.product_id}`, 'batch_id'
+              );
+            }
+            if (b.status !== 'active') {
               throw new ValidationError(`Batch ${item.batch_id} is not available for sale (status: ${b.status})`, 'batch_id');
             }
-            return b ? [b] : [];
+            if (this._isBatchExpired(b.expiry_date)) {
+              throw new ValidationError(`Batch ${item.batch_id} is expired`, 'batch_id');
+            }
+            return [b];
           })()
         : await this.batchRepo.getAvailableByProduct(item.product_id);
 
@@ -715,16 +728,28 @@ export class TransactionService {
 
     const total      = subtotal - discount + tax;
 
-    const cashTendered =
+    // `data.cash_tendered` for a cash sale is the raw amount the cashier typed
+    // as "amount received" — it is legitimately larger than `total` whenever
+    // change is given. Keep that raw figure as `cash_received` (receipt
+    // "change given" display only) and clamp the stored `cash_tendered` to
+    // `total` so it always means cash actually retained in the drawer.
+    // Storing the raw figure in `cash_tendered` inflated every shift's
+    // expected cash by the change given and booked a matching negative "bank
+    // portion", closing the drawer short by exactly that amount.
+    const rawCashTendered =
       data.payment_method === 'cash'  ? (data.cash_tendered ?? total)
       : data.payment_method === 'mixed' ? (data.cash_tendered ?? 0)
       : 0;
+    const cashReceived = data.payment_method === 'cash' ? rawCashTendered : null;
+    const cashTendered = data.payment_method === 'cash'
+      ? Math.min(rawCashTendered, total)
+      : rawCashTendered;
 
     // Post-FIFO cash validation: ensure cash tendered covers the ACTUAL total
     // (pre-FIFO validation used the frontend estimate which may differ)
-    if (data.transaction_type === 'sale' && data.payment_method === 'cash' && cashTendered < total) {
+    if (data.transaction_type === 'sale' && data.payment_method === 'cash' && rawCashTendered < total) {
       throw new ValidationError(
-        `Cash tendered (${cashTendered}) is less than the total (${total})`,
+        `Cash tendered (${rawCashTendered}) is less than the total (${total})`,
         'cash_tendered'
       );
     }
@@ -747,6 +772,7 @@ export class TransactionService {
       bank_name:             data.bank_name ?? null,
       reference_number:      data.reference_number ?? null,
       cash_tendered:         cashTendered,
+      cash_received:         cashReceived,
       payment:               paymentJson,
       customer_name:         data.customer_name ?? null,
       customer_phone:        data.customer_phone ?? null,
