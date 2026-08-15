@@ -307,7 +307,7 @@ export function ValuationTab() {
   return (
     <div className="space-y-4 p-1">
       {/* ── Summary Cards ──────────────────────────────────────────────── */}
-      <div className={`grid gap-4 ${canViewCosts ? 'sm:grid-cols-3' : 'sm:grid-cols-1'}`}>
+      <div className={`grid gap-4 ${canViewCosts ? 'sm:grid-cols-4' : 'sm:grid-cols-1'}`}>
         <StatCard
           label={t('Total Products')}
           value={totalProducts}
@@ -326,6 +326,17 @@ export function ValuationTab() {
             value={formatCurrency(result.total_retail)}
             icon={<TrendingUp className="h-5 w-5" />}
             variant="success"
+          />
+        )}
+        {canViewCosts && (
+          // E1: expired/quarantined stock is no longer folded into the
+          // sellable totals above — shown separately so the write-off
+          // exposure is visible instead of hidden inside "Total Cost Value".
+          <StatCard
+            label={t('Unsellable Stock (Expired/Quarantined)')}
+            value={formatCurrency(result.total_unsellable_cost)}
+            icon={<AlertTriangle className="h-5 w-5" />}
+            variant={result.total_unsellable_cost > 0 ? 'warning' : 'default'}
           />
         )}
       </div>

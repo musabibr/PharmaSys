@@ -821,6 +821,7 @@
   "Total Products": "إجمالي المنتجات",
   "Total Cost Value": "إجمالي قيمة التكلفة",
   "Total Retail Value": "إجمالي قيمة البيع",
+  "Unsellable Stock (Expired/Quarantined)": "مخزون غير قابل للبيع (منتهي/محجوز)",
   "Failed to load data": "فشل تحميل البيانات",
   "No inventory data": "لا توجد بيانات مخزون",
   "Items Needing Reorder": "عناصر تحتاج إعادة طلب",

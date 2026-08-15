@@ -439,6 +439,8 @@ export interface InventoryValuationItem {
   total_stock_base: number;
   cost_value: number;
   retail_value: number;
+  unsellable_cost_value: number;
+  unsellable_retail_value: number;
   batch_count: number;
 }
 
@@ -449,6 +451,8 @@ export interface InventoryValuationResult {
   limit: number;
   total_cost: number;
   total_retail: number;
+  total_unsellable_cost: number;
+  total_unsellable_retail: number;
 }
 
 export interface ShiftExpectedCash {

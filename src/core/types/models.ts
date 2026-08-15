@@ -806,9 +806,17 @@ export interface InventoryValuationItem {
   parent_unit: string;
   child_unit: string;
   conversion_factor: number;
+  /** Raw stock count across every batch status — kept so a product whose
+   *  entire stock is expired/quarantined still appears in the report. */
   total_stock_base: number;
+  /** Sellable-only (status='active', not expired) — matches the Dashboard's
+   *  inventory value exactly (E1). */
   cost_value: number;
   retail_value: number;
+  /** Expired or quarantined stock, valued separately so the write-off
+   *  exposure is visible instead of silently inflating cost_value/retail_value. */
+  unsellable_cost_value: number;
+  unsellable_retail_value: number;
   batch_count: number;
 }
 
@@ -819,6 +827,8 @@ export interface InventoryValuationResult {
   limit: number;
   total_cost: number;
   total_retail: number;
+  total_unsellable_cost: number;
+  total_unsellable_retail: number;
 }
 
 export interface DashboardStats {

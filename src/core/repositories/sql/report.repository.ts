@@ -29,6 +29,16 @@ const SELL_PER_CHILD_SQL = `COALESCE(
        THEN CAST(b.selling_price_parent / p.conversion_factor AS INTEGER)
        ELSE b.selling_price_parent END)`;
 
+/**
+ * A batch counts as "sellable" the same way everywhere it's asked (E1): the
+ * Dashboard's stock/expiry alert counts already used this exact filter,
+ * while Inventory Valuation and the Reorder/Dead-Capital reports counted
+ * ANY batch with quantity_base > 0 — including expired and quarantined
+ * stock, booked as a sellable asset at full retail. Shared here so the
+ * definition can't drift apart between reports again.
+ */
+const SELLABLE_BATCH_SQL = `b.status = 'active' AND b.expiry_date >= ${TODAY_SQL}`;
+
 export class ReportRepository implements IReportRepository {
   constructor(
     private readonly base: BaseRepository,
@@ -331,9 +341,15 @@ export class ReportRepository implements IReportRepository {
       [startDate, endDate]
     );
 
+    // E4: line_total/gross_profit are the PRE-checkout-discount figures.
+    // checkout_discount_allocation exists precisely to attribute the
+    // order-level discount back to each line and wasn't being subtracted —
+    // a product sold mostly in heavily-discounted baskets looked more
+    // profitable than it actually was.
     const topProducts = await this.base.getAll<{ name: string; total_sold: number; revenue: number; profit: number }>(
       `SELECT p.name, SUM(ti.quantity_base) as total_sold,
-              SUM(ti.line_total) as revenue, SUM(ti.gross_profit) as profit
+              SUM(ti.line_total - COALESCE(ti.checkout_discount_allocation, 0)) as revenue,
+              SUM(ti.gross_profit - COALESCE(ti.checkout_discount_allocation, 0)) as profit
        FROM transaction_items ti
        JOIN products p ON ti.product_id = p.id
        JOIN transactions t ON ti.transaction_id = t.id
@@ -346,9 +362,19 @@ export class ReportRepository implements IReportRepository {
   }
 
   async getReorderRecommendations(): Promise<ReorderRecommendation[]> {
+    // E2: expired/quarantined stock used to count as "on hand" here, so a
+    // product whose entire stock expired last month looked fully stocked
+    // and was never recommended for reorder — it silently went out of
+    // stock on the shelf with no warning. Also, velocity was always
+    // SUM(sold in last 30 days) / 30 regardless of how long the product has
+    // actually been stocked, so a product introduced 3 days ago got a
+    // velocity ~10x too low (its true daily rate divided by a 30-day window
+    // it wasn't even stocked for). Divide by the actual number of days
+    // stocked instead, capped at 30 and floored at 1.
+    const daysStockedSql = `MAX(1, MIN(30, CAST(JULIANDAY('now','localtime') - JULIANDAY(p.created_at) AS INTEGER)))`;
     return await this.base.getAll<ReorderRecommendation>(`
       WITH velocity AS (
-        SELECT ti.product_id, SUM(ti.quantity_base) / 30.0 as daily_velocity_base
+        SELECT ti.product_id, SUM(ti.quantity_base) as sold_base_30d
         FROM transaction_items ti
         JOIN transactions t ON ti.transaction_id = t.id
         WHERE t.is_voided = 0 AND t.transaction_type = 'sale'
@@ -358,24 +384,24 @@ export class ReportRepository implements IReportRepository {
       SELECT p.id, p.name, p.parent_unit, p.child_unit, p.conversion_factor,
              p.min_stock_level,
              COALESCE(SUM(b.quantity_base), 0) as current_stock_base,
-             COALESCE(v.daily_velocity_base, 0) as daily_velocity_base,
+             (COALESCE(v.sold_base_30d, 0) * 1.0 / ${daysStockedSql}) as daily_velocity_base,
              MAX(0, COALESCE(
-               CASE WHEN COALESCE(v.daily_velocity_base, 0) > 0
-                    THEN CAST((COALESCE(v.daily_velocity_base, 0) * 14 - COALESCE(SUM(b.quantity_base), 0))
+               CASE WHEN (COALESCE(v.sold_base_30d, 0) * 1.0 / ${daysStockedSql}) > 0
+                    THEN CAST(((COALESCE(v.sold_base_30d, 0) * 1.0 / ${daysStockedSql}) * 14 - COALESCE(SUM(b.quantity_base), 0))
                          / COALESCE(NULLIF(p.conversion_factor, 0), 1) AS INTEGER)
                     ELSE p.min_stock_level - CAST(COALESCE(SUM(b.quantity_base), 0)
                          / COALESCE(NULLIF(p.conversion_factor, 0), 1) AS INTEGER)
                END, 0)) as recommended_order
       FROM products p
-      LEFT JOIN batches b ON p.id = b.product_id AND b.quantity_base > 0
+      LEFT JOIN batches b ON p.id = b.product_id AND b.quantity_base > 0 AND ${SELLABLE_BATCH_SQL}
       LEFT JOIN velocity v ON v.product_id = p.id
       WHERE p.is_active = 1
       GROUP BY p.id
       HAVING COALESCE(SUM(b.quantity_base), 0) <= (p.min_stock_level * COALESCE(NULLIF(p.conversion_factor, 0), 1))
-         OR (COALESCE(v.daily_velocity_base, 0) > 0
-             AND COALESCE(SUM(b.quantity_base), 0) / COALESCE(v.daily_velocity_base, 0) <= 14)
-      ORDER BY CASE WHEN COALESCE(v.daily_velocity_base, 0) > 0
-                    THEN COALESCE(SUM(b.quantity_base), 0) / v.daily_velocity_base
+         OR ((COALESCE(v.sold_base_30d, 0) * 1.0 / ${daysStockedSql}) > 0
+             AND COALESCE(SUM(b.quantity_base), 0) / (COALESCE(v.sold_base_30d, 0) * 1.0 / ${daysStockedSql}) <= 14)
+      ORDER BY CASE WHEN (COALESCE(v.sold_base_30d, 0) * 1.0 / ${daysStockedSql}) > 0
+                    THEN COALESCE(SUM(b.quantity_base), 0) / (COALESCE(v.sold_base_30d, 0) * 1.0 / ${daysStockedSql})
                     ELSE 9999 END ASC
     `);
   }
@@ -401,7 +427,12 @@ export class ReportRepository implements IReportRepository {
              MIN(b.created_at) as oldest_batch_date,
              CAST(JULIANDAY('now', 'localtime') - JULIANDAY(COALESCE(MIN(b.created_at), datetime('now', 'localtime'))) AS INTEGER) as days_in_inventory
       FROM products p
-      LEFT JOIN batches b ON p.id = b.product_id AND b.quantity_base > 0
+      -- E2: expired/quarantined stock isn't "dead capital" (slow-moving,
+      -- still sellable if it moved) — it's already a realized write-off, a
+      -- different problem entirely (surfaced separately in Inventory
+      -- Valuation's unsellable_cost_value). Without this filter it inflated
+      -- stock_value and hid which products are genuinely just slow to sell.
+      LEFT JOIN batches b ON p.id = b.product_id AND b.quantity_base > 0 AND ${SELLABLE_BATCH_SQL}
       LEFT JOIN last_sale ls ON ls.product_id = p.id
       WHERE p.is_active = 1
       GROUP BY p.id
@@ -427,16 +458,28 @@ export class ReportRepository implements IReportRepository {
 
     const where = `WHERE ${conditions.join(' AND ')}`;
 
+    // E1: cost_value/retail_value now count only SELLABLE stock (matching
+    // the Dashboard's definition exactly) instead of any batch with
+    // quantity_base > 0 — the old query booked expired and quarantined
+    // stock as a full-value asset, and disagreed with the Dashboard's total
+    // for the same moment. total_stock_base stays a RAW count across every
+    // status so a product whose entire stock has expired still appears in
+    // the report (with $0 sellable value) instead of silently vanishing —
+    // its write-off exposure is now visible via unsellable_cost_value/
+    // unsellable_retail_value rather than hidden by a HAVING filter.
     const data = await this.base.getAll<{
       product_id: number; name: string; category_id: number | null; category_name: string | null;
       parent_unit: string; child_unit: string; conversion_factor: number;
-      total_stock_base: number; cost_value: number; retail_value: number; batch_count: number;
+      total_stock_base: number; cost_value: number; retail_value: number;
+      unsellable_cost_value: number; unsellable_retail_value: number; batch_count: number;
     }>(`
       SELECT p.id as product_id, p.name, p.category_id, c.name as category_name,
              p.parent_unit, p.child_unit, p.conversion_factor,
              COALESCE(SUM(b.quantity_base), 0) as total_stock_base,
-             COALESCE(SUM(b.quantity_base * ${COST_PER_CHILD_SQL}), 0) as cost_value,
-             COALESCE(SUM(b.quantity_base * ${SELL_PER_CHILD_SQL}), 0) as retail_value,
+             COALESCE(SUM(CASE WHEN ${SELLABLE_BATCH_SQL} THEN b.quantity_base * ${COST_PER_CHILD_SQL} ELSE 0 END), 0) as cost_value,
+             COALESCE(SUM(CASE WHEN ${SELLABLE_BATCH_SQL} THEN b.quantity_base * ${SELL_PER_CHILD_SQL} ELSE 0 END), 0) as retail_value,
+             COALESCE(SUM(CASE WHEN NOT (${SELLABLE_BATCH_SQL}) THEN b.quantity_base * ${COST_PER_CHILD_SQL} ELSE 0 END), 0) as unsellable_cost_value,
+             COALESCE(SUM(CASE WHEN NOT (${SELLABLE_BATCH_SQL}) THEN b.quantity_base * ${SELL_PER_CHILD_SQL} ELSE 0 END), 0) as unsellable_retail_value,
              COUNT(b.id) as batch_count
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
@@ -448,14 +491,21 @@ export class ReportRepository implements IReportRepository {
       LIMIT ? OFFSET ?
     `, [...params, limit, offset]);
 
-    const totalsRow = await this.base.getOne<{ total: number; total_cost: number; total_retail: number }>(`
+    const totalsRow = await this.base.getOne<{
+      total: number; total_cost: number; total_retail: number;
+      total_unsellable_cost: number; total_unsellable_retail: number;
+    }>(`
       SELECT COUNT(*) as total,
              COALESCE(SUM(cost_value), 0) as total_cost,
-             COALESCE(SUM(retail_value), 0) as total_retail
+             COALESCE(SUM(retail_value), 0) as total_retail,
+             COALESCE(SUM(unsellable_cost_value), 0) as total_unsellable_cost,
+             COALESCE(SUM(unsellable_retail_value), 0) as total_unsellable_retail
       FROM (
         SELECT p.id,
-               COALESCE(SUM(b.quantity_base * ${COST_PER_CHILD_SQL}), 0) as cost_value,
-               COALESCE(SUM(b.quantity_base * ${SELL_PER_CHILD_SQL}), 0) as retail_value
+               COALESCE(SUM(CASE WHEN ${SELLABLE_BATCH_SQL} THEN b.quantity_base * ${COST_PER_CHILD_SQL} ELSE 0 END), 0) as cost_value,
+               COALESCE(SUM(CASE WHEN ${SELLABLE_BATCH_SQL} THEN b.quantity_base * ${SELL_PER_CHILD_SQL} ELSE 0 END), 0) as retail_value,
+               COALESCE(SUM(CASE WHEN NOT (${SELLABLE_BATCH_SQL}) THEN b.quantity_base * ${COST_PER_CHILD_SQL} ELSE 0 END), 0) as unsellable_cost_value,
+               COALESCE(SUM(CASE WHEN NOT (${SELLABLE_BATCH_SQL}) THEN b.quantity_base * ${SELL_PER_CHILD_SQL} ELSE 0 END), 0) as unsellable_retail_value
         FROM products p
         LEFT JOIN categories c ON p.category_id = c.id
         LEFT JOIN batches b ON p.id = b.product_id AND b.quantity_base > 0
@@ -470,6 +520,8 @@ export class ReportRepository implements IReportRepository {
       limit,
       total_cost:   totalsRow?.total_cost ?? 0,
       total_retail:  totalsRow?.total_retail ?? 0,
+      total_unsellable_cost:  totalsRow?.total_unsellable_cost ?? 0,
+      total_unsellable_retail: totalsRow?.total_unsellable_retail ?? 0,
     };
   }
 
@@ -517,13 +569,13 @@ export class ReportRepository implements IReportRepository {
           COALESCE(SUM(b.quantity_base * ${SELL_PER_CHILD_SQL}), 0) as inv_retail
         FROM batches b
         JOIN products p ON b.product_id = p.id
-        WHERE b.quantity_base > 0 AND b.status = 'active' AND b.expiry_date >= ${TODAY_SQL} AND p.is_active = 1
+        WHERE b.quantity_base > 0 AND ${SELLABLE_BATCH_SQL} AND p.is_active = 1
       ),
       low_stock AS (
         SELECT COUNT(*) as low_stock_count FROM (
           SELECT p.id FROM products p
           LEFT JOIN batches b ON p.id = b.product_id AND b.quantity_base > 0
-            AND b.status = 'active' AND b.expiry_date >= ${TODAY_SQL}
+            AND ${SELLABLE_BATCH_SQL}
           WHERE p.is_active = 1
           GROUP BY p.id
           HAVING COALESCE(SUM(b.quantity_base), 0) <= (p.min_stock_level * COALESCE(NULLIF(p.conversion_factor, 0), 1))
