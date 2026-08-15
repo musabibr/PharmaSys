@@ -98,15 +98,19 @@ export class ReportRepository implements IReportRepository {
         FROM raw
       )`;
 
-    const countRow = await this.base.getOne<{ total: number }>(
+    // Combined into a single pass over the ledger CTE — total (matching the
+    // current search/variance filter) and varianceCount (always catalog-wide,
+    // independent of the search box) used to each run their own SELECT over
+    // the same correlated-subquery CTE, doubling the cost for no reason.
+    const searchCond = opts.search?.trim() ? 'name LIKE ?' : '1=1';
+    const varianceCond = opts.onlyVariance ? 'variance_base != 0' : '1=1';
+    const countsRow = await this.base.getOne<{ total: number; variance_total: number }>(
       `${ledgerCte}
-       SELECT COUNT(*) as total FROM ledger WHERE 1=1 ${searchWhere} ${varianceWhere}`,
+       SELECT
+         SUM(CASE WHEN ${searchCond} AND ${varianceCond} THEN 1 ELSE 0 END) as total,
+         SUM(CASE WHEN variance_base != 0 THEN 1 ELSE 0 END) as variance_total
+       FROM ledger`,
       [...searchParam]
-    );
-    const varianceRow = await this.base.getOne<{ total: number }>(
-      `${ledgerCte}
-       SELECT COUNT(*) as total FROM ledger WHERE variance_base != 0`,
-      []
     );
 
     const data = await this.base.getAll<{
@@ -122,7 +126,7 @@ export class ReportRepository implements IReportRepository {
       [...searchParam, limit, offset]
     );
 
-    return { data, total: countRow?.total ?? 0, varianceCount: varianceRow?.total ?? 0 };
+    return { data, total: countsRow?.total ?? 0, varianceCount: countsRow?.variance_total ?? 0 };
   }
 
   /**

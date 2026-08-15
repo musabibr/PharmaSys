@@ -393,6 +393,10 @@ export class MigrationRepository {
       'CREATE INDEX IF NOT EXISTS idx_purchases_status ON purchases(payment_status)',
       'CREATE INDEX IF NOT EXISTS idx_purchases_date ON purchases(purchase_date)',
       'CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase ON purchase_items(purchase_id)',
+      // Stock Ledger's per-product "purchased" subquery filters purchase_items
+      // by product_id with no other index to fall back on — without this it's
+      // a full table scan for every active product on every page load.
+      'CREATE INDEX IF NOT EXISTS idx_purchase_items_product ON purchase_items(product_id)',
       'CREATE INDEX IF NOT EXISTS idx_purchase_payments_purchase ON purchase_payments(purchase_id)',
       'CREATE INDEX IF NOT EXISTS idx_purchase_payments_due ON purchase_payments(due_date)',
       'CREATE INDEX IF NOT EXISTS idx_purchase_payments_paid_due ON purchase_payments(is_paid, due_date)',
