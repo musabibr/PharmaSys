@@ -21,15 +21,15 @@ const P2: LatestBatchPricing = {
 };
 
 const opts = (o: Partial<BulkPriceUpdateOptions>): BulkPriceUpdateOptions => ({
-  mode: 'margin_over_cost', percent: 20, rounding: 100, ...o,
+  mode: 'markup_over_cost', percent: 20, rounding: 100, ...o,
 });
 
 describe('BatchService — bulk margin price update', () => {
   describe('previewBulkPriceUpdate', () => {
-    it('margin mode: new parent = latest cost x (1 + percent), rounded', async () => {
+    it('markup mode (D3): new parent = latest cost x (1 + percent), rounded', async () => {
       const { svc, batchRepo } = createService();
       batchRepo.getLatestBatchPricingPerProduct.mockResolvedValue([P1]);
-      const [row] = await svc.previewBulkPriceUpdate(opts({ mode: 'margin_over_cost', percent: 20, rounding: 100 }));
+      const [row] = await svc.previewBulkPriceUpdate(opts({ mode: 'markup_over_cost', percent: 20, rounding: 100 }));
       expect(row.basis_cost).toBe(1000);
       expect(row.new_sell_parent).toBe(1200); // 1000 * 1.2 = 1200
       expect(row.new_sell_child).toBe(120);   // divideToChild(1200, 10)
@@ -129,6 +129,24 @@ describe('BatchService — bulk margin price update', () => {
       }));
     });
 
+    // ─── D4: bulk price updates must be reversible ──────────────────────
+    it('captures each product\'s prior price in oldValues (D4)', async () => {
+      const { svc, batchRepo, bus } = createService();
+      batchRepo.getLatestBatchPricingPerProduct.mockResolvedValue([P1, P2]);
+      batchRepo.bulkUpdateSellingPrices.mockResolvedValue(2);
+
+      await svc.applyBulkPriceUpdate(opts({}), 42);
+
+      expect(bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
+        oldValues: {
+          products: [
+            { product_id: 1, selling_price_parent: 1150 }, // P1.current_sell
+            { product_id: 2, selling_price_parent: 1000 }, // P2.current_sell
+          ],
+        },
+      }));
+    });
+
     it('passes the computed parent + child prices to the repo', async () => {
       const { svc, batchRepo } = createService();
       batchRepo.getLatestBatchPricingPerProduct.mockResolvedValue([P1]);
@@ -180,6 +198,41 @@ describe('BatchService — bulk margin price update', () => {
       expect(bus.emit).toHaveBeenCalledTimes(1);
       expect(bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
         action: 'BULK_MANUAL_PRICE_UPDATE',
+      }));
+    });
+
+    // ─── D4: manual price updates must be reversible too ───────────────
+    it('captures each product\'s prior price in oldValues (D4)', async () => {
+      const { svc, batchRepo, productRepo, bus } = createService();
+      productRepo.getById.mockResolvedValue({ id: 1, conversion_factor: 1 });
+      batchRepo.getLatestBatchPricingPerProduct.mockResolvedValue([P1, P2]);
+      batchRepo.bulkUpdateSellingPrices.mockResolvedValue(1);
+
+      await svc.applyManualPriceUpdate([
+        { product_id: 1, selling_price_parent: 500 },
+        { product_id: 2, selling_price_parent: 700 },
+      ], 7);
+
+      expect(bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
+        oldValues: {
+          products: [
+            { product_id: 1, selling_price_parent: 1150 },
+            { product_id: 2, selling_price_parent: 1000 },
+          ],
+        },
+      }));
+    });
+
+    it('records 0 as the prior price for a product with no pricing history yet', async () => {
+      const { svc, batchRepo, productRepo, bus } = createService();
+      productRepo.getById.mockResolvedValue({ id: 9, conversion_factor: 1 });
+      batchRepo.getLatestBatchPricingPerProduct.mockResolvedValue([]); // no history
+      batchRepo.bulkUpdateSellingPrices.mockResolvedValue(1);
+
+      await svc.applyManualPriceUpdate([{ product_id: 9, selling_price_parent: 500 }], 7);
+
+      expect(bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
+        oldValues: { products: [{ product_id: 9, selling_price_parent: 0 }] },
       }));
     });
 

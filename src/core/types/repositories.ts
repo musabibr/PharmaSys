@@ -167,6 +167,8 @@ export interface IBatchRepository {
   getAdjustmentById(id: number): Promise<InventoryAdjustment | undefined>;
   /** True when some other adjustment already reverses this one (B6). */
   getReversalOf(adjustmentId: number): Promise<InventoryAdjustment | undefined>;
+  /** Batches a price cascade would affect (before writing) — for oldValues capture (D2/D4). */
+  getBatchesForPriceCascade(productId: number, excludeBatchId: number): Promise<Array<{ id: number; selling_price_parent: number; selling_price_child: number | null }>>;
   restoreDeletedBatch(data: {
     product_id: number;
     batch_number: string;

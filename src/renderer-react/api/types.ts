@@ -8,9 +8,10 @@ export type PaymentMethod = 'cash' | 'bank_transfer' | 'mixed';
 export type ShiftStatus = 'open' | 'closed';
 export type AdjustmentType = 'damage' | 'expiry' | 'correction';
 
-// ─── Bulk margin price update ───
+// ─── Bulk price update ───
 export interface BulkPriceUpdateOptions {
-  mode: 'margin_over_cost' | 'increase_current';
+  /** D3: named 'markup_over_cost' — the formula is a markup on cost, not a margin. */
+  mode: 'markup_over_cost' | 'increase_current';
   percent: number;
   rounding: 1 | 50 | 100;
   exclude_product_ids?: number[];

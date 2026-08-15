@@ -170,6 +170,7 @@ export class BatchRepository implements IBatchRepository {
          cost_per_child_override = COALESCE(?, cost_per_child_override),
          selling_price_child_override = COALESCE(?, selling_price_child_override),
          status = COALESCE(?, status),
+         price_manually_set_at = COALESCE(?, price_manually_set_at),
          version = version + 1,
          updated_at = datetime('now', 'localtime')
        WHERE id = ? AND version = ?`,
@@ -185,6 +186,7 @@ export class BatchRepository implements IBatchRepository {
         data.cost_per_child_override ?? null,
         data.selling_price_child_override ?? null,
         data.status ?? null,
+        data.price_manually_set_at ?? null,
         id,
         expectedVersion,
       ]
@@ -383,6 +385,9 @@ export class BatchRepository implements IBatchRepository {
     sellingPriceParentOverride: number,
     sellingPriceChildOverride: number
   ): Promise<number> {
+    // D2: a batch with a manually-set price opts out of this cascade — see
+    // price_manually_set_at, set by BatchService.update on a genuine
+    // selling-price edit.
     return await this.base.runAndGetChanges(
       `UPDATE batches SET
          selling_price_parent = ?,
@@ -392,8 +397,19 @@ export class BatchRepository implements IBatchRepository {
          version = version + 1,
          updated_at = datetime('now', 'localtime')
        WHERE product_id = ? AND id != ?
-         AND status = 'active'`,
+         AND status = 'active'
+         AND price_manually_set_at IS NULL`,
       [sellingPriceParent, sellingPriceChild, sellingPriceParentOverride, sellingPriceChildOverride, productId, excludeBatchId]
+    );
+  }
+
+  /** Batches a price cascade WOULD affect (before writing) — lets the
+   *  caller capture oldValues for an auditable/reversible event (D2/D4). */
+  async getBatchesForPriceCascade(productId: number, excludeBatchId: number): Promise<Array<{ id: number; selling_price_parent: number; selling_price_child: number | null }>> {
+    return await this.base.getAll(
+      `SELECT id, selling_price_parent, selling_price_child FROM batches
+       WHERE product_id = ? AND id != ? AND status = 'active' AND price_manually_set_at IS NULL`,
+      [productId, excludeBatchId]
     );
   }
 

@@ -102,12 +102,29 @@ export class BatchService {
     // Auto-propagate: new batch's selling prices → all older batches of the same product
     if (sellParent > 0) {
       const sellChildBase = sellParent ? Money.divideToChild(sellParent, cf) : 0;
+      // D2/D4: capture what each affected batch's price WAS before this
+      // cascade overwrites it — this previously had no audit event at all
+      // (just a console.log), so a mistaken price cascade had nothing to
+      // roll back to and no trace in the audit log.
+      const affected = await this.repo.getBatchesForPriceCascade(data.product_id, newId);
       const propagated = await this.repo.propagateSellingPrices(
         data.product_id, newId,
         sellParent, sellChildBase, sellParent, sellChild
       );
       if (propagated > 0) {
-        console.log(`[BatchService] Propagated selling prices from new batch #${newId} to ${propagated} older batch(es)`);
+        this.bus.emit('entity:mutated', {
+          action: 'PROPAGATE_SELLING_PRICE', table: 'products',
+          recordId: data.product_id, userId,
+          oldValues: {
+            batches: affected.map(b => ({ batch_id: b.id, selling_price_parent: b.selling_price_parent, selling_price_child: b.selling_price_child })),
+          },
+          newValues: {
+            selling_price_parent: sellParent,
+            selling_price_child: sellChildBase,
+            source_batch_id: newId,
+            batches_updated: propagated,
+          },
+        });
       }
     }
 
@@ -214,6 +231,27 @@ export class BatchService {
       data.selling_price_child = Money.divideToChild(newSellParent, cf);
     }
 
+    // D2: a genuine selling-price edit through this form opts the batch out
+    // of future automatic price-cascade propagation (purchase receiving,
+    // new-batch creation) until the flag is cleared by a cascade-eligible
+    // write — otherwise a deliberate manual price is silently overwritten
+    // by whatever price the next invoice line happens to carry.
+    const priceChanged =
+      (data.selling_price_parent !== undefined && data.selling_price_parent !== existing.selling_price_parent) ||
+      (data.selling_price_parent_override !== undefined && data.selling_price_parent_override !== existing.selling_price_parent_override) ||
+      (data.selling_price_child !== undefined && data.selling_price_child !== existing.selling_price_child) ||
+      (data.selling_price_child_override !== undefined && data.selling_price_child_override !== existing.selling_price_child_override);
+    if (priceChanged) {
+      // Local-time string to match every other timestamp in the schema
+      // (datetime('now','localtime')) — this column is a NULL/NOT-NULL
+      // marker for the cascade check, not a value compared against SQL
+      // dates, but stays consistent for anyone reading the raw column.
+      const n = new Date();
+      const pad = (v: number) => String(v).padStart(2, '0');
+      data.price_manually_set_at =
+        `${n.getFullYear()}-${pad(n.getMonth() + 1)}-${pad(n.getDate())} ${pad(n.getHours())}:${pad(n.getMinutes())}:${pad(n.getSeconds())}`;
+    }
+
     let success = false;
     try {
       success = await this.repo.update(id, existing.version, data);
@@ -257,6 +295,7 @@ export class BatchService {
         // Re-read the updated batch to get the final prices
         const updated = await this.repo.getById(id);
         if (updated) {
+          const affected = await this.repo.getBatchesForPriceCascade(existing.product_id!, id);
           const propagated = await this.repo.propagateSellingPrices(
             existing.product_id!, id,
             updated.selling_price_parent ?? 0,
@@ -265,7 +304,19 @@ export class BatchService {
             updated.selling_price_child_override ?? updated.selling_price_child ?? 0
           );
           if (propagated > 0) {
-            console.log(`[BatchService] Propagated selling prices from batch #${id} to ${propagated} older batch(es)`);
+            this.bus.emit('entity:mutated', {
+              action: 'PROPAGATE_SELLING_PRICE', table: 'products',
+              recordId: existing.product_id!, userId,
+              oldValues: {
+                batches: affected.map(b => ({ batch_id: b.id, selling_price_parent: b.selling_price_parent, selling_price_child: b.selling_price_child })),
+              },
+              newValues: {
+                selling_price_parent: updated.selling_price_parent ?? 0,
+                selling_price_child: updated.selling_price_child ?? 0,
+                source_batch_id: id,
+                batches_updated: propagated,
+              },
+            });
           }
         }
       }
@@ -457,7 +508,7 @@ export class BatchService {
   // ─── Bulk margin price update ───────────────────────────────────────────────
 
   private _validateBulkPriceOpts(opts: BulkPriceUpdateOptions): void {
-    if (opts.mode !== 'margin_over_cost' && opts.mode !== 'increase_current') {
+    if (opts.mode !== 'markup_over_cost' && opts.mode !== 'increase_current') {
       throw new ValidationError('Invalid price update mode', 'mode');
     }
     const pct = Number(opts.percent);
@@ -472,7 +523,7 @@ export class BatchService {
   /** Turn a latest-pricing row into a preview row using the chosen mode/percent/rounding. */
   private _computeBulkPriceRow(p: LatestBatchPricing, opts: BulkPriceUpdateOptions): BulkPriceUpdatePreviewRow {
     const cf = p.conversion_factor > 0 ? p.conversion_factor : 1;
-    const basis = opts.mode === 'margin_over_cost' ? p.latest_cost : p.current_sell;
+    const basis = opts.mode === 'markup_over_cost' ? p.latest_cost : p.current_sell;
     const raw = (basis * (100 + opts.percent)) / 100;
     // Round to the nearest step, but never below one rounding step.
     const newParent = Math.max(opts.rounding, Math.round(raw / opts.rounding) * opts.rounding);
@@ -522,12 +573,22 @@ export class BatchService {
       // No single record_id applies to a catalogue-wide re-price — mark it
       // explicitly as a bulk event and list the affected products, so a
       // record_id-filtered history (I1) doesn't silently miss it.
+      // D4: rows already carries each product's price BEFORE this update
+      // (current_sell, computed by the same preview path previewBulkPriceUpdate
+      // uses) — capturing it here is what makes "undo last price update"
+      // possible from the audit log; previously only the new prices and the
+      // options were recorded, so a mistaken catalogue-wide run had nothing
+      // to roll back to but a database backup.
       this.bus.emit('entity:mutated', {
         action: 'BULK_MARGIN_PRICE_UPDATE', table: 'batches',
         recordId: null, userId,
+        oldValues: {
+          products: rows.map((r) => ({ product_id: r.product_id, selling_price_parent: r.current_sell })),
+        },
         newValues: {
           scope: 'bulk', updatedProducts: rows.length, updatedBatches, options: opts,
           product_ids: rows.map((r) => r.product_id),
+          products: rows.map((r) => ({ product_id: r.product_id, selling_price_parent: r.new_sell_parent, selling_price_child: r.new_sell_child })),
         },
       });
       return { updatedProducts: rows.length, updatedBatches };
@@ -552,7 +613,13 @@ export class BatchService {
     }
 
     return await this.repo.inTransaction(async () => {
+      // D4: capture each product's price BEFORE this update so the event is
+      // reversible — previously only the new prices were recorded.
+      const currentPricing = await this.repo.getLatestBatchPricingPerProduct();
+      const priceById = new Map(currentPricing.map((p) => [p.product_id, p]));
+
       let updatedBatches = 0;
+      const oldPrices: Array<{ product_id: number; selling_price_parent: number }> = [];
       for (const item of items) {
         const product = await this.productRepo.getById(item.product_id);
         if (!product) throw new NotFoundError('Product', item.product_id);
@@ -564,6 +631,12 @@ export class BatchService {
           ? Money.round(item.selling_price_child)
           : derivedChild;
 
+        const before = priceById.get(item.product_id);
+        oldPrices.push({
+          product_id: item.product_id,
+          selling_price_parent: before?.current_sell ?? 0,
+        });
+
         updatedBatches += await this.repo.bulkUpdateSellingPrices(
           item.product_id, sellParent, derivedChild, sellChild, false
         );
@@ -571,6 +644,7 @@ export class BatchService {
       this.bus.emit('entity:mutated', {
         action: 'BULK_MANUAL_PRICE_UPDATE', table: 'batches',
         recordId: null, userId,
+        oldValues: { products: oldPrices },
         newValues: {
           scope: 'bulk', updatedProducts: items.length, updatedBatches,
           product_ids: items.map((i) => i.product_id),

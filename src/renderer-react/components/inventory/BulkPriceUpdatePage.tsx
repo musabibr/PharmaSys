@@ -66,7 +66,7 @@ export function BulkPriceUpdatePage() {
   const defaultMarkup = Number(getSetting('default_markup_percent', '20')) || 20;
 
   // Formula controls
-  const [mode, setMode] = useState<'margin_over_cost' | 'increase_current'>('margin_over_cost');
+  const [mode, setMode] = useState<'markup_over_cost' | 'increase_current'>('markup_over_cost');
   const [percent, setPercent] = useState<number>(defaultMarkup);
   const [rounding, setRounding] = useState<1 | 50 | 100>(100);
 
@@ -87,7 +87,7 @@ export function BulkPriceUpdatePage() {
       // Server preview gives one row per in-stock product: latest batch cost,
       // current effective sell, and formula-filled starting prices.
       const [preview, products] = await Promise.all([
-        api.batches.previewBulkPriceUpdate({ mode: 'margin_over_cost', percent: defaultMarkup, rounding: 100 }),
+        api.batches.previewBulkPriceUpdate({ mode: 'markup_over_cost', percent: defaultMarkup, rounding: 100 }),
         api.products.getAll(),
       ]);
       const byId = new Map<number, Product>(products.map((p) => [p.id, p]));
@@ -104,7 +104,7 @@ export function BulkPriceUpdatePage() {
           cf,
           parentUnit: p?.parent_unit ?? 'Box',
           childUnit: p?.child_unit ?? '',
-          cost: r.basis_cost,           // fetched with margin_over_cost → latest batch cost
+          cost: r.basis_cost,           // fetched with markup_over_cost → latest batch cost
           currentSell: r.current_sell,
           currentSellChild,
           included: true,
@@ -135,7 +135,7 @@ export function BulkPriceUpdatePage() {
       return;
     }
     setRows((prev) => prev.map((r) => {
-      const basis = mode === 'margin_over_cost' ? r.cost : r.currentSell;
+      const basis = mode === 'markup_over_cost' ? r.cost : r.currentSell;
       const raw = (basis * (100 + pct)) / 100;
       const newSell = Math.max(rounding, Math.round(raw / rounding) * rounding);
       return {
@@ -256,9 +256,9 @@ export function BulkPriceUpdatePage() {
             <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground">{t('Basis')}</Label>
               <div className="flex gap-1.5">
-                <Button size="sm" variant={mode === 'margin_over_cost' ? 'default' : 'outline'}
-                  onClick={() => setMode('margin_over_cost')}>
-                  {t('Margin over cost')}
+                <Button size="sm" variant={mode === 'markup_over_cost' ? 'default' : 'outline'}
+                  onClick={() => setMode('markup_over_cost')}>
+                  {t('Markup on cost')}
                 </Button>
                 <Button size="sm" variant={mode === 'increase_current' ? 'default' : 'outline'}
                   onClick={() => setMode('increase_current')}>

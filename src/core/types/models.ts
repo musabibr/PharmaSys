@@ -527,6 +527,9 @@ export interface UpdateBatchInput {
   version: number; // Required for optimistic locking
   /** Required whenever quantity_base is being changed (B5) — captured on the correction adjustment. */
   reason?: string;
+  /** Set by BatchService.update when a caller manually edits a selling
+   *  price — opts the batch out of future automatic price cascades (D2). */
+  price_manually_set_at?: string | null;
 }
 
 export interface CreateTransactionInput {
@@ -607,13 +610,20 @@ export interface BulkCreateProductInput {
   selling_price_child?: number;
 }
 
-// ─── Bulk Margin Price Update ───
+// ─── Bulk Price Update ───
 
-export type BulkPriceUpdateMode = 'margin_over_cost' | 'increase_current';
+// D3: this was named 'margin_over_cost' but the formula below (basis * (1 +
+// pct/100)) is a MARKUP, not a margin — at cost 1000 and "25%" it produces
+// 1250, a 25% markup that is only a 20% margin. Renamed to match what it
+// actually computes rather than changing the arithmetic (markup-on-cost is
+// the more common retail pricing intent); true margin % is still shown
+// correctly elsewhere (BulkPriceUpdatePage's marginPct()) — only this mode's
+// name was wrong.
+export type BulkPriceUpdateMode = 'markup_over_cost' | 'increase_current';
 export type BulkPriceUpdateRounding = 1 | 50 | 100;
 
 export interface BulkPriceUpdateOptions {
-  /** 'margin_over_cost' = latest batch cost x (1+percent); 'increase_current' = current sell x (1+percent). */
+  /** 'markup_over_cost' = latest batch cost x (1+percent); 'increase_current' = current sell x (1+percent). */
   mode: BulkPriceUpdateMode;
   percent: number;
   rounding: BulkPriceUpdateRounding;

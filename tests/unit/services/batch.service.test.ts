@@ -164,6 +164,43 @@ describe('BatchService', () => {
       await svc.create({ ...createInput, expiry_date: '2099-06-30' }, 1);
       expect(batchRepo.create).toHaveBeenCalledWith(expect.objectContaining({ status: 'active' }));
     });
+
+    // ─── D2: price cascade must not clobber manually-priced batches ────
+    it('emits PROPAGATE_SELLING_PRICE with oldValues when the new batch cascades its price', async () => {
+      const { svc, batchRepo, productRepo, bus } = createService();
+      productRepo.getById.mockResolvedValue(sampleProduct);
+      batchRepo.create.mockResolvedValue(runResult(9));
+      batchRepo.getById.mockResolvedValue(sampleBatch);
+      batchRepo.getBatchesForPriceCascade.mockResolvedValue([
+        { id: 2, selling_price_parent: 7000, selling_price_child: 350 },
+      ]);
+      batchRepo.propagateSellingPrices.mockResolvedValue(1);
+
+      await svc.create(createInput, 1);
+
+      expect(bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
+        action: 'PROPAGATE_SELLING_PRICE',
+        oldValues: { batches: [{ batch_id: 2, selling_price_parent: 7000, selling_price_child: 350 }] },
+        newValues: expect.objectContaining({ batches_updated: 1 }),
+      }));
+    });
+
+    it('does not emit PROPAGATE_SELLING_PRICE when every other batch has a manually-set price', async () => {
+      const { svc, batchRepo, productRepo, bus } = createService();
+      productRepo.getById.mockResolvedValue(sampleProduct);
+      batchRepo.create.mockResolvedValue(runResult(9));
+      batchRepo.getById.mockResolvedValue(sampleBatch);
+      // Repo already excludes manually-priced batches from both queries —
+      // simulate "nothing left to cascade to".
+      batchRepo.getBatchesForPriceCascade.mockResolvedValue([]);
+      batchRepo.propagateSellingPrices.mockResolvedValue(0);
+
+      await svc.create(createInput, 1);
+
+      expect(bus.emit).not.toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
+        action: 'PROPAGATE_SELLING_PRICE',
+      }));
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -290,6 +327,43 @@ describe('BatchService', () => {
       // 1000 / 20 = 50
       expect(batchRepo.update).toHaveBeenCalledWith(1, sampleBatch.version, expect.objectContaining({
         selling_price_child: 50,
+      }));
+    });
+
+    // ─── D2: manual price edits opt a batch out of future auto-cascades ───
+    it('sets price_manually_set_at when the selling price actually changes', async () => {
+      const { svc, batchRepo } = createService();
+      batchRepo.getById.mockResolvedValue(sampleBatch); // selling_price_parent: 800
+      await svc.update(1, { selling_price_parent: 900 } as any, 1);
+      expect(batchRepo.update).toHaveBeenCalledWith(1, sampleBatch.version, expect.objectContaining({
+        price_manually_set_at: expect.any(String),
+      }));
+    });
+
+    it('does not set price_manually_set_at when resubmitting the same price', async () => {
+      const { svc, batchRepo } = createService();
+      batchRepo.getById.mockResolvedValue(sampleBatch); // selling_price_parent: 800
+      await svc.update(1, { selling_price_parent: 800 } as any, 1);
+      const call = batchRepo.update.mock.calls[0][2];
+      expect(call.price_manually_set_at).toBeUndefined();
+    });
+
+    it('cascades the edited price to older batches and emits oldValues when this is the latest batch', async () => {
+      const { svc, batchRepo, bus } = createService();
+      batchRepo.getById
+        .mockResolvedValueOnce(sampleBatch) // existing
+        .mockResolvedValue({ ...sampleBatch, selling_price_parent: 900, selling_price_child: 45 }); // re-read after write
+      batchRepo.getLatestBatchId.mockResolvedValue(1);
+      batchRepo.getBatchesForPriceCascade.mockResolvedValue([
+        { id: 2, selling_price_parent: 800, selling_price_child: 40 },
+      ]);
+      batchRepo.propagateSellingPrices.mockResolvedValue(1);
+
+      await svc.update(1, { selling_price_parent: 900 } as any, 1);
+
+      expect(bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
+        action: 'PROPAGATE_SELLING_PRICE',
+        oldValues: { batches: [{ batch_id: 2, selling_price_parent: 800, selling_price_child: 40 }] },
       }));
     });
   });

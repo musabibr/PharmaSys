@@ -1114,6 +1114,17 @@ export class PurchaseService {
       ? Money.round(item.selling_price_child)
       : Money.divideToChild(sellParent, conversionFactor);
 
+    // D2: capture what every affected batch's price WAS before overwriting
+    // it — without this the audit event carried only the new price, giving
+    // nothing to roll back to.
+    const affected = await this.base.getAll<{ id: number; selling_price_parent: number; selling_price_child: number | null }>(
+      `SELECT id, selling_price_parent, selling_price_child FROM batches
+       WHERE product_id = ? AND status = 'active' AND id != ?
+         AND price_manually_set_at IS NULL`,
+      [productId, excludeBatchId]
+    );
+    if (affected.length === 0) return;
+
     const changes = await this.base.runAndGetChanges(
       `UPDATE batches
        SET selling_price_parent = ?,
@@ -1124,7 +1135,8 @@ export class PurchaseService {
            updated_at = datetime('now', 'localtime')
        WHERE product_id = ?
          AND status = 'active'
-         AND id != ?`,
+         AND id != ?
+         AND price_manually_set_at IS NULL`,
       [sellParent, sellParent, sellChild, sellChild, productId, excludeBatchId]
     );
 
@@ -1137,6 +1149,9 @@ export class PurchaseService {
       this.bus.emit('entity:mutated', {
         action: 'PROPAGATE_SELLING_PRICE', table: 'products',
         recordId: productId, userId,
+        oldValues: {
+          batches: affected.map(b => ({ batch_id: b.id, selling_price_parent: b.selling_price_parent, selling_price_child: b.selling_price_child })),
+        },
         newValues: {
           selling_price_parent: sellParent,
           selling_price_child: sellChild,

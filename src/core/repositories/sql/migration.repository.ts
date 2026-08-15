@@ -109,6 +109,7 @@ export class MigrationRepository {
         version INTEGER NOT NULL DEFAULT 1,
         created_at TEXT DEFAULT (datetime('now', 'localtime')),
         updated_at TEXT DEFAULT (datetime('now', 'localtime')),
+        price_manually_set_at TEXT,
         FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT
       )`,
       `CREATE TABLE IF NOT EXISTS transactions (
@@ -580,6 +581,19 @@ export class MigrationRepository {
     // explicit FK replaces both the sign heuristic and the string match.
     await this._migrateColumn('inventory_adjustments', 'reverses_adjustment_id',
       'ALTER TABLE inventory_adjustments ADD COLUMN reverses_adjustment_id INTEGER REFERENCES inventory_adjustments(id)');
+
+    // D2: receiving a purchase (or creating a new batch) cascades its
+    // selling price to every other active batch of the same product, so
+    // FIFO doesn't delay a price change until old stock clears. That cascade
+    // was unconditional — a manually discounted near-expiry batch, or a
+    // price a pharmacist set deliberately last week, got silently
+    // overwritten by whatever price was typed on the next invoice line
+    // (including a typo), with no record of what it was before. Batches
+    // with a manual price edit now opt out of future automatic cascades
+    // until someone clears the flag by re-pricing them again through a
+    // cascade-eligible path.
+    await this._migrateColumn('batches', 'price_manually_set_at',
+      'ALTER TABLE batches ADD COLUMN price_manually_set_at TEXT');
 
     // Cycle counts
     await this.base.rawRun(`CREATE TABLE IF NOT EXISTS cycle_counts (

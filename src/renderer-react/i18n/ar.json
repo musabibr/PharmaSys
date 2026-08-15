@@ -1679,7 +1679,7 @@
   "Bulk Price Update": "تحديث الأسعار بالجملة",
   "Set selling prices from each product’s latest batch by margin, with optional exclusions.": "حدّد أسعار البيع من أحدث دفعة لكل منتج حسب الهامش، مع استثناءات اختيارية.",
   "Basis": "الأساس",
-  "Margin over cost": "هامش على التكلفة",
+  "Markup on cost": "زيادة على التكلفة",
   "Increase current price": "زيادة السعر الحالي",
   "Percent": "النسبة",
   "Round to nearest": "التقريب لأقرب",
