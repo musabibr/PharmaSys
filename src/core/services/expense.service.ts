@@ -6,6 +6,7 @@ import type { Expense, ExpenseCategory, CashDrop, ExpenseFilters, CreateExpenseI
 import { Validate }               from '../common/validation';
 import { NotFoundError, BusinessRuleError, ValidationError, InternalError } from '../types/errors';
 import { Money }                  from '../common/money';
+import { diffValues }             from '../common/audit-diff';
 
 export class ExpenseService {
   constructor(
@@ -77,10 +78,19 @@ export class ExpenseService {
     }
 
     await this.repo.update(id, data);
+
+    // Diff against the full before-state — oldValues used to be hardcoded to
+    // just {amount}, so a category/date/description edit showed a "new"
+    // value with no "old" to compare it to.
+    const { oldValues, newValues } = diffValues(
+      existing as unknown as Record<string, unknown>,
+      data as Record<string, unknown>,
+    );
+
     this.bus.emit('entity:mutated', {
       action: 'UPDATE_EXPENSE', table: 'expenses',
       recordId: id, userId,
-      oldValues: { amount: existing.amount }, newValues: data as Record<string, unknown>,
+      oldValues, newValues,
     });
 
     const updated = await this.repo.getById(id);

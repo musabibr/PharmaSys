@@ -7,6 +7,7 @@ import type {
 } from '../types/models';
 import { Validate }               from '../common/validation';
 import { NotFoundError, BusinessRuleError, ValidationError } from '../types/errors';
+import { diffValues }             from '../common/audit-diff';
 
 // Average days per month (365.25 / 12 ≈ 30.44) gives a more accurate monthly projection
 // for daily items than a flat ×30, which under-counts the yearly cost by ~1.5%.
@@ -117,11 +118,18 @@ export class RecurringExpenseService {
 
     await this.repo.update(id, { ...data, name });
 
+    // Diff the full before-state — oldValues used to be hardcoded to just
+    // {name, amount}, so an amount_type/payment_method/day_of_month/
+    // category_id edit showed a "new" value with no "old" to compare it to.
+    const { oldValues, newValues } = diffValues(
+      existing as unknown as Record<string, unknown>,
+      { ...data, name, payment_method: data.payment_method ?? 'cash' } as Record<string, unknown>,
+    );
+
     this.bus.emit('entity:mutated', {
       action: 'UPDATE_RECURRING_EXPENSE', table: 'recurring_expenses',
       recordId: id, userId,
-      oldValues: { name: existing.name, amount: existing.amount },
-      newValues: { name, amount: data.amount, amount_type: data.amount_type, payment_method: data.payment_method ?? 'cash' },
+      oldValues, newValues,
     });
 
     return await this.getById(id);

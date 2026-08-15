@@ -18,6 +18,7 @@ import { Validate } from '../common/validation';
 import { Money } from '../common/money';
 import { normalizeExpiry, NO_EXPIRY_SENTINEL } from '../common/expiry';
 import { NotFoundError, ValidationError, BusinessRuleError, InternalError } from '../types/errors';
+import { diffValues } from '../common/audit-diff';
 
 export class PurchaseService {
   constructor(
@@ -66,11 +67,21 @@ export class PurchaseService {
 
     await this.supplierRepo.update(id, data);
 
+    // Diff against the full before-state — oldValues used to be hardcoded to
+    // just {name} while newValues carried the whole patch, so a phone/address/
+    // notes/is_active edit showed a "new" value with no "old" to compare it to.
+    // is_active is boolean on the patch but stored as 0/1 — normalize so an
+    // unrelated field edit doesn't fabricate a spurious is_active diff.
+    const { oldValues, newValues } = diffValues(
+      { ...existing, is_active: !!existing.is_active } as unknown as Record<string, unknown>,
+      data as Record<string, unknown>,
+    );
+
     this.bus.emit('entity:mutated', {
       action: 'UPDATE_SUPPLIER', table: 'suppliers',
       recordId: id, userId,
-      oldValues: { name: existing.name },
-      newValues: data as Record<string, unknown>,
+      oldValues: { name: existing.name, ...oldValues },
+      newValues: { name: existing.name, ...newValues },
     });
 
     return await this.getSupplierById(id);
@@ -202,16 +213,18 @@ export class PurchaseService {
       await this.purchaseRepo.updateTotals(id, paidTotal, newStatus);
     }
 
+    // Diff against the full before-state — the hardcoded 4-field oldValues
+    // above missed total_amount/alert_days_before edits entirely (newValues
+    // would show the new total with no old value to compare it to).
+    const { oldValues, newValues } = diffValues(
+      existing as unknown as Record<string, unknown>,
+      data as Record<string, unknown>,
+    );
+
     this.bus.emit('entity:mutated', {
       action: 'UPDATE_PURCHASE', table: 'purchases',
       recordId: id, userId,
-      oldValues: {
-        supplier_id: existing.supplier_id,
-        invoice_reference: existing.invoice_reference,
-        purchase_date: existing.purchase_date,
-        notes: existing.notes,
-      },
-      newValues: data as Record<string, unknown>,
+      oldValues, newValues,
     });
 
     return await this.getById(id);
@@ -1263,10 +1276,17 @@ export class PurchaseService {
       await this.purchaseRepo.updateTotals(purchase.id, newPaidTotal, newStatus);
     }
 
+    // This emit previously had no oldValues at all — a payment amount/due-date
+    // edit was unrecoverable in the audit log.
+    const { oldValues, newValues } = diffValues(
+      payment as unknown as Record<string, unknown>,
+      data as Record<string, unknown>,
+    );
+
     this.bus.emit('entity:mutated', {
       action: 'UPDATE_PURCHASE', table: 'purchase_payments',
       recordId: paymentId, userId,
-      newValues: data as Record<string, unknown>,
+      oldValues, newValues,
     });
 
     const updated = await this.purchaseRepo.getPaymentById(paymentId);
@@ -1444,10 +1464,17 @@ export class PurchaseService {
       }
     });
 
+    // This emit previously had no oldValues at all — a quantity/cost/price
+    // edit on a purchase item was unrecoverable in the audit log.
+    const { oldValues, newValues } = diffValues(
+      item as unknown as Record<string, unknown>,
+      data as Record<string, unknown>,
+    );
+
     this.bus.emit('entity:mutated', {
       action: 'UPDATE_PURCHASE', table: 'purchase_items',
       recordId: itemId, userId,
-      newValues: data as Record<string, unknown>,
+      oldValues, newValues,
     });
 
     const updated = await this.purchaseRepo.getItemById(itemId);
@@ -1570,10 +1597,15 @@ export class PurchaseService {
     if (!rawData || !rawData.trim()) throw new ValidationError('raw_data is required', 'raw_data');
 
     await this.purchaseRepo.updatePendingItem(pendingItemId, rawData, notes);
+    // This emit previously recorded neither the old nor new content — just
+    // the unrelated purchase_id FK, useless for reconstructing what changed.
+    // raw_data is a JSON blob of line items; diff it as a changed-flag rather
+    // than storing the full before/after blob twice in every audit row.
     this.bus.emit('entity:mutated', {
       action: 'UPDATE_PENDING_ITEM', table: 'purchase_pending_items',
       recordId: pendingItemId, userId,
-      newValues: { purchase_id: pendingItem.purchase_id },
+      oldValues: { notes: pendingItem.notes, raw_data_changed: rawData !== pendingItem.raw_data },
+      newValues: { notes: notes ?? null, raw_data_changed: rawData !== pendingItem.raw_data },
     });
 
     const updated = await this.purchaseRepo.getPendingItemById(pendingItemId);

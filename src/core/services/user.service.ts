@@ -6,6 +6,7 @@ import { Validate }            from '../common/validation';
 import { NotFoundError, ValidationError } from '../types/errors';
 import { ALL_PERMISSION_KEYS, deriveLegacyPermissions } from '../common/permissions';
 import type { PermissionKey } from '../common/permissions';
+import { diffValues } from '../common/audit-diff';
 
 function hashPassword(password: string): string {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -89,10 +90,27 @@ export class UserService {
       is_active:      data.is_active,
     });
 
+    // Diff every field that actually changed — full_name/is_active/permissions
+    // edits used to vanish from the audit log entirely (only `role` was ever
+    // recorded). password_hash is never diffed directly (would leak the
+    // hash); a password change is flagged as a boolean instead.
+    const { oldValues, newValues } = diffValues(
+      {
+        full_name: existing.full_name, role: existing.role,
+        is_active: existing.is_active, permissions_json: existing.permissions_json,
+      },
+      {
+        full_name: fullName, role,
+        is_active: data.is_active, permissions_json: permissionsJson,
+      },
+    );
+    if (passwordHash) newValues.password_changed = true;
+
     this.bus.emit('entity:mutated', {
       action: 'UPDATE_USER', table: 'users',
       recordId: id, userId: updatedBy,
-      oldValues: { role: existing.role }, newValues: { role },
+      oldValues: { username: existing.username, ...oldValues },
+      newValues: { username: existing.username, ...newValues },
     });
 
     return await this.getById(id);
