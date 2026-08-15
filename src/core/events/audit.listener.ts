@@ -5,33 +5,52 @@
  *
  * Since auditRepo.log() is async, we fire-and-forget with .catch()
  * to avoid blocking the service layer.
+ *
+ * Mutating events are frequently emitted from inside a service's
+ * inTransaction() callback — synchronously firing the audit write right
+ * there would race the transaction's own remaining writes for COMMIT
+ * (whether the audit row lands inside or outside the BEGIN is
+ * non-deterministic), and if the transaction later rolls back, an audit row
+ * describing it can still have already been written (audit finding F3).
+ * When `base` is supplied, the write is deferred via runAfterCommit() —
+ * queued while a transaction is open, flushed once it commits, discarded if
+ * it rolls back — instead of racing it.
  */
 
 import type { EventBus } from './event-bus';
-import type { IAuditRepository } from '../types/repositories';
+import type { IAuditRepository, IBaseRepository } from '../types/repositories';
 
 export class AuditListener {
   private _failureCount = 0;
 
   constructor(
     private readonly eventBus: EventBus,
-    private readonly auditRepo: IAuditRepository
+    private readonly auditRepo: IAuditRepository,
+    private readonly base?: IBaseRepository
   ) {
     this._subscribe();
   }
 
   private _logSafe(fn: () => Promise<void>, eventType: string): void {
-    fn().then(() => {
-      this._failureCount = 0;
-    }).catch((error) => {
-      this._failureCount++;
-      const err = error instanceof Error ? error : new Error(String(error));
-      console.error('[AuditListener] Failed to log event', {
-        type: eventType,
-        failure: this._failureCount,
-        reason: err.message,
+    const write = () => {
+      fn().then(() => {
+        this._failureCount = 0;
+      }).catch((error) => {
+        this._failureCount++;
+        const err = error instanceof Error ? error : new Error(String(error));
+        console.error('[AuditListener] Failed to log event', {
+          type: eventType,
+          failure: this._failureCount,
+          reason: err.message,
+        });
       });
-    });
+    };
+
+    if (this.base) {
+      this.base.runAfterCommit(write);
+    } else {
+      write();
+    }
   }
 
   private _subscribe(): void {

@@ -51,6 +51,8 @@ export interface IBaseRepository {
   runReturningId(sql: string, params?: unknown[]): Promise<number>;
   /** Run an UPDATE/DELETE and return the number of affected rows. Abstracts changes(). */
   runAndGetChanges(sql: string, params?: unknown[]): Promise<number>;
+  /** Defer `cb` until the current transaction (if any) commits; runs immediately otherwise. */
+  runAfterCommit(cb: () => void | Promise<void>): void;
 }
 
 // ─── Auth ───

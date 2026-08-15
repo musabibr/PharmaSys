@@ -295,6 +295,7 @@ export function createMockBaseRepo() {
     save: jest.fn(),
     db: { run: jest.fn(), exec: jest.fn().mockReturnValue([]) },
     inTransaction: jest.fn().mockImplementation(async (fn: () => Promise<any>) => fn()),
+    runAfterCommit: jest.fn().mockImplementation((cb: () => void | Promise<void>) => cb()),
   };
 }
 

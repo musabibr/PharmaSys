@@ -49,8 +49,11 @@ export class ServiceContainer {
     private readonly bus:   EventBus,
     private readonly dataPath?: string
   ) {
-    // Wire the audit listener — it subscribes to EventBus and writes audit logs
-    new AuditListener(bus, repos.audit);
+    // Wire the audit listener — it subscribes to EventBus and writes audit logs.
+    // repos.base is passed so audit writes emitted mid-transaction are
+    // deferred until COMMIT instead of racing the transaction's own
+    // remaining writes for it (audit finding F3).
+    new AuditListener(bus, repos.audit, repos.base);
   }
 
   get auth(): AuthService {

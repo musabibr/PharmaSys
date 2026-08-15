@@ -130,3 +130,51 @@ describe('BaseRepository transaction concurrency', () => {
     expect(order).toEqual(['tx-start', 'tx-end', 'foreign-write']);
   });
 });
+
+describe('BaseRepository.runAfterCommit (F3)', () => {
+  it('runs immediately when no transaction is open', () => {
+    const repo = createRepo();
+    const calls: string[] = [];
+    repo.runAfterCommit(() => { calls.push('ran'); });
+    expect(calls).toEqual(['ran']);
+  });
+
+  it('defers the callback until the transaction commits, after the transaction\'s own writes', async () => {
+    const repo = createRepo();
+    const order: string[] = [];
+
+    await repo.inTransaction(async () => {
+      order.push('tx-write-1');
+      repo.runAfterCommit(() => { order.push('deferred'); });
+      order.push('tx-write-2');
+    });
+
+    // The deferred callback must run after both of the transaction's own
+    // writes, i.e. after COMMIT — never spliced in between them.
+    expect(order).toEqual(['tx-write-1', 'tx-write-2', 'deferred']);
+  });
+
+  it('discards the callback if the transaction rolls back — it never runs', async () => {
+    const repo = createRepo();
+    const calls: string[] = [];
+
+    await expect(repo.inTransaction(async () => {
+      repo.runAfterCommit(() => { calls.push('should not run'); });
+      throw new Error('boom');
+    })).rejects.toThrow('boom');
+
+    expect(calls).toEqual([]);
+  });
+
+  it('flushes all queued callbacks in order, even when several are queued', async () => {
+    const repo = createRepo();
+    const order: string[] = [];
+
+    await repo.inTransaction(async () => {
+      repo.runAfterCommit(() => { order.push('first'); });
+      repo.runAfterCommit(() => { order.push('second'); });
+    });
+
+    expect(order).toEqual(['first', 'second']);
+  });
+});

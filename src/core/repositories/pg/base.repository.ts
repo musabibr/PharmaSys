@@ -33,6 +33,9 @@ export class PgBaseRepository implements IBaseRepository {
    */
   private _txClient: PoolClient | null = null;
 
+  /** Callbacks queued via runAfterCommit() while a transaction is open. */
+  private _postCommitQueue: Array<() => void | Promise<void>> = [];
+
   constructor(private readonly pool: Pool) {}
 
   // ─── SQL Translation ─────────────────────────────────────────────
@@ -257,6 +260,7 @@ export class PgBaseRepository implements IBaseRepository {
       await client.query('BEGIN');
       const result = await fn();
       await client.query('COMMIT');
+      this._flushPostCommitQueue();
       return result;
     } catch (error) {
       try {
@@ -270,10 +274,41 @@ export class PgBaseRepository implements IBaseRepository {
           `Rollback: ${(rollbackError as Error).message}.`
         );
       }
+      this._postCommitQueue = []; // discard — the transaction never happened
       throw error;
     } finally {
       this._txClient = null;
       client.release();
+    }
+  }
+
+  /**
+   * Run `cb` once the current transaction (if any) commits, instead of
+   * racing its remaining writes for COMMIT. Runs immediately if no
+   * transaction is open.
+   */
+  runAfterCommit(cb: () => void | Promise<void>): void {
+    if (!this._txClient) {
+      cb();
+      return;
+    }
+    this._postCommitQueue.push(cb);
+  }
+
+  private _flushPostCommitQueue(): void {
+    const queue = this._postCommitQueue;
+    this._postCommitQueue = [];
+    for (const cb of queue) {
+      try {
+        const result = cb();
+        if (result && typeof (result as Promise<void>).catch === 'function') {
+          (result as Promise<void>).catch((err) => {
+            console.error('[PgBaseRepository] Post-commit callback failed:', err instanceof Error ? err.message : String(err));
+          });
+        }
+      } catch (err) {
+        console.error('[PgBaseRepository] Post-commit callback failed:', err instanceof Error ? err.message : String(err));
+      }
     }
   }
 

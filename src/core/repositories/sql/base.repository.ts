@@ -53,6 +53,18 @@ export class BaseRepository implements IBaseRepository {
    */
   private readonly _txContext = new AsyncLocalStorage<true>();
 
+  /**
+   * Callbacks queued via runAfterCommit() while a transaction is open.
+   * Flushed once, after COMMIT succeeds; discarded (never run) on ROLLBACK.
+   * This is the "outbox" side of F3: a service emitting an audit event mid-
+   * transaction no longer races the transaction's own remaining writes for
+   * COMMIT — the write is deferred until the transaction it describes is
+   * actually durable, and silently dropped if that transaction never
+   * happened (rolled back), instead of describing a mutation that didn't
+   * actually stick.
+   */
+  private _postCommitQueue: Array<() => void | Promise<void>> = [];
+
   constructor(dbPath: string) {
     this.dbPath = dbPath;
     this.db = new Database(dbPath);
@@ -118,6 +130,7 @@ export class BaseRepository implements IBaseRepository {
     try {
       const result = await this._txContext.run(true, () => fn());
       this.db.exec('COMMIT');
+      this._flushPostCommitQueue();
       return result;
     } catch (error) {
       try {
@@ -131,10 +144,45 @@ export class BaseRepository implements IBaseRepository {
           `Rollback: ${(rollbackError as Error).message}.`
         );
       }
+      // Discard — these callbacks describe effects of a transaction that
+      // never actually happened.
+      this._postCommitQueue = [];
       throw error;
     } finally {
       this._txActive = false;
       releaseQueue();
+    }
+  }
+
+  /**
+   * Run `cb` once the *current* transaction (if any) has committed, instead
+   * of racing its remaining writes for COMMIT (F3). Runs immediately if no
+   * transaction is open. `cb` is invoked best-effort — a failure is not
+   * allowed to affect the already-committed transaction; callers that care
+   * about failures must handle them inside `cb` itself.
+   */
+  runAfterCommit(cb: () => void | Promise<void>): void {
+    if (!this._txContext.getStore()) {
+      cb();
+      return;
+    }
+    this._postCommitQueue.push(cb);
+  }
+
+  private _flushPostCommitQueue(): void {
+    const queue = this._postCommitQueue;
+    this._postCommitQueue = [];
+    for (const cb of queue) {
+      try {
+        const result = cb();
+        if (result && typeof (result as Promise<void>).catch === 'function') {
+          (result as Promise<void>).catch((err) => {
+            console.error('[BaseRepository] Post-commit callback failed:', err instanceof Error ? err.message : String(err));
+          });
+        }
+      } catch (err) {
+        console.error('[BaseRepository] Post-commit callback failed:', err instanceof Error ? err.message : String(err));
+      }
     }
   }
 
