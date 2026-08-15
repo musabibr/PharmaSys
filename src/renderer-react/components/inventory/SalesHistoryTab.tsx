@@ -350,7 +350,7 @@ export function SalesHistoryTab() {
       )}
 
       {/* ---- Table ---- */}
-      <ScrollArea className="flex-1 rounded-md border">
+      <ScrollArea className="flex-1 min-h-0 rounded-md border">
         {loading ? (
           <div className="space-y-2 p-4">
             {Array.from({ length: 8 }).map((_, i) => (

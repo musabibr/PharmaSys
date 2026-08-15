@@ -788,7 +788,7 @@ export function BatchesTab() {
           </div>
 
           {/* ---- Batch Table ---- */}
-          <ScrollArea className="flex-1 rounded-md border">
+          <ScrollArea className="flex-1 min-h-0 rounded-md border">
             {batchesLoading ? (
               <div className="space-y-2 p-4">
                 {Array.from({ length: 5 }).map((_, i) => (

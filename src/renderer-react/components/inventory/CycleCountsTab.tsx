@@ -200,8 +200,8 @@ export function CycleCountsTab() {
           )}
         </div>
 
-        <Card className="flex-1 flex flex-col overflow-hidden">
-          <CardContent className="flex-1 p-0 overflow-auto">
+        <Card className="flex-1 min-h-0 flex flex-col overflow-hidden">
+          <CardContent className="flex-1 min-h-0 p-0 overflow-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -294,10 +294,17 @@ export function CycleCountsTab() {
           )}
         </div>
 
-        {/* ── Counts ── */}
-        <TabsContent value="counts" className="flex-1 overflow-hidden mt-3">
-          <Card className="h-full flex flex-col overflow-hidden">
-            <CardContent className="flex-1 p-0 overflow-auto">
+        {/*
+          ── Counts ──
+          data-[state=active]:flex, not `flex`: Radix hides an inactive
+          TabsContent via the `hidden` attribute (browser default
+          display:none). A plain `flex` utility has equal specificity and
+          wins the cascade, keeping the "inactive" panel laid out and
+          stealing height from whichever tab is actually active.
+        */}
+        <TabsContent value="counts" className="flex-1 min-h-0 overflow-hidden data-[state=active]:flex flex-col mt-3">
+          <Card className="h-full min-h-0 flex flex-col overflow-hidden">
+            <CardContent className="flex-1 min-h-0 p-0 overflow-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -335,7 +342,8 @@ export function CycleCountsTab() {
         </TabsContent>
 
         {/* ── Variance ── */}
-        <TabsContent value="variance" className="flex-1 overflow-hidden mt-3">
+        {/* data-[state=active]:flex — see comment on the "counts" TabsContent above. */}
+        <TabsContent value="variance" className="flex-1 min-h-0 overflow-hidden data-[state=active]:flex flex-col mt-3">
           <div className="flex h-full flex-col gap-3">
             <div className="flex flex-wrap items-center gap-2">
               <Select value={varCountId ? String(varCountId) : ''} onValueChange={(v) => loadVariance(Number(v))}>
@@ -357,8 +365,8 @@ export function CycleCountsTab() {
                 <Input className="ps-8" placeholder={t('Search product...')} value={varSearch} onChange={(e) => setVarSearch(e.target.value)} />
               </div>
             </div>
-            <Card className="flex-1 flex flex-col overflow-hidden">
-              <CardContent className="flex-1 p-0 overflow-auto">
+            <Card className="flex-1 min-h-0 flex flex-col overflow-hidden">
+              <CardContent className="flex-1 min-h-0 p-0 overflow-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>

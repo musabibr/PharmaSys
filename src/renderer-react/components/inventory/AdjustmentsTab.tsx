@@ -180,7 +180,16 @@ export function AdjustmentsTab() {
           <TabsTrigger value="adjustments">{t('Adjustments')}</TabsTrigger>
           <TabsTrigger value="history">{t('History')}</TabsTrigger>
         </TabsList>
-        <TabsContent value="adjustments" className="flex-1 min-h-0 overflow-hidden flex flex-col gap-4 mt-3">
+        {/*
+          data-[state=active]:flex, not a plain `flex` class: Radix hides an
+          inactive TabsContent via the `hidden` attribute, which the browser
+          defaults to `display:none`. An unconditional `flex` utility has the
+          same specificity and wins the cascade, silently re-showing the
+          "inactive" panel and making it keep competing for flex height in
+          the parent Tabs — every sibling tab then gets squeezed to a
+          fraction of its rightful height. Only force `flex` while active.
+        */}
+        <TabsContent value="adjustments" className="flex-1 min-h-0 overflow-hidden data-[state=active]:flex flex-col gap-4 mt-3">
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -235,7 +244,7 @@ export function AdjustmentsTab() {
       {loading ? (
         <Skeleton className="h-[400px] w-full" />
       ) : (
-        <div className="flex-1 overflow-auto rounded-md border">
+        <div className="flex-1 min-h-0 overflow-auto rounded-md border">
           <Table>
             <TableHeader>
               <TableRow>
@@ -302,7 +311,8 @@ export function AdjustmentsTab() {
       )}
         </TabsContent>
 
-        <TabsContent value="history" className="flex-1 min-h-0 overflow-hidden flex flex-col mt-3">
+        {/* data-[state=active]:flex — see comment on the "adjustments" TabsContent above. */}
+        <TabsContent value="history" className="flex-1 min-h-0 overflow-hidden data-[state=active]:flex flex-col mt-3">
           <BatchHistoryTab />
         </TabsContent>
       </Tabs>
