@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { usePrompt } from '@/components/ui/prompt-dialog';
@@ -27,7 +27,6 @@ export function POSPage() {
   const isStaleShift = useShiftStore((s) => s.isStaleShift);
   const shiftsEnabled = useSettingsStore((s) => s.getSetting('shifts_enabled') !== 'false');
   const isAdmin = useAuthStore((s) => s.currentUser?.role === 'admin');
-  const cartStore = useCartStore();
 
   const [shiftModalOpen, setShiftModalOpen] = useState(false);
   const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
@@ -47,37 +46,45 @@ export function POSPage() {
 
   const shiftOpen = !shiftsEnabled || currentShift != null || isAdmin;
 
-  function handleProductSelect(productId: number) {
+  // Handlers read the cart imperatively via useCartStore.getState() instead
+  // of subscribing to the store, and are stabilised with useCallback so
+  // ProductGrid (and its memoised ProductCards) get a stable onProductSelect
+  // identity across renders. POSPage renders no cart data itself — CartPanel
+  // subscribes to the cart store separately — so subscribing here re-rendered
+  // every ProductCard in the catalogue on every +/- click, the worst
+  // possible place for a freeze (audit G0).
+  const handleProductSelect = useCallback((productId: number) => {
     setSelectedProductId(productId);
     setAddToCartOpen(true);
-  }
+  }, []);
 
-  function handleCheckout() {
+  const handleCheckout = useCallback(() => {
     if (!shiftOpen) {
       toast.error(t('You must open a shift before making sales.'));
       return;
     }
-    if (cartStore.items.length === 0) return;
+    if (useCartStore.getState().items.length === 0) return;
     setCheckoutOpen(true);
-  }
+  }, [shiftOpen, t]);
 
-  function handleCheckoutComplete(transaction: Transaction) {
+  const handleCheckoutComplete = useCallback((transaction: Transaction) => {
     setCheckoutOpen(false);
     setLastTransaction(transaction);
     setReceiptOpen(true);
     setProductRefreshKey((k) => k + 1);
-  }
+  }, []);
 
-  async function handleHold() {
+  const handleHold = useCallback(async () => {
     if (!shiftOpen) {
       toast.error(t('You must open a shift before holding sales.'));
       return;
     }
-    if (cartStore.items.length === 0) return;
+    const cart = useCartStore.getState();
+    if (cart.items.length === 0) return;
     try {
       // Spread items into plain objects to avoid IPC serialization issues
       // with reactive Zustand state proxies
-      const plainItems = cartStore.items.map(item => ({ ...item }));
+      const plainItems = cart.items.map(item => ({ ...item }));
       // Non-blocking React dialog — never use window.prompt() (blocking native
       // dialog freezes the Electron window until minimize/restore).
       const promptResult = await prompt({
@@ -88,27 +95,28 @@ export function POSPage() {
       if (promptResult === null) return; // user cancelled
       const note = promptResult.trim() || undefined;
       await api.held.save(plainItems, note);
-      cartStore.clear();
+      cart.clear();
       toast.success(t('Sale held successfully'));
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : t('Failed to hold sale'));
     }
-  }
+  }, [shiftOpen, t, prompt]);
 
-  function handleRetrieveHeld() {
+  const handleRetrieveHeld = useCallback(() => {
     setHeldSalesOpen(true);
-  }
+  }, []);
 
-  async function handleRetrieveItems(items: CartItem[]) {
-    if (cartStore.items.length > 0) {
+  const handleRetrieveItems = useCallback(async (items: CartItem[]) => {
+    const cart = useCartStore.getState();
+    if (cart.items.length > 0) {
       if (!(await confirm({ description: t('Your current cart has items. Retrieving will replace them. Continue?') }))) {
         return;
       }
     }
-    cartStore.clear();
-    items.forEach((item) => cartStore.addItem(item));
+    cart.clear();
+    items.forEach((item) => cart.addItem(item));
     setHeldSalesOpen(false);
-  }
+  }, [confirm, t]);
 
   return (
     <div className="flex h-full flex-col">

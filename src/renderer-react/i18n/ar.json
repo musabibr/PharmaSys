@@ -694,6 +694,8 @@
   "In Stock": "في المخزون",
   "Search by name, generic, or barcode...": "بحث بالاسم أو الاسم العلمي أو الباركود...",
   "Search by name, generic name, or barcode...": "بحث بالاسم أو الاسم العلمي أو الباركود...",
+  "No product matches that barcode": "لا يوجد منتج مطابق لهذا الباركود",
+  "Barcode lookup failed": "فشل البحث عن الباركود",
   "e.g. Antibiotics": "مثال: مضادات حيوية",
   "Select Product": "اختر المنتج",
   "Search Products": "بحث المنتجات",

@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Package, Info } from 'lucide-react';
 import type { Product } from '@/api/types';
@@ -17,7 +18,10 @@ import { cn } from '@/lib/utils';
 
 interface ProductCardProps {
   product: Product;
-  onClick: () => void;
+  /** Called with the product's id — not a pre-bound closure, so a stable
+   *  parent handler (e.g. useCallback((id) => ...)) keeps memo() effective
+   *  instead of every card getting a fresh onClick identity every render. */
+  onSelect: (productId: number) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -46,7 +50,7 @@ function getPrice(product: Product, type: 'parent' | 'child'): number | null {
 // ProductCard
 // ---------------------------------------------------------------------------
 
-export function ProductCard({ product, onClick }: ProductCardProps) {
+function ProductCardImpl({ product, onSelect }: ProductCardProps) {
   const { t } = useTranslation();
   const stockLevel = getStockLevel(product);
   const isOutOfStock = stockLevel === 'out';
@@ -55,16 +59,18 @@ export function ProductCard({ product, onClick }: ProductCardProps) {
   const childPrice = product.conversion_factor > 1 ? getPrice(product, 'child') : null;
   const hasUsageInstructions = !!product.usage_instructions;
 
+  const handleClick = () => onSelect(product.id);
+
   return (
     <Card
       role="button"
       tabIndex={isOutOfStock ? -1 : 0}
       aria-disabled={isOutOfStock}
-      onClick={isOutOfStock ? undefined : onClick}
+      onClick={isOutOfStock ? undefined : handleClick}
       onKeyDown={(e) => {
         if (!isOutOfStock && (e.key === 'Enter' || e.key === ' ')) {
           e.preventDefault();
-          onClick();
+          handleClick();
         }
       }}
       className={cn(
@@ -160,3 +166,10 @@ export function ProductCard({ product, onClick }: ProductCardProps) {
     </Card>
   );
 }
+
+// memo(): at a few thousand products, an unmemoised card re-renders (and
+// re-subscribes to i18n, re-mounts its Radix Tooltip) on every parent
+// render — including cart mutations that have nothing to do with this
+// card. Effective only because onSelect is now a stable identity (see
+// ProductCardProps) rather than a fresh per-card closure (audit G0).
+export const ProductCard = memo(ProductCardImpl);

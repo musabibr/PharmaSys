@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 import { Search, PackageSearch } from 'lucide-react';
 import type { Product, Category } from '@/api/types';
 import { api } from '@/api';
@@ -71,7 +72,7 @@ function EmptyState({ message }: { message: string }) {
 // ProductGrid
 // ---------------------------------------------------------------------------
 
-export function ProductGrid({ onProductSelect, refreshKey }: ProductGridProps) {
+function ProductGridImpl({ onProductSelect, refreshKey }: ProductGridProps) {
   const { t } = useTranslation();
 
   // ── State ──────────────────────────────────────────────────────────────
@@ -88,6 +89,10 @@ export function ProductGrid({ onProductSelect, refreshKey }: ProductGridProps) {
 
   // Search input ref — kept focused for barcode scanner support
   const searchInputRef = useRef<HTMLInputElement>(null);
+  // Single in-flight refocus timer — every focus event during a busy session
+  // used to queue its own uncleared setTimeout, accumulating timers and
+  // risking a .focus() call after unmount (audit G4).
+  const refocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Debounce the search query ──────────────────────────────────────────
   useEffect(() => {
@@ -114,35 +119,29 @@ export function ProductGrid({ onProductSelect, refreshKey }: ProductGridProps) {
   }, []);
 
   // ── Fetch products whenever debounced query or category changes ────────
+  // Routed through getList() (server-side search + category filter + LIMIT)
+  // instead of getAll()/search() — the old code fetched the ENTIRE active
+  // catalogue on mount, on every category change (filtered client-side
+  // afterward, so the filter never reduced the query), and on every 1-2
+  // character crossing while typing. At a few thousand products that's
+  // ~15k index seeks per keystroke plus a multi-megabyte IPC payload,
+  // followed by a full re-render of the grid (audit G1).
   const fetchProducts = useCallback(async () => {
     const currentRequest = ++requestCounterRef.current;
     setLoading(true);
     setError(null);
 
     try {
-      let result: Product[];
-
-      if (debouncedQuery.length >= 2) {
-        // Server-side search
-        result = await api.products.search(debouncedQuery);
-        // If a category filter is active, apply it client-side on search results
-        if (categoryId !== ALL_CATEGORIES) {
-          const cid = Number(categoryId);
-          result = result.filter((p) => p.category_id === cid);
-        }
-      } else {
-        // Get all products, filter by category client-side
-        result = await api.products.getAll();
-        if (categoryId !== ALL_CATEGORIES) {
-          const cid = Number(categoryId);
-          result = result.filter((p) => p.category_id === cid);
-        }
-      }
+      const result = await api.products.getList({
+        search: debouncedQuery.length >= 2 ? debouncedQuery : undefined,
+        category_id: categoryId !== ALL_CATEGORIES ? Number(categoryId) : undefined,
+        limit: 100,
+      });
 
       // Discard if a newer request has been fired
       if (currentRequest !== requestCounterRef.current) return;
 
-      setProducts(Array.isArray(result) ? result : []);
+      setProducts(Array.isArray(result?.data) ? result.data : []);
     } catch (err) {
       if (currentRequest !== requestCounterRef.current) return;
       setError(err instanceof Error ? err.message : t('Failed to load products'));
@@ -159,7 +158,11 @@ export function ProductGrid({ onProductSelect, refreshKey }: ProductGridProps) {
 
   // ── Refocus search input (for barcode scanner support) ─────────────────
   const refocusSearch = useCallback(() => {
-    setTimeout(() => searchInputRef.current?.focus(), 50);
+    if (refocusTimerRef.current) clearTimeout(refocusTimerRef.current);
+    refocusTimerRef.current = setTimeout(() => {
+      refocusTimerRef.current = null;
+      searchInputRef.current?.focus();
+    }, 50);
   }, []);
 
   // Keep search input focused — refocus when focus leaves to non-dialog elements
@@ -179,7 +182,10 @@ export function ProductGrid({ onProductSelect, refreshKey }: ProductGridProps) {
       }
     };
     document.addEventListener('focusin', handler);
-    return () => document.removeEventListener('focusin', handler);
+    return () => {
+      document.removeEventListener('focusin', handler);
+      if (refocusTimerRef.current) clearTimeout(refocusTimerRef.current);
+    };
   }, [refocusSearch]);
 
   // ── Handlers ───────────────────────────────────────────────────────────
@@ -199,12 +205,18 @@ export function ProductGrid({ onProductSelect, refreshKey }: ProductGridProps) {
         onProductSelect(product.id);
         setQuery('');
         refocusSearch();
+      } else {
+        // A scanned code with no exact match was a genuine silent no-op
+        // before this — no beep, no toast, nothing — so the cashier would
+        // scan the same item again and again with no idea why it wasn't
+        // adding to the cart (audit G3). The debounced name/generic-name
+        // search is still showing underneath, so this doesn't block that.
+        toast.error(t('No product matches that barcode'));
       }
-      // If not found by barcode, normal search results are already showing
     } catch {
-      // Barcode lookup failed — fall through to normal search display
+      toast.error(t('Barcode lookup failed'));
     }
-  }, [query, onProductSelect, refocusSearch]);
+  }, [query, onProductSelect, refocusSearch, t]);
 
   // ── Render ─────────────────────────────────────────────────────────────
   return (
@@ -273,7 +285,7 @@ export function ProductGrid({ onProductSelect, refreshKey }: ProductGridProps) {
               <ProductCard
                 key={product.id}
                 product={product}
-                onClick={() => onProductSelect(product.id)}
+                onSelect={onProductSelect}
               />
             ))}
           </div>
@@ -282,3 +294,10 @@ export function ProductGrid({ onProductSelect, refreshKey }: ProductGridProps) {
     </div>
   );
 }
+
+// memo(): ProductGrid re-fetches on its own triggers (search/category/
+// refreshKey) — it shouldn't also re-render just because its parent
+// (POSPage) re-rendered for an unrelated reason. Effective only because
+// onProductSelect is now a stable useCallback identity in POSPage
+// (audit G0).
+export const ProductGrid = memo(ProductGridImpl);
