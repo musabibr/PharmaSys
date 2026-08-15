@@ -1,18 +1,33 @@
 import type { ShiftRepository }   from '../repositories/sql/shift.repository';
+import type { BaseRepository }    from '../repositories/sql/base.repository';
 import type { EventBus }           from '../events/event-bus';
 import type {
   Shift, ShiftFilters, ShiftExpectedCash, ShiftReport,
   PaginatedResult, VarianceType, UserRole,
 } from '../types/models';
 import { Validate }                from '../common/validation';
-import { NotFoundError, ValidationError, InternalError } from '../types/errors';
+import { NotFoundError, ValidationError, InternalError, ConflictError } from '../types/errors';
 import { Money }                   from '../common/money';
 
 export class ShiftService {
   constructor(
     private readonly repo: ShiftRepository,
-    private readonly bus:  EventBus
+    private readonly bus:  EventBus,
+    private readonly base?: BaseRepository
   ) {}
+
+  /**
+   * A5: expected_cash is read across several queries and then written by a
+   * separate UPDATE. A sale committing between any of them is absent from
+   * expected_cash but present in the drawer, so the shift closes short by
+   * exactly that sale with nothing on screen explaining it. Running the read
+   * and the write as one unit removes the window. `base` is optional so
+   * existing constructions keep working; without it this degrades to the old
+   * (still status-guarded) behaviour rather than failing.
+   */
+  private async _atomically<T>(fn: () => Promise<T>): Promise<T> {
+    return this.base ? await this.base.inTransaction(fn) : await fn();
+  }
 
   async getCurrent(userId: number): Promise<Shift | undefined> {
     Validate.id(userId, 'User');
@@ -115,20 +130,26 @@ export class ShiftService {
     }
 
     const actual   = Money.round(Validate.nonNegativeNumber(actualCash, 'Actual cash'));
-    const expected = await this.repo.getExpectedCash(shiftId);
 
-    const variance     = Money.subtract(actual, expected.expected_cash);
-    const varianceType: VarianceType =
-      variance > 0 ? 'overage'
-      : variance < 0 ? 'shortage'
-      : 'balanced';
+    const { expected, variance, varianceType } = await this._atomically(async () => {
+      const expected = await this.repo.getExpectedCash(shiftId);
+      const variance = Money.subtract(actual, expected.expected_cash);
+      const varianceType: VarianceType =
+        variance > 0 ? 'overage'
+        : variance < 0 ? 'shortage'
+        : 'balanced';
 
-    await this.repo.close(shiftId, {
-      expected_cash: expected.expected_cash,
-      actual_cash:   actual,
-      variance:      variance,
-      variance_type: varianceType,
-      notes:         notes ?? null,
+      const changed = await this.repo.close(shiftId, {
+        expected_cash: expected.expected_cash,
+        actual_cash:   actual,
+        variance:      variance,
+        variance_type: varianceType,
+        notes:         notes ?? null,
+      });
+      if (changed === 0) {
+        throw new ConflictError('This shift was closed by someone else while you were counting. Reload and check the figures.');
+      }
+      return { expected, variance, varianceType };
     });
 
     this.bus.emit('shift:changed', {
@@ -184,20 +205,26 @@ export class ShiftService {
     }
 
     const actual   = Money.round(Validate.nonNegativeNumber(actualCash, 'Actual cash'));
-    const expected = await this.repo.getExpectedCash(shiftId);
 
-    const variance     = Money.subtract(actual, expected.expected_cash);
-    const varianceType: VarianceType =
-      variance > 0 ? 'overage'
-      : variance < 0 ? 'shortage'
-      : 'balanced';
+    const { expected, variance, varianceType } = await this._atomically(async () => {
+      const expected = await this.repo.getExpectedCash(shiftId);
+      const variance = Money.subtract(actual, expected.expected_cash);
+      const varianceType: VarianceType =
+        variance > 0 ? 'overage'
+        : variance < 0 ? 'shortage'
+        : 'balanced';
 
-    await this.repo.close(shiftId, {
-      expected_cash: expected.expected_cash,
-      actual_cash:   actual,
-      variance:      variance,
-      variance_type: varianceType,
-      notes:         notes ?? 'Force-closed by admin',
+      const changed = await this.repo.close(shiftId, {
+        expected_cash: expected.expected_cash,
+        actual_cash:   actual,
+        variance:      variance,
+        variance_type: varianceType,
+        notes:         notes ?? 'Force-closed by admin',
+      });
+      if (changed === 0) {
+        throw new ConflictError('This shift was closed by someone else. Reload and check the figures.');
+      }
+      return { expected, variance, varianceType };
     });
 
     this.bus.emit('shift:changed', {
@@ -228,17 +255,23 @@ export class ShiftService {
 
     for (const shift of staleShifts) {
       try {
-        const expected = await this.repo.getExpectedCash(shift.id);
+        const expected = await this._atomically(async () => {
+          const expected = await this.repo.getExpectedCash(shift.id);
 
-        // Auto-close with actual=expected, variance=0.
-        // Using NULL breaks SUM() aggregations in reports.
-        // Notes flag it as requiring manual audit.
-        await this.repo.close(shift.id, {
-          expected_cash: expected.expected_cash,
-          actual_cash:   expected.expected_cash,
-          variance:      0,
-          variance_type: 'balanced',
-          notes:         'Auto-closed: shift exceeded ' + maxAgeHours + ' hours. Cash was not counted — manual audit required.',
+          // Auto-close with actual=expected, variance=0.
+          // Using NULL breaks SUM() aggregations in reports.
+          // Notes flag it as requiring manual audit.
+          const changed = await this.repo.close(shift.id, {
+            expected_cash: expected.expected_cash,
+            actual_cash:   expected.expected_cash,
+            variance:      0,
+            variance_type: 'balanced',
+            notes:         'Auto-closed: shift exceeded ' + maxAgeHours + ' hours. Cash was not counted — manual audit required.',
+          });
+          // Someone closed it manually between the scan and now — that close
+          // is the authoritative one; skip rather than overwrite it.
+          if (changed === 0) throw new ConflictError('Shift already closed');
+          return expected;
         });
 
         this.bus.emit('shift:changed', {

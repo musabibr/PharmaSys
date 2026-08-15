@@ -245,7 +245,7 @@ export interface IShiftRepository {
     variance: number;
     variance_type: string;
     notes: string | null;
-  }): Promise<void>;
+  }): Promise<number>;
   getExpectedCash(shiftId: number): Promise<ShiftExpectedCash>;
   getReport(shiftId: number): Promise<ShiftReport | undefined>;
   getLastClosedCash(userId: number): Promise<number>;

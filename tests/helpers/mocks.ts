@@ -198,7 +198,8 @@ export function createMockShiftRepo() {
     getById: jest.fn().mockResolvedValue(undefined),
     getAll: jest.fn().mockResolvedValue({ data: [], total: 0, page: 1, limit: 50, totalPages: 0 }),
     open: jest.fn().mockResolvedValue(runResult(1)),
-    close: jest.fn().mockResolvedValue(undefined),
+    // Returns rows changed — 0 means someone else closed it first (A5).
+    close: jest.fn().mockResolvedValue(1),
     getExpectedCash: jest.fn().mockResolvedValue({
       opening_amount: 0, total_cash_sales: 0, total_cash_returns: 0,
       total_cash_expenses: 0, total_cash_drops: 0, expected_cash: 0,

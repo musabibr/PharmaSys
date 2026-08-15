@@ -114,7 +114,11 @@ export class ServiceContainer {
   get shift(): ShiftService {
     return (this._shift ??= new ShiftService(
       this.repos.shift,
-      this.bus
+      this.bus,
+      // A5: lets close/forceClose read expected_cash and write the close as
+      // one unit, so a sale committing mid-count can't be excluded from
+      // expected_cash while sitting in the drawer.
+      this.repos.base
     ));
   }
 

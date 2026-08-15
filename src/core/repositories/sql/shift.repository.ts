@@ -89,12 +89,16 @@ export class ShiftRepository implements IShiftRepository {
     variance: number;
     variance_type: string;
     notes: string | null;
-  }): Promise<void> {
-    await this.base.runImmediate(
+  }): Promise<number> {
+    // A5: `AND status = 'open'` makes this a compare-and-swap. Without it two
+    // concurrent closes both write, and the second silently overwrites the
+    // first's expected_cash/variance with figures read at a different moment.
+    // Returns rows changed so the caller can detect the lost race.
+    return await this.base.runAndGetChanges(
       `UPDATE shifts
        SET closed_at = datetime('now', 'localtime'), expected_cash = ?, actual_cash = ?,
            variance = ?, variance_type = ?, notes = ?, status = 'closed'
-       WHERE id = ?`,
+       WHERE id = ? AND status = 'open'`,
       [data.expected_cash, data.actual_cash, data.variance, data.variance_type, data.notes, id]
     );
   }

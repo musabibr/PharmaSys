@@ -1,14 +1,15 @@
 import { ShiftService } from '@core/services/shift.service';
-import { ValidationError, NotFoundError } from '@core/types/errors';
+import { ValidationError, NotFoundError, ConflictError } from '@core/types/errors';
 import {
-  createMockShiftRepo, createMockBus, sampleShift, runResult,
+  createMockShiftRepo, createMockBus, createMockBaseRepo, sampleShift, runResult,
 } from '../../helpers/mocks';
 
 function createService() {
   const shiftRepo = createMockShiftRepo();
   const bus       = createMockBus();
-  const svc       = new ShiftService(shiftRepo as any, bus);
-  return { svc, shiftRepo, bus };
+  const baseRepo  = createMockBaseRepo();
+  const svc       = new ShiftService(shiftRepo as any, bus, baseRepo as any);
+  return { svc, shiftRepo, bus, baseRepo };
 }
 
 describe('ShiftService', () => {
@@ -161,6 +162,35 @@ describe('ShiftService', () => {
       const result = await svc.close(1, 10000, null, 1);
       expect(shiftRepo.close).toHaveBeenCalled();
       expect(result.status).toBe('closed');
+    });
+
+    // ─── A5: the close is a compare-and-swap on status = 'open' ───────────
+    it('throws ConflictError when the shift was closed by someone else mid-count (A5)', async () => {
+      const { svc, shiftRepo } = createService();
+      shiftRepo.getById.mockResolvedValueOnce(sampleShift).mockResolvedValue(closedShift);
+      shiftRepo.getExpectedCash.mockResolvedValue({ expected_cash: 10000 } as any);
+      shiftRepo.close.mockResolvedValue(0); // UPDATE matched no open row
+
+      await expect(svc.close(1, 10000, null, 1)).rejects.toThrow(ConflictError);
+    });
+
+    it('does not emit shift:changed when the close lost the race (A5)', async () => {
+      const { svc, shiftRepo, bus } = createService();
+      shiftRepo.getById.mockResolvedValueOnce(sampleShift).mockResolvedValue(closedShift);
+      shiftRepo.getExpectedCash.mockResolvedValue({ expected_cash: 10000 } as any);
+      shiftRepo.close.mockResolvedValue(0);
+
+      await expect(svc.close(1, 10000, null, 1)).rejects.toThrow(ConflictError);
+      expect(bus.emit).not.toHaveBeenCalledWith('shift:changed', expect.anything());
+    });
+
+    it('reads expected cash and writes the close inside one transaction (A5)', async () => {
+      const { svc, shiftRepo, baseRepo } = createService();
+      shiftRepo.getById.mockResolvedValueOnce(sampleShift).mockResolvedValue(closedShift);
+      shiftRepo.getExpectedCash.mockResolvedValue({ expected_cash: 10000 } as any);
+
+      await svc.close(1, 10000, null, 1);
+      expect(baseRepo.inTransaction).toHaveBeenCalled();
     });
 
     it('calculates balanced variance correctly', async () => {
