@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { Search, Plus, Trash2, Check, Loader2, PackagePlus, ArrowLeft, ArrowRight } from 'lucide-react';
 import type { Product } from '@/api/types';
 import { api } from '@/api';
+import { loadProducts } from '@/stores/products.store';
 import { formatCurrency, formatQuantity, unitLabel, parseCost } from '@/lib/utils';
 import { useSettingsStore } from '@/stores/settings.store';
 import { Input } from '@/components/ui/input';
@@ -77,7 +78,7 @@ export function QuickStockEntryPage() {
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    api.products.getAll().then(setAllProducts).catch(() => setAllProducts([]));
+    loadProducts().then(setAllProducts).catch(() => setAllProducts([]));
     api.categories.getAll()
       .then((cats) => setCategories(cats.map((c: { name: string }) => c.name).filter(Boolean)))
       .catch(() => setCategories([]));
@@ -245,7 +246,9 @@ export function QuickStockEntryPage() {
         // Keep only the failed rows so they can be corrected and retried.
         setRows((prev) => prev.filter((_r, i) => !results[i]?.success));
         // Refresh the product cache (new products are now matchable).
-        api.products.getAll().then(setAllProducts).catch(() => {});
+        // force: this must observe the products just created, and it
+        // refreshes the shared cache for every other component too.
+        loadProducts({ force: true }).then(setAllProducts).catch(() => {});
       }
     } catch (err) {
       toast.error((err as Error).message || t('Failed to save'));

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Plus, Play, Check, ArrowLeft, Search } from 'lucide-react';
 import { api } from '@/api';
+import { loadProducts } from '@/stores/products.store';
 import type { CycleCount, CycleCountItem, Product } from '@/api/types';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -100,7 +101,7 @@ export function CycleCountsTab() {
   const openBuilder = async () => {
     setNewName(''); setProdSearch(''); setCatFilter('all'); setBuilderPage(1); setSelectedIds(new Set());
     setBuilderOpen(true);
-    if (allProducts.length === 0) { try { setAllProducts(await api.products.getAll()); } catch { /* ignore */ } }
+    if (allProducts.length === 0) { try { setAllProducts(await loadProducts()); } catch { /* ignore */ } }
   };
   const categories = useMemo(() => {
     const set = new Set<string>();

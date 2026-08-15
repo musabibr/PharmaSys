@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { Loader2, Package, X } from 'lucide-react';
 import type { Product, Category } from '@/api/types';
 import { api, throwIfError } from '@/api';
+import { invalidateProducts } from '@/stores/products.store';
 import { formatCurrency } from '@/lib/utils';
 import { usePermission } from '@/hooks/usePermission';
 import { useSettingsStore } from '@/stores/settings.store';
@@ -258,9 +259,11 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
           ...productPayload,
           ...(rescaleStock ? { rescaleStock } : {}),
         }));
+        invalidateProducts();
         toast.success(t('Product updated'));
       } else {
         savedProduct = throwIfError(await api.products.create(productPayload));
+        invalidateProducts();
         toast.success(t('Product created'));
       }
 

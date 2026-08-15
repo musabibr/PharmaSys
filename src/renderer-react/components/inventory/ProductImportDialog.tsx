@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
 import { api } from '@/api';
+import { loadProducts, invalidateProducts } from '@/stores/products.store';
 import type { Purchase, Product, Supplier, CreatePurchaseItemInput } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings.store';
 import { Button } from '@/components/ui/button';
@@ -301,7 +302,7 @@ export function ProductImportDialog({ open, onOpenChange, onImported }: ProductI
       .catch(() => setSuppliers([]));
 
     setLoadingProducts(true);
-    api.products.getAll()
+    loadProducts()
       .then(products => setExistingProducts(Array.isArray(products) ? products : []))
       .catch(() => setExistingProducts([]))
       .finally(() => setLoadingProducts(false));
@@ -548,6 +549,9 @@ export function ProductImportDialog({ open, onOpenChange, onImported }: ProductI
     setImportResult({ created, updated, failed, errors });
 
     if (created > 0 || updated > 0) {
+      // The run created/updated products — drop the shared cache so every
+      // other picker reflects them (G5).
+      invalidateProducts();
       toast.success(t('Import complete: {{c}} created, {{u}} updated', { c: created, u: updated }));
       onImported();
     }

@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { api } from '@/api';
+import { loadProducts } from '@/stores/products.store';
 import type { Batch, Product, Category } from '@/api/types';
 import { useDebounce } from '@/hooks/useDebounce';
 import { usePermission } from '@/hooks/usePermission';
@@ -166,7 +167,7 @@ export function BatchesTab() {
   // ---- Load ALL products + categories on mount ----
   useEffect(() => {
     Promise.all([
-      api.products.getAll(),
+      loadProducts(),
       api.categories.getAll(),
     ])
       .then(([prods, cats]) => {
@@ -364,7 +365,7 @@ export function BatchesTab() {
       setSelectedIds(new Set());
       setBulkDeleteOpen(false);
       loadBatches();
-      api.products.getAll().then((prods: Product[]) => {
+      loadProducts({ force: true }).then((prods: Product[]) => {
         setAllProducts(Array.isArray(prods) ? prods : []);
       }).catch(() => {});
     } catch (err) {
@@ -997,7 +998,7 @@ export function BatchesTab() {
           onSaved={() => {
             loadBatches();
             // Also refresh product list to update stock counts
-            api.products.getAll().then((prods: Product[]) => {
+            loadProducts({ force: true }).then((prods: Product[]) => {
               setAllProducts(Array.isArray(prods) ? prods : []);
             }).catch(() => {});
           }}
@@ -1016,7 +1017,7 @@ export function BatchesTab() {
           conversionFactor={selectedProduct.conversion_factor}
           onSaved={() => {
             loadBatches();
-            api.products.getAll().then((prods: Product[]) => {
+            loadProducts({ force: true }).then((prods: Product[]) => {
               setAllProducts(Array.isArray(prods) ? prods : []);
             }).catch(() => {});
           }}

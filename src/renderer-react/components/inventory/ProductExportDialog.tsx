@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import * as XLSX from 'xlsx';
 import { Download, Loader2, Search } from 'lucide-react';
 import { api } from '@/api';
+import { loadProducts } from '@/stores/products.store';
 import type { Product, Batch } from '@/api/types';
 import { formatQuantity } from '@/lib/utils';
 import { PRODUCT_IE_COLUMNS } from './productIeSchema';
@@ -56,7 +57,7 @@ export function ProductExportDialog({ open, onOpenChange }: ProductExportDialogP
     if (!open) return;
     if (mode === 'select' && allProducts.length === 0) {
       setLoadingProducts(true);
-      api.products.getAll().then(products => {
+      loadProducts().then(products => {
         setAllProducts(products);
       }).catch(() => {
         setAllProducts([]);
@@ -122,7 +123,7 @@ export function ProductExportDialog({ open, onOpenChange }: ProductExportDialogP
         }
         products = allProducts.filter(p => selectedProductIds.has(p.id));
       } else {
-        products = await api.products.getAll();
+        products = await loadProducts();
       }
 
       const activeCols = PRODUCT_IE_COLUMNS.filter(c => selectedCols.has(c.id));

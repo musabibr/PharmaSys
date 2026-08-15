@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { api } from '@/api';
+import { invalidateProducts } from '@/stores/products.store';
 import type { Product, Batch, ProductMovements, AuditEntry } from '@/api/types';
 import { formatCurrency, formatCost, formatDate, formatQuantity, unitLabel, displayInvoiceId } from '@/lib/utils';
 import { actionLabel, actionBadgeVariant, summarizeFieldNames } from '@/lib/audit';
@@ -210,6 +211,7 @@ export function ProductProfilePage() {
     if (!ok) return;
     try {
       await api.products.delete(product.id);
+      invalidateProducts();
       toast.success(t('Product deactivated'));
       loadProduct();
     } catch (err) {
@@ -221,6 +223,7 @@ export function ProductProfilePage() {
     if (!product) return;
     try {
       await api.products.update(product.id, { is_active: 1 });
+      invalidateProducts();
       toast.success(t('Product reactivated'));
       loadProduct();
     } catch (err) {

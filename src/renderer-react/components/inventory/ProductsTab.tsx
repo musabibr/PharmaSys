@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import type { Product, Category } from '@/api/types';
 import { api } from '@/api';
+import { invalidateProducts } from '@/stores/products.store';
 import { formatQuantity } from '@/lib/utils';
 import { usePermission } from '@/hooks/usePermission';
 import { useNavigate } from 'react-router-dom';
@@ -184,6 +185,7 @@ function DeleteConfirmDialog({
     setDeleting(true);
     try {
       await api.products.delete(product.id);
+      invalidateProducts();
       toast.success(t('Product deleted'));
       onConfirm();
       onOpenChange(false);
@@ -325,6 +327,7 @@ function BulkDeleteProductsDialog({
     try {
       const result = await api.products.bulkDelete(toDelete.map((p) => p.id));
       if (result.deleted.length > 0) {
+        invalidateProducts();
         toast.success(t('{{count}} product(s) deleted', { count: result.deleted.length }));
       }
       if (result.errors && result.errors.length > 0) {

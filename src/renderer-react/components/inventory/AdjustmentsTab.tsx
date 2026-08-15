@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { api } from '@/api';
+import { loadProducts } from '@/stores/products.store';
 import type { InventoryAdjustment, AdjustmentType, Product, Batch } from '@/api/types';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -120,7 +121,7 @@ export function AdjustmentsTab() {
     setProductSearch(''); setShowProductResults(false);
     setDialogOpen(true);
     if (products.length === 0) {
-      try { setProducts(await api.products.getAll()); } catch { /* ignore */ }
+      try { setProducts(await loadProducts()); } catch { /* ignore */ }
     }
   };
 
@@ -134,7 +135,7 @@ export function AdjustmentsTab() {
     setReason(adj.reason ?? '');
     setDialogOpen(true);
     try {
-      if (products.length === 0) setProducts(await api.products.getAll());
+      if (products.length === 0) setProducts(await loadProducts());
       const bs = await api.batches.getByProduct(adj.product_id);
       setBatches(bs);
       setBatchId(adj.batch_id);

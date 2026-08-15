@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
 import { api } from '@/api';
+import { invalidateProducts } from '@/stores/products.store';
 import { TEMPLATE_HEADERS, TEMPLATE_EXAMPLE_ROW, resolveImportRow } from './productIeSchema';
 import { useSettingsStore } from '@/stores/settings.store';
 import { Button } from '@/components/ui/button';
@@ -372,6 +373,7 @@ export function BulkImportDialog({ open, onOpenChange, onImported }: BulkImportD
       }));
 
       const raw = await api.products.bulkCreate(items);
+      invalidateProducts();
       // API returns Array<{success, name, error?}> — normalize to {created, errors}
       const rawArr = Array.isArray(raw) ? raw : (raw as any).data ?? [];
       const created = rawArr.filter((r: any) => r.success).length;

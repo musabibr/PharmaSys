@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { api } from '@/api';
+import { loadProducts } from '@/stores/products.store';
 import type { Product, User, ProductSaleFilters, ProductSaleRecord } from '@/api/types';
 import { useDebounce } from '@/hooks/useDebounce';
 import { formatCurrency, formatQuantity } from '@/lib/utils';
@@ -82,7 +83,7 @@ export function SalesHistoryTab() {
 
   // ---- Load products + users once ----
   useEffect(() => {
-    api.products.getAll()
+    loadProducts()
       .then((prods) => setAllProducts(Array.isArray(prods) ? prods : []))
       .catch(() => {});
     api.users.getAll()

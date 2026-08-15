@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Package, Search, Printer, ShoppingCart, AlertCircle, TrendingUp, TrendingDown, Phone } from 'lucide-react';
 import { api } from '@/api';
+import { loadProducts } from '@/stores/products.store';
 import type {
   Product,
   ProductSupplierRecord,
@@ -45,7 +46,7 @@ export function SupplierProductsTab() {
   // Load products once
   useEffect(() => {
     setLoadingProducts(true);
-    api.products.getAll()
+    loadProducts()
       .then((p) => setProducts(p ?? []))
       .catch(() => toast.error(t('Failed to load products')))
       .finally(() => setLoadingProducts(false));

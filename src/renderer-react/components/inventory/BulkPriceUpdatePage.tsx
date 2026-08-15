@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import type { Product, BulkPriceUpdatePreviewRow } from '@/api/types';
 import { api } from '@/api';
+import { loadProducts } from '@/stores/products.store';
 import { formatCurrency, unitLabel } from '@/lib/utils';
 import { useSettingsStore } from '@/stores/settings.store';
 import { useConfirm } from '@/components/ui/confirm-dialog';
@@ -88,7 +89,7 @@ export function BulkPriceUpdatePage() {
       // current effective sell, and formula-filled starting prices.
       const [preview, products] = await Promise.all([
         api.batches.previewBulkPriceUpdate({ mode: 'markup_over_cost', percent: defaultMarkup, rounding: 100 }),
-        api.products.getAll(),
+        loadProducts(),
       ]);
       const byId = new Map<number, Product>(products.map((p) => [p.id, p]));
       setRows(preview.map((r: BulkPriceUpdatePreviewRow) => {

@@ -6,6 +6,7 @@ import {
   CheckCircle2, XCircle, Search, FileText, Pencil, X,
 } from 'lucide-react';
 import { api, throwIfError } from '@/api';
+import { loadProducts } from '@/stores/products.store';
 import type { Product, Category } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings.store';
 import { formatCurrency, parseCost, cn } from '@/lib/utils';
@@ -310,7 +311,7 @@ export function AddItemsDialog({ purchaseId, purchaseNumber, open, onOpenChange,
     setMatchLoading(true);
     try {
       const [products, categories] = await Promise.all([
-        api.products.getAll(),
+        loadProducts(),
         api.categories.getAll(),
       ]);
       setAllProducts(products);
@@ -349,7 +350,7 @@ export function AddItemsDialog({ purchaseId, purchaseNumber, open, onOpenChange,
 
   async function handleProductCreated() {
     try {
-      const products = await api.products.getAll();
+      const products = await loadProducts({ force: true });
       setAllProducts(products);
       // Re-match: update any "new" items that now match an existing product
       setMatchedItems(prev => prev.map(item => {

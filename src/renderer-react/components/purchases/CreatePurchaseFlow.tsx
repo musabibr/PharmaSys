@@ -7,6 +7,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { api, throwIfError } from '@/api';
+import { loadProducts } from '@/stores/products.store';
 import type { ExpensePaymentMethod, Product, Category } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings.store';
 import { formatCurrency, formatCost, parseCost, cn } from '@/lib/utils';
@@ -400,7 +401,7 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
       if (d.manualItems) setManualItems(d.manualItems);
       if (d.manualMode) setManualMode(d.manualMode);
       // Load products/categories needed for match/details steps
-      api.products.getAll().then(p => setAllProducts(p)).catch(() => {});
+      loadProducts().then(p => setAllProducts(p)).catch(() => {});
       api.categories.getAll().then(c => setAllCategories(c)).catch(() => {});
     } catch { /* corrupt draft — silently ignore */ }
     draftDecisionPending.current = false;
@@ -469,7 +470,7 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
       setInitialPayMethod('cash');
       setInitialPayRef('');
       setStep('details');
-      api.products.getAll().then(p => {
+      loadProducts().then(p => {
         setAllProducts(p);
         // Pre-fill a single ManualItem from initialProductId once products are loaded
         if (initialProductId != null) {
@@ -654,7 +655,7 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
     setManualMode('total');
     setStep('details');
     // Load products for manual item search
-    api.products.getAll().then(p => setAllProducts(p)).catch(() => {});
+    loadProducts().then(p => setAllProducts(p)).catch(() => {});
   }
 
   // ─── Manual Items handlers ──────────────────────────────────────────────────
@@ -743,7 +744,7 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
   /** Called after ProductForm creates a new product — refresh list and open edit dialog */
   async function handleManualProductCreated() {
     try {
-      const products = await api.products.getAll();
+      const products = await loadProducts({ force: true });
       setAllProducts(products);
       // Find the newest product (highest id) and open edit dialog for it
       if (products.length > 0) {
@@ -833,7 +834,7 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
     setMatchLoading(true);
     try {
       const [products, categories] = await Promise.all([
-        api.products.getAll(),
+        loadProducts(),
         api.categories.getAll(),
       ]);
       setAllProducts(products);
@@ -872,7 +873,7 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
 
   async function handleProductCreated() {
     try {
-      const products = await api.products.getAll();
+      const products = await loadProducts({ force: true });
       setAllProducts(products);
       // Re-match: update any "new" items that now match an existing product
       setMatchedItems(prev => prev.map(item => {
