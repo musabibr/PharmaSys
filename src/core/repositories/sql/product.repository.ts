@@ -3,6 +3,7 @@ import type { IProductRepository } from '../../types/repositories';
 import type { Product, ProductFilters, PaginatedResult, CreateProductInput, UpdateProductInput, BulkCreateProductInput } from '../../types/models';
 import { Money } from '../../common/money';
 import { PAGINATION } from '../../common/constants';
+import { TODAY_SQL } from '../../common/expiry';
 
 export class ProductRepository implements IProductRepository {
   constructor(private readonly base: BaseRepository) {}
@@ -10,7 +11,7 @@ export class ProductRepository implements IProductRepository {
   private static readonly STOCK_SUBQUERY =
     `COALESCE((SELECT SUM(b.quantity_base) FROM batches b
       WHERE b.product_id = p.id AND b.quantity_base > 0
-        AND b.status = 'active' AND b.expiry_date >= date('now')), 0) as total_stock_base`;
+        AND b.status = 'active' AND b.expiry_date >= ${TODAY_SQL}), 0) as total_stock_base`;
 
   /** Effective parent selling price from the first FIFO (oldest-expiry) active batch. */
   private static readonly SELL_PRICE_SUBQUERY =
@@ -19,14 +20,14 @@ export class ProductRepository implements IProductRepository {
                            ELSE b.selling_price_parent END
               FROM batches b
               WHERE b.product_id = p.id AND b.status = 'active' AND b.quantity_base > 0
-                AND b.expiry_date >= date('now')
+                AND b.expiry_date >= ${TODAY_SQL}
               ORDER BY b.expiry_date ASC, b.id ASC LIMIT 1), 0) as selling_price,
      COALESCE((SELECT CASE WHEN b.selling_price_child_override > 0
                            THEN b.selling_price_child_override
                            ELSE COALESCE(b.selling_price_child, 0) END
               FROM batches b
               WHERE b.product_id = p.id AND b.status = 'active' AND b.quantity_base > 0
-                AND b.expiry_date >= date('now')
+                AND b.expiry_date >= ${TODAY_SQL}
               ORDER BY b.expiry_date ASC, b.id ASC LIMIT 1), 0) as selling_price_child`;
 
   async getAll(search?: string): Promise<Product[]> {

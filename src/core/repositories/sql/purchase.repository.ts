@@ -8,6 +8,7 @@ import type {
   ProductSupplierRecord,
 } from '../../types/models';
 import { PAGINATION } from '../../common/constants';
+import { TODAY_SQL } from '../../common/expiry';
 
 export class PurchaseRepository implements IPurchaseRepository {
   constructor(private readonly base: BaseRepository) {}
@@ -659,7 +660,7 @@ export class PurchaseRepository implements IPurchaseRepository {
         // Product has stock in expired-only batches: lifetime-stock > active-stock
         conditions.push(`EXISTS (
           SELECT 1 FROM batches bx
-          WHERE bx.product_id = p.id AND bx.quantity_base > 0 AND bx.expiry_date < date('now')
+          WHERE bx.product_id = p.id AND bx.quantity_base > 0 AND bx.expiry_date < ${TODAY_SQL}
         )`);
         break;
       default:
@@ -770,7 +771,7 @@ export class PurchaseRepository implements IPurchaseRepository {
       current_stock AS (
         SELECT product_id, SUM(quantity_base) as stock
         FROM batches
-        WHERE status = 'active' AND quantity_base > 0 AND expiry_date >= date('now')
+        WHERE status = 'active' AND quantity_base > 0 AND expiry_date >= ${TODAY_SQL}
         GROUP BY product_id
       ),
       batch_min_expiry AS (
@@ -787,7 +788,7 @@ export class PurchaseRepository implements IPurchaseRepository {
                         THEN b.selling_price_parent_override
                         ELSE b.selling_price_parent END) as price
         FROM batches b
-        WHERE b.status = 'active' AND b.quantity_base > 0 AND b.expiry_date >= date('now')
+        WHERE b.status = 'active' AND b.quantity_base > 0 AND b.expiry_date >= ${TODAY_SQL}
         GROUP BY b.product_id
       )
     `;

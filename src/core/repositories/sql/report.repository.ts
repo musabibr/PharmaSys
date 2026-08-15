@@ -5,6 +5,7 @@ import type {
   DeadCapitalItem, InventoryValuationResult, InventoryValuationFilters,
   DashboardStats, PurchaseReport, PurchaseReportFilters,
 } from '../../types/models';
+import { TODAY_SQL } from '../../common/expiry';
 
 /**
  * Consistent cost-per-child SQL fragment.
@@ -516,13 +517,13 @@ export class ReportRepository implements IReportRepository {
           COALESCE(SUM(b.quantity_base * ${SELL_PER_CHILD_SQL}), 0) as inv_retail
         FROM batches b
         JOIN products p ON b.product_id = p.id
-        WHERE b.quantity_base > 0 AND b.status = 'active' AND b.expiry_date >= date('now') AND p.is_active = 1
+        WHERE b.quantity_base > 0 AND b.status = 'active' AND b.expiry_date >= ${TODAY_SQL} AND p.is_active = 1
       ),
       low_stock AS (
         SELECT COUNT(*) as low_stock_count FROM (
           SELECT p.id FROM products p
           LEFT JOIN batches b ON p.id = b.product_id AND b.quantity_base > 0
-            AND b.status = 'active' AND b.expiry_date >= date('now')
+            AND b.status = 'active' AND b.expiry_date >= ${TODAY_SQL}
           WHERE p.is_active = 1
           GROUP BY p.id
           HAVING COALESCE(SUM(b.quantity_base), 0) <= (p.min_stock_level * COALESCE(NULLIF(p.conversion_factor, 0), 1))

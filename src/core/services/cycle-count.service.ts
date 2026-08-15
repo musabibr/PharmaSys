@@ -3,6 +3,7 @@ import type { BatchRepository } from '../repositories/sql/batch.repository';
 import type { EventBus } from '../events/event-bus';
 import type { CycleCount } from '../types/models';
 import { NotFoundError, BusinessRuleError } from '../types/errors';
+import { todayLocalISO } from '../common/expiry';
 
 export class CycleCountService {
   constructor(
@@ -41,7 +42,7 @@ export class CycleCountService {
     } else {
       // No scope → every product that currently has active, non-expired, in-stock batches.
       const activeBatches = await this.batchRepo.getAll({ status: 'active' });
-      const today = new Date().toISOString().split('T')[0];
+      const today = todayLocalISO();
       productIdList = [...new Set(
         activeBatches
           .filter(b => b.quantity_base > 0 && (!b.expiry_date || b.expiry_date >= today))

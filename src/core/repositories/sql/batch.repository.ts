@@ -5,6 +5,7 @@ import type {
   InventoryAdjustment, AdjustmentFilters, AdjustmentType, BatchFilters,
   LatestBatchPricing,
 } from '../../types/models';
+import { TODAY_SQL } from '../../common/expiry';
 export class BatchRepository implements IBatchRepository {
   constructor(private readonly base: BaseRepository) {}
 
@@ -66,7 +67,7 @@ export class BatchRepository implements IBatchRepository {
        FROM batches b
        JOIN products p ON b.product_id = p.id
        WHERE b.product_id = ? AND b.status = 'active' AND b.quantity_base > 0
-         AND b.expiry_date >= date('now')
+         AND b.expiry_date >= ${TODAY_SQL}
        ORDER BY b.expiry_date, b.id`,
       [productId]
     );
@@ -80,7 +81,7 @@ export class BatchRepository implements IBatchRepository {
                LEFT JOIN categories c ON p.category_id = c.id
                WHERE b.quantity_base > 0
                  AND b.status = 'active'
-                 AND b.expiry_date >= date('now')`;
+                 AND b.expiry_date >= ${TODAY_SQL}`;
     const params: unknown[] = [];
 
     if (filters.categoryId) {
@@ -213,7 +214,7 @@ export class BatchRepository implements IBatchRepository {
        JOIN products p ON b.product_id = p.id
        WHERE b.status IN ('active', 'quarantine')
          AND b.quantity_base > 0
-         AND b.expiry_date >= date('now')
+         AND b.expiry_date >= ${TODAY_SQL}
          AND b.expiry_date <= date('now', ?)
        ORDER BY b.expiry_date, p.name`,
       [`+${days} days`]
@@ -225,7 +226,7 @@ export class BatchRepository implements IBatchRepository {
       `SELECT b.*, p.name as product_name, p.parent_unit, p.child_unit, p.conversion_factor
        FROM batches b
        JOIN products p ON b.product_id = p.id
-       WHERE b.expiry_date < date('now') AND b.status IN ('active', 'quarantine') AND b.quantity_base > 0
+       WHERE b.expiry_date < ${TODAY_SQL} AND b.status IN ('active', 'quarantine') AND b.quantity_base > 0
        ORDER BY b.expiry_date, p.name`
     );
   }
@@ -286,7 +287,7 @@ export class BatchRepository implements IBatchRepository {
     return await this.base.getAll(
       `SELECT id, batch_number, quantity_base, expiry_date FROM batches
        WHERE product_id = ? AND status = 'active' AND quantity_base > 0
-         AND expiry_date >= date('now')
+         AND expiry_date >= ${TODAY_SQL}
        ORDER BY expiry_date`,
       [productId]
     );
@@ -308,14 +309,14 @@ export class BatchRepository implements IBatchRepository {
                            ELSE b2.selling_price_parent END
                  FROM batches b2
                 WHERE b2.product_id = p.id AND b2.status = 'active'
-                  AND b2.quantity_base > 0 AND b2.expiry_date >= date('now')
+                  AND b2.quantity_base > 0 AND b2.expiry_date >= ${TODAY_SQL}
                 ORDER BY b2.expiry_date ASC, b2.id ASC LIMIT 1) AS current_sell
        FROM products p
        LEFT JOIN categories c ON p.category_id = c.id
        JOIN batches lb ON lb.id = (
               SELECT b.id FROM batches b
                WHERE b.product_id = p.id AND b.status = 'active'
-                 AND b.quantity_base > 0 AND b.expiry_date >= date('now')
+                 AND b.quantity_base > 0 AND b.expiry_date >= ${TODAY_SQL}
                ORDER BY b.id DESC LIMIT 1)
        WHERE p.is_active = 1
        ORDER BY p.name`
@@ -337,7 +338,7 @@ export class BatchRepository implements IBatchRepository {
            version = version + 1,
            updated_at = datetime('now', 'localtime')
          WHERE product_id = ? AND status = 'active' AND quantity_base > 0
-           AND expiry_date >= date('now')`,
+           AND expiry_date >= ${TODAY_SQL}`,
         [sellingPriceParent, sellingPriceChildBase, productId]
       );
     } else {
@@ -350,7 +351,7 @@ export class BatchRepository implements IBatchRepository {
            version = version + 1,
            updated_at = datetime('now', 'localtime')
          WHERE product_id = ? AND status = 'active' AND quantity_base > 0
-           AND expiry_date >= date('now')`,
+           AND expiry_date >= ${TODAY_SQL}`,
         [sellingPriceParent, sellingPriceChildBase, sellingPriceChildOverride ?? 0, sellingPriceChildOverride ?? 0, productId]
       );
     }

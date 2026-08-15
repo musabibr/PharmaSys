@@ -16,6 +16,7 @@ import type {
 import type { IFIFOBatch } from '../types/repositories';
 import { Validate }        from '../common/validation';
 import { Money }           from '../common/money';
+import { todayLocalISO }   from '../common/expiry';
 import { NotFoundError, ValidationError, ConflictError, BusinessRuleError } from '../types/errors';
 
 interface DeductedLine {
@@ -717,7 +718,7 @@ export class TransactionService {
       if (batches.length === 0) {
         // Check if stock exists but is expired/quarantined to give a better error message
         const allBatches = await this.batchRepo.getByProduct(item.product_id);
-        const hasExpired = allBatches.some(b => b.status === 'active' && b.quantity_base > 0 && b.expiry_date <= new Date().toISOString().split('T')[0]);
+        const hasExpired = allBatches.some(b => b.status === 'active' && b.quantity_base > 0 && b.expiry_date <= todayLocalISO());
         const hasQuarantined = allBatches.some(b => b.status === 'quarantine' && b.quantity_base > 0);
         const reason = hasExpired ? ' (all batches are expired)'
           : hasQuarantined ? ' (stock is quarantined)'
@@ -927,8 +928,6 @@ export class TransactionService {
   /** Check if a batch has passed its expiry date. */
   private _isBatchExpired(expiryDate: string | null | undefined): boolean {
     if (!expiryDate) return false;
-    const n = new Date();
-    const today = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
-    return expiryDate < today;
+    return expiryDate < todayLocalISO();
   }
 }

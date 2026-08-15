@@ -15,7 +15,31 @@
 /** Far-future sentinel meaning "never expires". */
 export const NO_EXPIRY_SENTINEL = '2099-12-31';
 
+/**
+ * SQL fragment for "today" when comparing against expiry_date.
+ *
+ * SQLite's date('now') is always UTC, but every timestamp in this schema is
+ * stored with datetime('now','localtime') (29 uses in migration.repository.ts).
+ * Sudan is UTC+2, so between 00:00 and 02:00 local the UTC date is still
+ * yesterday — a batch expiring "today" could be sellable in one query and
+ * rejected by another depending on which clock it used (audit finding F4).
+ * Use this constant everywhere expiry is compared so the two clocks can't
+ * drift apart again.
+ */
+export const TODAY_SQL = "date('now','localtime')";
+
 const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/**
+ * Local-time "today" as YYYY-MM-DD — the JS-side counterpart of TODAY_SQL.
+ * `new Date().toISOString().slice(0, 10)` is UTC and drifts from this by a
+ * day during the same 00:00–02:00 window; always use this instead when
+ * comparing against a stored expiry_date.
+ */
+export function todayLocalISO(): string {
+  const n = new Date();
+  return `${n.getFullYear()}-${pad2(n.getMonth() + 1)}-${pad2(n.getDate())}`;
+}
 
 /** Last day (28–31) of a given 1-based month. */
 function lastDayOfMonth(year: number, month: number): number {

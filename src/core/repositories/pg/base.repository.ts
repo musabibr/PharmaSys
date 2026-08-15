@@ -74,6 +74,17 @@ export class PgBaseRepository implements IBaseRepository {
       '(CURRENT_DATE + ?::interval)'
     );
 
+    // 3a2. date('now','localtime')  ->  CURRENT_DATE
+    //      TODAY_SQL (src/core/common/expiry.ts) — SQLite's date('now') is
+    //      always UTC, so expiry comparisons use the explicit ',localtime'
+    //      form. PostgreSQL's CURRENT_DATE already reflects the session
+    //      timezone, so it's the direct equivalent — must run before 3b,
+    //      whose plain date('now') pattern doesn't match the extra arg.
+    translated = translated.replace(
+      /date\s*\(\s*'now'\s*,\s*'localtime'\s*\)/gi,
+      'CURRENT_DATE'
+    );
+
     // 3b. date('now')  ->  CURRENT_DATE
     //     Used in batch/purchase queries for comparison against date columns.
     translated = translated.replace(
