@@ -90,6 +90,7 @@ describe('SettingsService', () => {
       'bank_config', 'language', 'theme',
       'session_timeout_minutes', 'account_lockout_attempts',
       'account_lockout_duration_minutes',
+      'return_window_shifts', 'return_window_days', 'void_window_hours',
     ])('accepts allowed key: %s', async (key) => {
       const { svc, repo } = createService();
       await expect(svc.set(key, 'test')).resolves.not.toThrow();

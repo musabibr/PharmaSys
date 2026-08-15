@@ -15,6 +15,7 @@ const ALLOWED_KEYS = new Set([
   'session_timeout_minutes', 'account_lockout_attempts',
   'account_lockout_duration_minutes', 'shifts_enabled',
   'recurring_generation_mode', 'recurring_generation_hour',
+  'return_window_shifts', 'return_window_days', 'void_window_hours',
 ]);
 
 export class SettingsService {
