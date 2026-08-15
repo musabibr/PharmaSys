@@ -75,6 +75,10 @@ export function BatchForm({
   const [batchNumber, setBatchNumber] = useState('');
   const [expiryDate, setExpiryDate] = useState('');
   const [quantity, setQuantity] = useState(1);
+  // B5: a manual quantity edit is the one batch operation that most needs an
+  // explanation — required whenever the edit form's quantity differs from
+  // what the batch actually has right now.
+  const [quantityReason, setQuantityReason] = useState('');
   const [costPerParent, setCostPerParent] = useState(0);
   const [sellPricePerParent, setSellPricePerParent] = useState(0);
   const [costPerChild, setCostPerChild] = useState(0);
@@ -103,6 +107,7 @@ export function BatchForm({
     setError('');
     setLoading(false);
     setUpdateExistingPrices(false);
+    setQuantityReason('');
 
     if (batch) {
       // Edit mode: populate from existing batch.
@@ -215,6 +220,9 @@ export function BatchForm({
         ? 'text-yellow-600'
         : 'text-destructive';
 
+  // ---- Quantity-change reason (B5) ----
+  const quantityChanged = isEditMode && !!batch && quantity !== batch.quantity_base;
+
   // ---- Validation ----
   function validate(): string | null {
     // Expiry is optional (products can be flagged as non-expiring). If provided
@@ -230,6 +238,7 @@ export function BatchForm({
     }
     if (costPerParent <= 0) return t('Cost per base unit is required');
     if (sellPricePerParent <= 0) return t('Selling price is required');
+    if (quantityChanged && !quantityReason.trim()) return t('A reason is required when changing the stock quantity');
     return null;
   }
 
@@ -258,6 +267,9 @@ export function BatchForm({
           selling_price_parent: sellPricePerParent || null,
           selling_price_parent_override: sellPricePerParent || null,
         };
+        if (quantityChanged) {
+          updateData.reason = quantityReason.trim();
+        }
 
         if (hasChildUnit) {
           updateData.cost_per_child_override = costPerChild || 0;
@@ -381,6 +393,20 @@ export function BatchForm({
               </p>
             )}
           </div>
+
+          {/* ---- Quantity-change reason (B5) — only shown once the quantity actually differs ---- */}
+          {quantityChanged && (
+            <div className="space-y-2">
+              <Label htmlFor="quantity-reason">{t('Reason for quantity change')} *</Label>
+              <Input
+                id="quantity-reason"
+                value={quantityReason}
+                onChange={(e) => setQuantityReason(e.target.value)}
+                placeholder={t('e.g. physical recount, damaged stock found...')}
+                disabled={loading}
+              />
+            </div>
+          )}
 
           {canViewCosts && (
             <>

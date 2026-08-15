@@ -161,8 +161,12 @@ export interface IBatchRepository {
     reason: string | null;
     type: AdjustmentType;
     user_id: number;
+    reverses_adjustment_id?: number | null;
   }): Promise<RunResult>;
   getAdjustments(filters?: AdjustmentFilters): Promise<InventoryAdjustment[]>;
+  getAdjustmentById(id: number): Promise<InventoryAdjustment | undefined>;
+  /** True when some other adjustment already reverses this one (B6). */
+  getReversalOf(adjustmentId: number): Promise<InventoryAdjustment | undefined>;
   restoreDeletedBatch(data: {
     product_id: number;
     batch_number: string;

@@ -397,6 +397,9 @@ export interface InventoryAdjustment {
   type: AdjustmentType;
   user_id: number;
   created_at: string;
+  /** Set when this adjustment reverses an earlier one (B6) — replaces the
+   *  old sign-based heuristic and string-matched "already reversed" check. */
+  reverses_adjustment_id?: number | null;
   // Joined fields
   product_name?: string;
   batch_number?: string;
@@ -504,6 +507,9 @@ export interface CreateBatchInput {
   selling_price_parent_override?: number;
   cost_per_child_override?: number;
   selling_price_child_override?: number;
+  /** B7: a batch created with an already-past/-today expiry must start in
+   *  quarantine, not active — the caller computes this against expiry_date. */
+  status?: BatchStatus;
 }
 
 export interface UpdateBatchInput {
@@ -519,6 +525,8 @@ export interface UpdateBatchInput {
   selling_price_child_override?: number;
   status?: BatchStatus;
   version: number; // Required for optimistic locking
+  /** Required whenever quantity_base is being changed (B5) — captured on the correction adjustment. */
+  reason?: string;
 }
 
 export interface CreateTransactionInput {

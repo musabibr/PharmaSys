@@ -63,9 +63,17 @@ export const Validate = {
     if (!val || !/^\d{4}-\d{2}-\d{2}$/.test(String(val))) {
       throw new ValidationError(`${fieldName} must be a valid date (YYYY-MM-DD)`, fieldName);
     }
-    const d = new Date(String(val) + 'T00:00:00Z');
+    const str = String(val);
+    const d = new Date(str + 'T00:00:00Z');
     if (isNaN(d.getTime())) throw new ValidationError(`${fieldName} is not a valid date`, fieldName);
-    return String(val);
+    // B7: the regex + isNaN check alone accepts calendar-invalid dates like
+    // 2026-02-31 — JS's Date silently rolls it forward to 2026-03-03 instead
+    // of returning Invalid Date. Round-tripping through toISOString() and
+    // comparing catches the rollover.
+    if (d.toISOString().slice(0, 10) !== str) {
+      throw new ValidationError(`${fieldName} is not a valid calendar date`, fieldName);
+    }
+    return str;
   },
 
   futureDate(val: unknown, fieldName: string): string {

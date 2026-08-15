@@ -235,6 +235,7 @@ export class MigrationRepository {
         type TEXT NOT NULL CHECK(type IN ('damage', 'expiry', 'correction')),
         user_id INTEGER NOT NULL,
         created_at TEXT DEFAULT (datetime('now', 'localtime')),
+        reverses_adjustment_id INTEGER REFERENCES inventory_adjustments(id),
         FOREIGN KEY (product_id) REFERENCES products(id),
         FOREIGN KEY (batch_id) REFERENCES batches(id),
         FOREIGN KEY (user_id) REFERENCES users(id)
@@ -411,6 +412,10 @@ export class MigrationRepository {
       'CREATE INDEX IF NOT EXISTS idx_transactions_number ON transactions(transaction_number)',
       'CREATE INDEX IF NOT EXISTS idx_expenses_category ON expenses(category_id)',
       'CREATE INDEX IF NOT EXISTS idx_transactions_type_date ON transactions(transaction_type, created_at)',
+      // B6: makes a double-reverse impossible at the DB level, not just in
+      // application code — a second insert with the same
+      // reverses_adjustment_id violates this before it can ever be committed.
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_adjustments_reverses ON inventory_adjustments(reverses_adjustment_id) WHERE reverses_adjustment_id IS NOT NULL',
     ];
 
     for (const sql of indexes) {
@@ -565,6 +570,16 @@ export class MigrationRepository {
     // Checkout discount allocation for transaction_items
     await this._migrateColumn('transaction_items', 'checkout_discount_allocation',
       'ALTER TABLE transaction_items ADD COLUMN checkout_discount_allocation INTEGER NOT NULL DEFAULT 0');
+
+    // B6: reverseAdjustment used to detect "already reversed" by matching the
+    // free-text reason string 'Reversal of adjustment #<id>' — any edit to
+    // that literal (translation, a user typing the same text) silently broke
+    // the double-reverse guard, and the sign-based "is this a reversal"
+    // check misfired on a legitimate cycle-count overage (also stored
+    // negative), permanently blocking it from ever being reversed. An
+    // explicit FK replaces both the sign heuristic and the string match.
+    await this._migrateColumn('inventory_adjustments', 'reverses_adjustment_id',
+      'ALTER TABLE inventory_adjustments ADD COLUMN reverses_adjustment_id INTEGER REFERENCES inventory_adjustments(id)');
 
     // Cycle counts
     await this.base.rawRun(`CREATE TABLE IF NOT EXISTS cycle_counts (

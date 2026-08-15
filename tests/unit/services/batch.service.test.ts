@@ -1,5 +1,5 @@
 import { BatchService } from '@core/services/batch.service';
-import { ValidationError, NotFoundError, ConflictError } from '@core/types/errors';
+import { ValidationError, NotFoundError, ConflictError, BusinessRuleError } from '@core/types/errors';
 import {
   createMockBatchRepo, createMockProductRepo, createMockBus,
   sampleBatch, sampleProduct, runResult,
@@ -134,6 +134,36 @@ describe('BatchService', () => {
         action: 'CREATE_BATCH',
       }));
     });
+
+    // ─── B7: past/blank expiry ─────────────────────────────────────────
+    it('accepts a past expiry date (recording stock you already own)', async () => {
+      const { svc, batchRepo, productRepo } = createService();
+      productRepo.getById.mockResolvedValue(sampleProduct);
+      batchRepo.create.mockResolvedValue(runResult(1));
+      batchRepo.getById.mockResolvedValue(sampleBatch);
+
+      await expect(svc.create({ ...createInput, expiry_date: '2020-01-01' }, 1)).resolves.toBeDefined();
+    });
+
+    it('creates a batch with a past expiry as quarantine, not active (B7)', async () => {
+      const { svc, batchRepo, productRepo } = createService();
+      productRepo.getById.mockResolvedValue(sampleProduct);
+      batchRepo.create.mockResolvedValue(runResult(1));
+      batchRepo.getById.mockResolvedValue(sampleBatch);
+
+      await svc.create({ ...createInput, expiry_date: '2020-01-01' }, 1);
+      expect(batchRepo.create).toHaveBeenCalledWith(expect.objectContaining({ status: 'quarantine' }));
+    });
+
+    it('creates a batch with a future expiry as active', async () => {
+      const { svc, batchRepo, productRepo } = createService();
+      productRepo.getById.mockResolvedValue(sampleProduct);
+      batchRepo.create.mockResolvedValue(runResult(1));
+      batchRepo.getById.mockResolvedValue(sampleBatch);
+
+      await svc.create({ ...createInput, expiry_date: '2099-06-30' }, 1);
+      expect(batchRepo.create).toHaveBeenCalledWith(expect.objectContaining({ status: 'active' }));
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -161,7 +191,7 @@ describe('BatchService', () => {
       const { svc, batchRepo } = createService();
       const soldOut = { ...sampleBatch, status: 'sold_out' as const, quantity_base: 0 };
       batchRepo.getById.mockResolvedValue(soldOut);
-      await svc.update(1, { quantity_base: 50 } as any, 1);
+      await svc.update(1, { quantity_base: 50, reason: 'Restocked' } as any, 1);
       expect(batchRepo.update).toHaveBeenCalledWith(
         1, soldOut.version,
         expect.objectContaining({ quantity_base: 50, status: 'active' }),
@@ -171,7 +201,7 @@ describe('BatchService', () => {
     it('marks an active batch sold_out when quantity drops to zero', async () => {
       const { svc, batchRepo } = createService();
       batchRepo.getById.mockResolvedValue({ ...sampleBatch, status: 'active', quantity_base: 100 });
-      await svc.update(1, { quantity_base: 0 } as any, 1);
+      await svc.update(1, { quantity_base: 0, reason: 'Sold out physically' } as any, 1);
       expect(batchRepo.update).toHaveBeenCalledWith(
         1, sampleBatch.version,
         expect.objectContaining({ quantity_base: 0, status: 'sold_out' }),
@@ -208,11 +238,23 @@ describe('BatchService', () => {
       batchRepo.getById
         .mockResolvedValueOnce({ ...sampleBatch, quantity_base: 200 })
         .mockResolvedValue({ ...sampleBatch, quantity_base: 180 });
-      await svc.update(1, { quantity_base: 180 } as any, 1);
+      await svc.update(1, { quantity_base: 180, reason: 'Physical recount' } as any, 1);
       // 200 current − 180 new = 20 removed
       expect(batchRepo.insertAdjustment).toHaveBeenCalledWith(expect.objectContaining({
-        batch_id: 1, quantity_base: 20, type: 'correction',
+        batch_id: 1, quantity_base: 20, type: 'correction', reason: 'Physical recount',
       }));
+    });
+
+    it('throws ValidationError when quantity changes without a reason (B5)', async () => {
+      const { svc, batchRepo } = createService();
+      batchRepo.getById.mockResolvedValue({ ...sampleBatch, quantity_base: 200 });
+      await expect(svc.update(1, { quantity_base: 180 } as any, 1)).rejects.toThrow(ValidationError);
+    });
+
+    it('does not require a reason when quantity is unchanged', async () => {
+      const { svc, batchRepo } = createService();
+      batchRepo.getById.mockResolvedValue({ ...sampleBatch, quantity_base: 200 });
+      await expect(svc.update(1, { quantity_base: 200, batch_number: 'NEW-001' } as any, 1)).resolves.toBeDefined();
     });
 
     it('allows cost_per_parent change when batch has no sales', async () => {
@@ -457,6 +499,82 @@ describe('BatchService', () => {
         action: 'DELETE_BATCH',
         oldValues: expect.objectContaining({ quantity_base: 0 }),
       }));
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // reverseAdjustment (B6)
+  // ═══════════════════════════════════════════════════════════════════════════
+  describe('reverseAdjustment', () => {
+    const damageAdj = {
+      id: 5, product_id: 1, batch_id: 1, quantity_base: 30,
+      reason: 'Damaged in transit', type: 'damage' as const,
+      user_id: 1, created_at: '2026-08-01', reverses_adjustment_id: null,
+    };
+
+    it('reverses a normal (positive) adjustment and restores the quantity', async () => {
+      const { svc, batchRepo } = createService();
+      batchRepo.getAdjustmentById.mockResolvedValue(damageAdj);
+      batchRepo.getReversalOf.mockResolvedValue(undefined);
+      batchRepo.getById.mockResolvedValue({ ...sampleBatch, quantity_base: 70, status: 'active' });
+      batchRepo.updateQuantityOptimistic.mockResolvedValue(true);
+
+      await svc.reverseAdjustment(5, 1);
+
+      expect(batchRepo.updateQuantityOptimistic).toHaveBeenCalledWith(1, 100, 'active', sampleBatch.version);
+      expect(batchRepo.insertAdjustment).toHaveBeenCalledWith(expect.objectContaining({
+        quantity_base: -30, reverses_adjustment_id: 5,
+      }));
+    });
+
+    // B6: a cycle-count overage is legitimately stored negative too — the
+    // old sign heuristic ("negative = is a reversal") permanently blocked
+    // this from ever being reversed.
+    it('reverses a negative (overage) adjustment that is NOT itself a reversal', async () => {
+      const { svc, batchRepo } = createService();
+      const overageAdj = { ...damageAdj, id: 6, quantity_base: -15, type: 'correction' as const, reason: 'Cycle count overage' };
+      batchRepo.getAdjustmentById.mockResolvedValue(overageAdj);
+      batchRepo.getReversalOf.mockResolvedValue(undefined);
+      batchRepo.getById.mockResolvedValue({ ...sampleBatch, quantity_base: 70, status: 'active' });
+      batchRepo.updateQuantityOptimistic.mockResolvedValue(true);
+
+      await svc.reverseAdjustment(6, 1);
+
+      expect(batchRepo.updateQuantityOptimistic).toHaveBeenCalledWith(1, 55, 'active', sampleBatch.version);
+      expect(batchRepo.insertAdjustment).toHaveBeenCalledWith(expect.objectContaining({
+        quantity_base: 15, reverses_adjustment_id: 6,
+      }));
+    });
+
+    it('refuses to reverse a row that is itself a reversal', async () => {
+      const { svc, batchRepo } = createService();
+      const reversalRow = { ...damageAdj, id: 7, reverses_adjustment_id: 5 };
+      batchRepo.getAdjustmentById.mockResolvedValue(reversalRow);
+      await expect(svc.reverseAdjustment(7, 1)).rejects.toThrow(BusinessRuleError);
+      expect(batchRepo.updateQuantityOptimistic).not.toHaveBeenCalled();
+    });
+
+    it('refuses to reverse an adjustment that was already reversed', async () => {
+      const { svc, batchRepo } = createService();
+      batchRepo.getAdjustmentById.mockResolvedValue(damageAdj);
+      batchRepo.getReversalOf.mockResolvedValue({ ...damageAdj, id: 8, reverses_adjustment_id: 5 });
+      await expect(svc.reverseAdjustment(5, 1)).rejects.toThrow(BusinessRuleError);
+      expect(batchRepo.updateQuantityOptimistic).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundError when the adjustment does not exist', async () => {
+      const { svc, batchRepo } = createService();
+      batchRepo.getAdjustmentById.mockResolvedValue(undefined);
+      await expect(svc.reverseAdjustment(999, 1)).rejects.toThrow(NotFoundError);
+    });
+
+    it('throws ConflictError on optimistic lock failure', async () => {
+      const { svc, batchRepo } = createService();
+      batchRepo.getAdjustmentById.mockResolvedValue(damageAdj);
+      batchRepo.getReversalOf.mockResolvedValue(undefined);
+      batchRepo.getById.mockResolvedValue({ ...sampleBatch, quantity_base: 70, status: 'active' });
+      batchRepo.updateQuantityOptimistic.mockResolvedValue(false);
+      await expect(svc.reverseAdjustment(5, 1)).rejects.toThrow(ConflictError);
     });
   });
 

@@ -135,7 +135,7 @@ export class BatchRepository implements IBatchRepository {
        cost_per_parent, cost_per_child, cost_per_child_override,
        selling_price_parent, selling_price_child,
        selling_price_parent_override, selling_price_child_override, status, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 1)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
       [
         data.product_id,
         data.batch_number ?? null,
@@ -148,6 +148,10 @@ export class BatchRepository implements IBatchRepository {
         data.selling_price_child ?? 0,
         data.selling_price_parent_override ?? data.selling_price_parent ?? 0,
         data.selling_price_child_override ?? data.selling_price_child ?? 0,
+        // B7: caller computes 'quarantine' when expiry_date is already
+        // today or earlier — an already-expired batch must never start
+        // active/sellable. Defaults to 'active' when not specified.
+        data.status ?? 'active',
       ]
     );
   }
@@ -238,12 +242,21 @@ export class BatchRepository implements IBatchRepository {
     reason: string | null;
     type: AdjustmentType;
     user_id: number;
+    reverses_adjustment_id?: number | null;
   }) {
     return await this.base.run(
       `INSERT INTO inventory_adjustments
-       (product_id, batch_id, quantity_base, reason, type, user_id)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [data.product_id, data.batch_id, data.quantity_base, data.reason, data.type, data.user_id]
+       (product_id, batch_id, quantity_base, reason, type, user_id, reverses_adjustment_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [data.product_id, data.batch_id, data.quantity_base, data.reason, data.type, data.user_id, data.reverses_adjustment_id ?? null]
+    );
+  }
+
+  /** True when some other adjustment already reverses this one (B6). */
+  async getReversalOf(adjustmentId: number): Promise<InventoryAdjustment | undefined> {
+    return await this.base.getOne<InventoryAdjustment>(
+      `SELECT * FROM inventory_adjustments WHERE reverses_adjustment_id = ?`,
+      [adjustmentId]
     );
   }
 

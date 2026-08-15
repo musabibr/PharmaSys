@@ -11,7 +11,7 @@ import { Validate }               from '../common/validation';
 import { diffValues }             from '../common/audit-diff';
 import { NotFoundError, ValidationError, ConflictError, BusinessRuleError } from '../types/errors';
 import { Money }                  from '../common/money';
-import { normalizeExpiry, NO_EXPIRY_SENTINEL } from '../common/expiry';
+import { normalizeExpiry, NO_EXPIRY_SENTINEL, todayLocalISO } from '../common/expiry';
 
 export class BatchService {
   constructor(
@@ -69,6 +69,11 @@ export class BatchService {
     const costChild  = data.cost_per_child_override    ?? Money.costPerChild(costParent, cf);
     const sellChild  = data.selling_price_child_override ?? (sellParent ? Money.divideToChild(sellParent, cf) : 0);
 
+    // B7: a batch entered with an already-expired date (recording short-dated
+    // stock you already own) must start in quarantine, never active/sellable
+    // — the repo's INSERT used to hardcode status='active' unconditionally.
+    const status = expiryDate <= todayLocalISO() ? 'quarantine' : 'active';
+
     let result;
     try {
       result = await this.repo.create({
@@ -82,6 +87,7 @@ export class BatchService {
         selling_price_parent_override: sellParent,
         cost_per_child_override: costChild,
         selling_price_child_override: sellChild,
+        status,
       });
     } catch (err: any) {
       if (err?.message?.includes('UNIQUE constraint failed') && err?.message?.includes('idx_batches_product_batch')) {
@@ -143,6 +149,16 @@ export class BatchService {
     // Validate quantity_base is non-negative if provided
     if (data.quantity_base !== undefined && data.quantity_base < 0) {
       throw new ValidationError('Quantity cannot be negative', 'quantity_base');
+    }
+
+    // B5: a manual quantity edit is the one batch operation that most needs
+    // an explanation — anyone with inventory.batches.manage could otherwise
+    // set any batch to any quantity with zero record of why. Require it
+    // whenever the edit actually changes the quantity (not on a no-op
+    // resubmit of the same value).
+    let quantityChangeReason: string | undefined;
+    if (data.quantity_base !== undefined && data.quantity_base !== existing.quantity_base) {
+      quantityChangeReason = Validate.requiredString(data.reason, 'Reason for quantity change', 500);
     }
 
     // Auto-derive status from the new quantity for the sold_out <-> active transition.
@@ -221,7 +237,7 @@ export class BatchService {
         product_id:    existing.product_id!,
         batch_id:      id,
         quantity_base: existing.quantity_base - data.quantity_base,
-        reason:        'Manual batch quantity edit',
+        reason:        quantityChangeReason!,
         type:          'correction',
         user_id:       userId,
       });
@@ -327,17 +343,25 @@ export class BatchService {
       const adj = await this.repo.getAdjustmentById(id);
       if (!adj) throw new NotFoundError('Adjustment', id);
 
-      // Guard: cannot reverse a reversal record itself
-      if (adj.quantity_base < 0) {
+      // B6: the sign convention ("positive = stock removed") isn't a
+      // reliable signal that a row IS a reversal — a cycle-count overage
+      // (counted MORE than the system had) is also legitimately stored
+      // negative, and the old check permanently blocked it from ever being
+      // reversed. reverses_adjustment_id is unambiguous: only a row that
+      // was itself created BY a reversal has it set.
+      if (adj.reverses_adjustment_id != null) {
         throw new BusinessRuleError('Cannot reverse a reversal adjustment');
       }
 
-      // Guard: check if this adjustment was already reversed
-      const allAdjustments = await this.repo.getAdjustments({ batch_id: adj.batch_id });
-      const alreadyReversed = allAdjustments.some(a =>
-        a.reason === `Reversal of adjustment #${id}`
-      );
-      if (alreadyReversed) {
+      // B6: "already reversed" used to be detected by matching the free-text
+      // reason string 'Reversal of adjustment #<id>' — any edit to that
+      // literal (translation, a user typing the same text elsewhere)
+      // silently broke this guard. A partial UNIQUE index on
+      // reverses_adjustment_id makes a double-reverse impossible at the DB
+      // level; this check just gives a clean error instead of a raw
+      // constraint-violation message.
+      const existingReversal = await this.repo.getReversalOf(id);
+      if (existingReversal) {
         throw new BusinessRuleError('This adjustment has already been reversed');
       }
 
@@ -357,6 +381,7 @@ export class BatchService {
         reason: `Reversal of adjustment #${adj.id}`,
         type: 'correction',
         user_id:      userId,
+        reverses_adjustment_id: adj.id,
       });
 
       this.bus.emit('entity:mutated', {

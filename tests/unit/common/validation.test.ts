@@ -161,6 +161,21 @@ describe('Validate', () => {
     it('throws on partial date', () => {
       expect(() => Validate.dateString('2026-01', 'date')).toThrow(ValidationError);
     });
+    // B7: JS's Date silently rolls a calendar-invalid date forward instead of
+    // returning Invalid Date (2026-02-31 -> 2026-03-03) — the regex + isNaN
+    // check alone let these through.
+    it('throws on a calendar-invalid date (B7)', () => {
+      expect(() => Validate.dateString('2026-02-31', 'date')).toThrow(ValidationError);
+    });
+    it('throws on month 13', () => {
+      expect(() => Validate.dateString('2026-13-01', 'date')).toThrow(ValidationError);
+    });
+    it('accepts the last real day of February in a leap year', () => {
+      expect(Validate.dateString('2028-02-29', 'date')).toBe('2028-02-29');
+    });
+    it('rejects Feb 29 in a non-leap year', () => {
+      expect(() => Validate.dateString('2026-02-29', 'date')).toThrow(ValidationError);
+    });
   });
 
   // ─── enum ───────────────────────────────────────────────────────────────────

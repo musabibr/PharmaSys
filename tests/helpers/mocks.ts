@@ -154,6 +154,8 @@ export function createMockBatchRepo() {
     getExpired: jest.fn().mockResolvedValue([]),
     insertAdjustment: jest.fn().mockResolvedValue(runResult(1)),
     getAdjustments: jest.fn().mockResolvedValue([]),
+    getAdjustmentById: jest.fn().mockResolvedValue(undefined),
+    getReversalOf: jest.fn().mockResolvedValue(undefined),
     getBatchDeleteInfo: jest.fn().mockResolvedValue(undefined),
     getActiveBatchesForPriceUpdate: jest.fn().mockResolvedValue([]),
     getLatestBatchId: jest.fn().mockResolvedValue(null),

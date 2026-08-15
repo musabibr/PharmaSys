@@ -16,7 +16,7 @@ import type {
 } from '../types/models';
 import { Validate } from '../common/validation';
 import { Money } from '../common/money';
-import { normalizeExpiry, NO_EXPIRY_SENTINEL } from '../common/expiry';
+import { normalizeExpiry, NO_EXPIRY_SENTINEL, todayLocalISO } from '../common/expiry';
 import { NotFoundError, ValidationError, BusinessRuleError, InternalError } from '../types/errors';
 import { diffValues } from '../common/audit-diff';
 
@@ -1178,16 +1178,22 @@ export class PurchaseService {
 
     Validate.dateString(expiryDate, 'Expiry date');
 
+    // B7: importing an invoice for already-expired stock must not create a
+    // silently active/sellable batch — the INSERT used to omit the status
+    // column entirely, which defaults to 'active' at the schema level
+    // regardless of expiry. Matches BatchService.create's manual-entry path.
+    const status = expiryDate <= todayLocalISO() ? 'quarantine' : 'active';
+
     const result = await this.base.run(
       `INSERT INTO batches (product_id, batch_number, expiry_date, quantity_base,
        cost_per_parent, cost_per_child, cost_per_child_override,
        selling_price_parent, selling_price_child,
-       selling_price_parent_override, selling_price_child_override, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+       selling_price_parent_override, selling_price_child_override, status, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
       [
         productId, batchNumber, expiryDate,
         quantityBase, costParent, costChild, costChild,
-        sellParent, sellChild, sellParent, sellChild,
+        sellParent, sellChild, sellParent, sellChild, status,
       ]
     );
     return result.lastInsertRowid as number;
