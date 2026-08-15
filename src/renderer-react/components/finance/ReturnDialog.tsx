@@ -35,15 +35,46 @@ interface ReturnDialogProps {
 // Internal types
 // ---------------------------------------------------------------------------
 
+/**
+ * One entry per BATCH, not per original line.
+ *
+ * Returns are tracked per batch (`getReturnedQty` keys on batch_id), so a
+ * per-line "remaining" is genuinely unknowable once a partial return exists —
+ * there is no record of which line it came from. A sale can hold two lines on
+ * one batch ("1 box" + "3 strips" both FIFO-resolve to it), and giving each
+ * line the batch's full remaining pool would offer to refund the pool twice.
+ * Grouping by batch matches how the backend validates, so what the dialog
+ * offers is exactly what will be accepted.
+ */
 interface ReturnableItem {
-  /** Original transaction item */
+  batchId: number;
+  /** Representative line for display/cf — the parent line when one exists. */
   item: TransactionItem;
+  /** Parent-unit line on this batch, if the sale had one. */
+  parentItem?: TransactionItem;
+  /** Child-unit line on this batch, if the sale had one. */
+  childItem?: TransactionItem;
+  /** Base units sold on this batch across every line. */
+  soldBase: number;
   /** Total remaining base units — constant source of truth */
   maxReturnableBase: number;
   /** Which unit the user is currently returning in (can be toggled for parent items) */
   returnUnitType: 'parent' | 'child';
   /** Return quantity in returnUnitType display units */
   returnQty: number;
+}
+
+/**
+ * The line the BACKEND will price this return against, mirroring its lookup
+ * exactly: exact unit_type match first, else the parent line (a cross-unit
+ * return). Resolving it the same way here keeps the previewed refund and the
+ * charged refund identical when a batch has both a parent and a child line
+ * at different effective per-unit prices.
+ */
+function pricingItem(ri: ReturnableItem): TransactionItem {
+  if (ri.returnUnitType === 'child' && ri.childItem) return ri.childItem;
+  if (ri.returnUnitType === 'parent' && ri.parentItem) return ri.parentItem;
+  return ri.item;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,36 +118,48 @@ export function ReturnDialog({
       const items = Array.isArray(txn.items) ? txn.items : [];
       const returnable: ReturnableItem[] = [];
 
-      // C1 fix: a sale can legitimately contain two lines against the same
-      // batch (e.g. "1 box" + "3 strips" both FIFO-resolved to the same
-      // batch). alreadyReturnedBase is a batch-level total, so subtracting
-      // it from a single line's own quantity_base under-reports what's
-      // returnable — after any return, the *other* line on the same batch
-      // would show 0 remaining even though the batch's shared pool still
-      // has room. Aggregate the sold side by batch first, matching the
-      // backend's validation exactly, so every line on the same batch
-      // shares the same remaining pool.
-      const soldBaseByBatch: Record<string, number> = {};
+      // C1: a sale can legitimately contain two lines against the same batch
+      // (e.g. "1 box" + "3 strips" both FIFO-resolved to it), and returns are
+      // recorded per batch, not per line. Group by batch so the sold side,
+      // the already-returned side, and the remaining pool are all measured
+      // the same way the backend measures them — one row per batch, offering
+      // the pool exactly once.
+      const byBatch = new Map<number, {
+        parentItem?: TransactionItem;
+        childItem?: TransactionItem;
+        first: TransactionItem;
+        soldBase: number;
+      }>();
+
       for (const item of items) {
-        const key = `${item.batch_id}`;
-        soldBaseByBatch[key] = (soldBaseByBatch[key] ?? 0) + item.quantity_base;
+        const g = byBatch.get(item.batch_id)
+          ?? { first: item, soldBase: 0 };
+        g.soldBase += item.quantity_base;
+        if (item.unit_type === 'parent') g.parentItem ??= item;
+        else g.childItem ??= item;
+        byBatch.set(item.batch_id, g);
       }
 
-      for (const item of items) {
-        // Key is batch_id only so cross-unit returns share the same base-unit pool
-        const key = `${item.batch_id}`;
+      for (const [batchId, g] of byBatch) {
         const alreadyReturnedBase = (returnedMap && typeof returnedMap === 'object')
-          ? (returnedMap[key] ?? 0)
+          ? (returnedMap[`${batchId}`] ?? 0)
           : 0;
-        const remainingBase = soldBaseByBatch[key] - alreadyReturnedBase;
+        const remainingBase = g.soldBase - alreadyReturnedBase;
 
-        // Include the item if any base units remain — even < 1 full box counts
+        // Include the batch if any base units remain — even < 1 full box counts
         // because the user can return individual strips via cross-unit return.
         if (remainingBase > 0) {
+          // Prefer the parent line as the representative: it carries the
+          // conversion factor and is what enables the parent/child toggle.
+          const primary = g.parentItem ?? g.childItem ?? g.first;
           returnable.push({
-            item,
+            batchId,
+            item: primary,
+            parentItem: g.parentItem,
+            childItem: g.childItem,
+            soldBase: g.soldBase,
             maxReturnableBase: remainingBase,
-            returnUnitType: item.unit_type,
+            returnUnitType: primary.unit_type,
             returnQty: 0,
           });
         }
@@ -148,7 +191,7 @@ export function ReturnDialog({
     let total = 0;
     for (const ri of returnableItems) {
       if (ri.returnQty > 0) {
-        total += calculateLineRefund(ri.item, ri.returnQty, ri.returnUnitType);
+        total += calculateLineRefund(pricingItem(ri), ri.returnQty, ri.returnUnitType);
       }
     }
     return total;
@@ -196,7 +239,7 @@ export function ReturnDialog({
       const returnItems = returnableItems
         .filter((ri) => ri.returnQty > 0)
         .map((ri) => ({
-          batch_id: ri.item.batch_id,
+          batch_id: ri.batchId,
           quantity: ri.returnQty,
           unit_type: ri.returnUnitType,  // may differ from item.unit_type for cross-unit
         }));
@@ -328,26 +371,33 @@ export function ReturnDialog({
                     const canToggleUnit = ri.item.unit_type === 'parent' && cf > 1;
                     const maxReturnable = getMaxReturnable(ri);
 
-                    // Display quantities in terms of the current returnUnitType
-                    const alreadyReturnedBase = ri.item.quantity_base - ri.maxReturnableBase;
+                    // Display quantities in terms of the current returnUnitType.
+                    // Both sides are batch-level (soldBase, maxReturnableBase) —
+                    // mixing a line's own quantity_base with a batch-level
+                    // remaining produced a negative "already returned" on the
+                    // smaller of two lines sharing a batch.
+                    const alreadyReturnedBase = ri.soldBase - ri.maxReturnableBase;
                     const displayOriginal = isCrossReturn
-                      ? ri.item.quantity_base
-                      : (cf > 1 ? Math.floor(ri.item.quantity_base / cf) : ri.item.quantity_base);
+                      ? ri.soldBase
+                      : (cf > 1 ? Math.floor(ri.soldBase / cf) : ri.soldBase);
                     const alreadyReturned = isCrossReturn
                       ? alreadyReturnedBase
                       : (cf > 1 ? Math.floor(alreadyReturnedBase / cf) : alreadyReturnedBase);
 
-                    // Unit price to display — derive child price for cross-unit
-                    const displayUnitPrice = (isCrossReturn && cf > 1)
-                      ? Math.floor(ri.item.unit_price / cf)
-                      : ri.item.unit_price;
+                    // Price from the line the backend will actually match, so
+                    // the previewed refund equals the charged refund.
+                    const priceItem = pricingItem(ri);
+                    const priceIsCross = priceItem.unit_type !== ri.returnUnitType;
+                    const displayUnitPrice = (priceIsCross && ri.returnUnitType === 'child' && cf > 1)
+                      ? Math.floor(priceItem.unit_price / cf)
+                      : priceItem.unit_price;
                     const lineRefund = ri.returnQty > 0
-                      ? calculateLineRefund(ri.item, ri.returnQty, ri.returnUnitType)
+                      ? calculateLineRefund(priceItem, ri.returnQty, ri.returnUnitType)
                       : 0;
 
                     return (
                       <div
-                        key={`${ri.item.batch_id}_${ri.item.unit_type}_${ri.item.id}`}
+                        key={`batch_${ri.batchId}`}
                         className="rounded-lg border p-3 space-y-2"
                       >
                         {/* Product name and unit type */}
@@ -363,9 +413,11 @@ export function ReturnDialog({
                                   / {ri.item.child_unit ?? t('strip')}
                                 </span>
                               )}
-                              {ri.item.discount_percent > 0 && (
+                              {/* From the priced line, not the representative —
+                                  the two can carry different discounts. */}
+                              {priceItem.discount_percent > 0 && (
                                 <span className="ms-2 text-destructive">
-                                  -{ri.item.discount_percent}%
+                                  -{priceItem.discount_percent}%
                                 </span>
                               )}
                             </p>
