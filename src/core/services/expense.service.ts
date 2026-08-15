@@ -106,12 +106,21 @@ export class ExpenseService {
     const cat = await this.repo.getCategoryById(data.category_id);
     if (!cat) throw new NotFoundError('Expense category', data.category_id);
 
+    // A3: only attach the current open shift when the expense is actually
+    // dated today. expense_date is user-supplied and freely backdated (e.g.
+    // recording a forgotten expense from last week) — attaching it to
+    // TODAY's shift regardless deducted it from today's drawer while the
+    // report (keyed on expense_date) books it against a different day, so
+    // reconciliation and the printed report permanently disagreed.
     const shift = await this.shiftRepo.findOpenByUser(userId);
+    const today = new Date();
+    const todayLocal = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const shiftIdForExpense = shift && expenseDate === todayLocal ? shift.id : null;
 
     const result = await this.repo.create(
       { ...data, amount, expense_date: expenseDate, payment_method: paymentMethod },
       userId,
-      shift?.id ?? null
+      shiftIdForExpense
     );
 
     const newId = result.lastInsertRowid as number;
@@ -119,7 +128,10 @@ export class ExpenseService {
     this.bus.emit('entity:mutated', {
       action: 'CREATE_EXPENSE', table: 'expenses',
       recordId: newId, userId,
-      newValues: { amount, category: cat.name, date: expenseDate },
+      newValues: {
+        amount, category: cat.name, date: expenseDate,
+        ...(shift && !shiftIdForExpense ? { backdated: true } : {}),
+      },
     });
 
     const created = await this.repo.getById(newId);
@@ -127,10 +139,30 @@ export class ExpenseService {
     return created;
   }
 
-  async delete(id: number, userId: number): Promise<void> {
+  async delete(id: number, userId: number, userRole?: string): Promise<void> {
     Validate.id(id);
     const expense = await this.repo.getById(id);
     if (!expense) throw new NotFoundError('Expense', id);
+
+    // A4: once a shift closes, its expected_cash/variance are a frozen
+    // snapshot — but the expenses that fed that snapshot stayed freely
+    // editable, so a delete after close made the stored variance permanently
+    // unreproducible with no trace of why. Non-admins are blocked outright;
+    // an admin can still override (e.g. correcting a genuine mistake) but
+    // the audit event records that it happened against a closed shift.
+    let closedShiftOverride = false;
+    if (expense.shift_id) {
+      const shift = await this.shiftRepo.getById(expense.shift_id);
+      if (shift?.status === 'closed') {
+        if (userRole !== 'admin') {
+          throw new BusinessRuleError(
+            'Cannot delete an expense from a closed shift. Ask an admin to make this correction.'
+          );
+        }
+        closedShiftOverride = true;
+      }
+    }
+
     if (expense.is_recurring) {
       // Soft-revoke: keeps the row so generation logic won't recreate this date
       await this.repo.revoke(id);
@@ -140,6 +172,8 @@ export class ExpenseService {
     this.bus.emit('entity:mutated', {
       action: 'DELETE_EXPENSE', table: 'expenses',
       recordId: id, userId,
+      oldValues: { amount: expense.amount, expense_date: expense.expense_date, shift_id: expense.shift_id },
+      ...(closedShiftOverride ? { newValues: { closedShiftOverride: true } } : {}),
     });
   }
 

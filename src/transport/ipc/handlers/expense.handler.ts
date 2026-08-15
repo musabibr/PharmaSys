@@ -24,7 +24,7 @@ export function registerExpenseHandlers(router: IpcRouter, services: ServiceCont
   }, { permission: 'finance.expenses.manage' });
 
   router.handle('expenses:delete', async (user, id: number) => {
-    await services.expense.delete(id, user!.id);
+    await services.expense.delete(id, user!.id, user!.role);
     return { success: true };
   }, { permission: 'finance.expenses.delete' });
 

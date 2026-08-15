@@ -123,6 +123,34 @@ describe('ExpenseService', () => {
       expect(createArgs[2]).toBeNull(); // shift_id
     });
 
+    it('attaches the open shift when the expense is dated today (A3)', async () => {
+      const { svc, expenseRepo, shiftRepo } = createService();
+      const today = new Date();
+      const todayLocal = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      expenseRepo.getCategoryById.mockResolvedValue(sampleCategory);
+      shiftRepo.findOpenByUser.mockResolvedValue(sampleShift);
+      expenseRepo.create.mockResolvedValue(runResult(1));
+      expenseRepo.getById.mockResolvedValue(sampleExpense);
+
+      await svc.create({ ...validInput, expense_date: todayLocal }, 1);
+      const createArgs = expenseRepo.create.mock.calls[0];
+      expect(createArgs[2]).toBe(sampleShift.id);
+    });
+
+    it('does NOT attach the open shift when the expense is backdated (A3)', async () => {
+      const { svc, expenseRepo, shiftRepo } = createService();
+      expenseRepo.getCategoryById.mockResolvedValue(sampleCategory);
+      shiftRepo.findOpenByUser.mockResolvedValue(sampleShift);
+      expenseRepo.create.mockResolvedValue(runResult(1));
+      expenseRepo.getById.mockResolvedValue(sampleExpense);
+
+      // A shift IS open right now, but the expense is dated last week — it
+      // must not be deducted from TODAY's drawer count.
+      await svc.create({ ...validInput, expense_date: '2020-01-01' }, 1);
+      const createArgs = expenseRepo.create.mock.calls[0];
+      expect(createArgs[2]).toBeNull();
+    });
+
     it('throws ValidationError for invalid category_id', async () => {
       const { svc } = createService();
       await expect(svc.create({ ...validInput, category_id: 0 }, 1)).rejects.toThrow(ValidationError);
@@ -182,6 +210,34 @@ describe('ExpenseService', () => {
       expect(bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
         action: 'DELETE_EXPENSE',
       }));
+    });
+
+    it('blocks deleting an expense from a closed shift for a non-admin (A4)', async () => {
+      const { svc, expenseRepo, shiftRepo } = createService();
+      expenseRepo.getById.mockResolvedValue(sampleExpense); // shift_id: 1
+      shiftRepo.getById.mockResolvedValue({ ...sampleShift, status: 'closed' });
+      await expect(svc.delete(1, 1, 'cashier')).rejects.toThrow(BusinessRuleError);
+      expect(expenseRepo.delete).not.toHaveBeenCalled();
+    });
+
+    it('allows an admin to delete an expense from a closed shift, flagging the override', async () => {
+      const { svc, expenseRepo, shiftRepo, bus } = createService();
+      expenseRepo.getById.mockResolvedValue(sampleExpense);
+      shiftRepo.getById.mockResolvedValue({ ...sampleShift, status: 'closed' });
+      await svc.delete(1, 1, 'admin');
+      expect(expenseRepo.delete).toHaveBeenCalledWith(1);
+      expect(bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
+        action: 'DELETE_EXPENSE',
+        newValues: expect.objectContaining({ closedShiftOverride: true }),
+      }));
+    });
+
+    it('allows deleting an expense from an open shift for a non-admin', async () => {
+      const { svc, expenseRepo, shiftRepo } = createService();
+      expenseRepo.getById.mockResolvedValue(sampleExpense);
+      shiftRepo.getById.mockResolvedValue({ ...sampleShift, status: 'open' });
+      await svc.delete(1, 1, 'cashier');
+      expect(expenseRepo.delete).toHaveBeenCalledWith(1);
     });
   });
 

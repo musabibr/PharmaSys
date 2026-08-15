@@ -58,7 +58,7 @@ export function transactionRoutes(services: ServiceContainer): Router {
   }));
 
   router.post('/:id/void', requireMicroPerm('finance.transactions.void'), handle(async (req, res) => {
-    res.json({ data: await services.transaction.voidTransaction(Number(req.params.id), req.body.reason, req.user!.id) });
+    res.json({ data: await services.transaction.voidTransaction(Number(req.params.id), req.body.reason, req.user!.id, req.body.force, req.user!.role) });
   }));
 
   router.get('/by-product', requireAuth, handle(async (req, res) => {

@@ -66,7 +66,7 @@ export function registerTransactionHandlers(router: IpcRouter, services: Service
 
   // Frontend sends { id, reason, force }
   router.handle('transactions:void', async (user, payload: { id: number; reason: string; force?: boolean }) => {
-    const txn = await services.transaction.voidTransaction(payload.id, payload.reason, user!.id, payload.force);
+    const txn = await services.transaction.voidTransaction(payload.id, payload.reason, user!.id, payload.force, user!.role);
     return { success: true, restored_items: txn.items?.length ?? 0 };
   }, { permission: 'finance.transactions.void' });
 

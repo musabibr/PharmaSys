@@ -514,7 +514,14 @@ export class MigrationRepository {
     await this._cleanupSupplierPaymentExpenses();
 
     // Fix return date attribution: returns get parent sale's created_at and shift_id
-    await this._migrateReturnDates();
+    // _migrateReturnDates() used to run here on every boot, unconditionally
+    // re-syncing every return's created_at/shift_id back to the ORIGINAL
+    // sale's values. That was consistent with the old (buggy) design where
+    // a return inherited the sale's shift/date; now that a return is
+    // stamped with its own current shift/date (A2 — see
+    // TransactionService.createReturn), this migration would silently undo
+    // that fix on the very next app restart. Removed; historical rows are
+    // deliberately left as they were rather than rewritten again.
 
     // Recurring expenses table (for existing databases that don't have it yet)
     await this.base.rawRun(`CREATE TABLE IF NOT EXISTS recurring_expenses (
@@ -2020,19 +2027,6 @@ export class MigrationRepository {
   }
 
   /** Fix return date attribution: returns should use parent sale's created_at and shift_id. */
-  private async _migrateReturnDates(): Promise<void> {
-    try {
-      await this.base.rawRun(`
-        UPDATE transactions
-        SET created_at = (SELECT p.created_at FROM transactions p WHERE p.id = transactions.parent_transaction_id),
-            shift_id   = (SELECT p.shift_id   FROM transactions p WHERE p.id = transactions.parent_transaction_id)
-        WHERE transaction_type = 'return'
-          AND parent_transaction_id IS NOT NULL
-          AND (SELECT p.created_at FROM transactions p WHERE p.id = transactions.parent_transaction_id) IS NOT NULL
-      `);
-    } catch { /* table may not exist yet */ }
-  }
-
   private async _unlockAdminAccounts(): Promise<void> {
     await this.base.rawRun(
       "UPDATE users SET locked_until = NULL, failed_login_attempts = 0 WHERE role = 'admin'"

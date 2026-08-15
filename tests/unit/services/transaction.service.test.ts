@@ -1,5 +1,5 @@
 import { TransactionService } from '@core/services/transaction.service';
-import { ValidationError, NotFoundError, ConflictError } from '@core/types/errors';
+import { ValidationError, NotFoundError, ConflictError, BusinessRuleError } from '@core/types/errors';
 import {
   createMockTransactionRepo, createMockBatchRepo, createMockShiftRepo,
   createMockProductRepo, createMockBaseRepo, createMockBus,
@@ -348,6 +348,36 @@ describe('TransactionService', () => {
       expect(result.transaction_type).toBe('return');
     });
 
+    it('attributes the return to the CURRENT open shift, not the original sale\'s shift (A2)', async () => {
+      const deps = createService();
+      setupReturnScenario(deps);
+      // Original sale's shift_id is 1 (sampleTransaction); the user's
+      // currently open shift is a different one (99) — the return must use
+      // the current shift so a same-day refund lands in today's drawer,
+      // not a past (possibly closed) shift.
+      deps.shiftRepo.findOpenByUser.mockResolvedValue({ ...sampleShift, id: 99 });
+      await deps.svc.createReturn(returnInput, 1);
+      expect(deps.txnRepo.insert).toHaveBeenCalledWith(expect.objectContaining({ shift_id: 99 }));
+    });
+
+    it('does not backdate the return to the original sale\'s created_at (A2)', async () => {
+      const deps = createService();
+      setupReturnScenario(deps);
+      await deps.svc.createReturn(returnInput, 1);
+      // sampleTransaction.created_at is '2026-02-25 10:00:00' — the return
+      // must NOT carry that forward; it should let the DB default apply
+      // (created_at omitted from the insert payload).
+      const insertedData = deps.txnRepo.insert.mock.calls[0][0];
+      expect(insertedData.created_at).not.toBe('2026-02-25 10:00:00');
+    });
+
+    it('throws when the returning user has no open shift (shifts enabled, non-admin)', async () => {
+      const deps = createService();
+      setupReturnScenario(deps);
+      deps.shiftRepo.findOpenByUser.mockResolvedValue(undefined);
+      await expect(deps.svc.createReturn(returnInput, 1)).rejects.toThrow(ValidationError);
+    });
+
     it('uses original sale prices for return items', async () => {
       const deps = createService();
       setupReturnScenario(deps);
@@ -554,6 +584,53 @@ describe('TransactionService', () => {
       await deps.svc.voidTransaction(1, 'mistake', 1);
       expect(deps.bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
         action: 'VOID_TRANSACTION',
+      }));
+    });
+
+    // ─── C2: refuse to void a sale with live returns ────────────────────
+    it('refuses to void a sale that has active returns (C2)', async () => {
+      const deps = createService();
+      deps.txnRepo.getById.mockResolvedValue({
+        ...sampleTransaction,
+        returns: [{ ...sampleTransaction, id: 2, transaction_number: 'RTN-001', transaction_type: 'return' }],
+      });
+      await expect(deps.svc.voidTransaction(1, 'x', 1)).rejects.toThrow(BusinessRuleError);
+      expect(deps.txnRepo.markVoided).not.toHaveBeenCalled();
+    });
+
+    it('allows voiding a sale whose only returns are already voided', async () => {
+      const deps = createService();
+      deps.txnRepo.getById
+        .mockResolvedValueOnce({ ...sampleTransaction, returns: [] })
+        .mockResolvedValue({ ...sampleTransaction, is_voided: 1 });
+      deps.batchRepo.getById.mockResolvedValue({ ...sampleBatch, quantity_base: 180 });
+      deps.batchRepo.updateQuantityOptimistic.mockResolvedValue(true);
+      await deps.svc.voidTransaction(1, 'x', 1);
+      expect(deps.txnRepo.markVoided).toHaveBeenCalled();
+    });
+
+    // ─── A4: closed-shift write protection ──────────────────────────────
+    it('blocks voiding a transaction from a closed shift for a non-admin (A4)', async () => {
+      const deps = createService();
+      deps.txnRepo.getById.mockResolvedValue(sampleTransaction); // shift_id: 1
+      deps.shiftRepo.getById.mockResolvedValue({ ...sampleShift, status: 'closed' });
+      await expect(deps.svc.voidTransaction(1, 'x', 1, false, 'cashier')).rejects.toThrow(BusinessRuleError);
+      expect(deps.txnRepo.markVoided).not.toHaveBeenCalled();
+    });
+
+    it('allows an admin to void a transaction from a closed shift, flagging the override', async () => {
+      const deps = createService();
+      deps.txnRepo.getById
+        .mockResolvedValueOnce(sampleTransaction)
+        .mockResolvedValue({ ...sampleTransaction, is_voided: 1 });
+      deps.shiftRepo.getById.mockResolvedValue({ ...sampleShift, status: 'closed' });
+      deps.batchRepo.getById.mockResolvedValue({ ...sampleBatch, quantity_base: 180 });
+      deps.batchRepo.updateQuantityOptimistic.mockResolvedValue(true);
+      await deps.svc.voidTransaction(1, 'correction', 1, false, 'admin');
+      expect(deps.txnRepo.markVoided).toHaveBeenCalled();
+      expect(deps.bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
+        action: 'VOID_TRANSACTION',
+        newValues: expect.objectContaining({ closedShiftOverride: true }),
       }));
     });
   });

@@ -16,7 +16,7 @@ import type {
 import type { IFIFOBatch } from '../types/repositories';
 import { Validate }        from '../common/validation';
 import { Money }           from '../common/money';
-import { NotFoundError, ValidationError, ConflictError } from '../types/errors';
+import { NotFoundError, ValidationError, ConflictError, BusinessRuleError } from '../types/errors';
 
 interface DeductedLine {
   batchId:      number;
@@ -151,8 +151,28 @@ export class TransactionService {
       }
     }
 
-    // Return is attributed to the original sale's shift and date
-    const shiftId = original.shift_id;
+    // A2 fix (2026-08-15 cutover — historical rows predating this are left
+    // as-is, see issues.md): a return used to inherit the ORIGINAL sale's
+    // shift_id and created_at. That mutated already-closed shift
+    // reconciliation retroactively (expected_cash for a closed shift no
+    // longer matched what was actually recorded when it closed), and
+    // deducted today's refund from a shift that isn't open today — so the
+    // cashier's drawer closed short by exactly the refund amount with
+    // nothing on screen explaining why. A return is its own cash event: it
+    // belongs to the shift and date it actually happened in.
+    // parent_transaction_id still links it to the original sale for
+    // "returns against period X" cohort reporting.
+    let shiftId: number | null = null;
+    if (shiftsOn && userRole !== 'admin') {
+      const shift = await this.shiftRepo.findOpenByUser(userId);
+      if (!shift) {
+        throw new ValidationError('No open shift. Please open a shift before processing a return.', 'shift');
+      }
+      shiftId = shift.id;
+    } else if (shiftsOn && userRole === 'admin') {
+      const shift = await this.shiftRepo.findOpenByUser(userId);
+      if (shift) shiftId = shift.id;
+    }
 
     // ── 3. Load already-returned quantities ──────────────────────────────────
     const returnedMap = await this.repo.getReturnedQuantities(data.original_transaction_id);
@@ -398,10 +418,11 @@ export class TransactionService {
         items:           [],
       };
 
+      // No createdAt override — the return gets its own current timestamp
+      // (A2), not the original sale's.
       return await this._commitTransaction(
         txnData, lines, userId, shiftId,
-        data.original_transaction_id,
-        original.created_at
+        data.original_transaction_id
       );
     });
   }
@@ -419,7 +440,7 @@ export class TransactionService {
     return await this.repo.getSalesByProduct(filters);
   }
 
-  async voidTransaction(id: number, reason: string, voidedBy: number, force?: boolean): Promise<Transaction> {
+  async voidTransaction(id: number, reason: string, voidedBy: number, force?: boolean, voidedByRole?: string): Promise<Transaction> {
     Validate.id(id);
     Validate.id(voidedBy, 'User');
     const r = Validate.requiredString(reason, 'Void reason', 500);
@@ -427,6 +448,38 @@ export class TransactionService {
     const txn = await this.repo.getById(id);
     if (!txn) throw new NotFoundError('Transaction', id);
     if (txn.is_voided) throw new ValidationError('Transaction is already voided', 'voided');
+
+    // C2: voidTransaction correctly avoids double-restoring stock for a
+    // sale that had a partial return, but never touched the return itself.
+    // The sale would then be excluded from revenue while its return stayed
+    // live — a refund charged against a sale that officially never
+    // happened, net_sales = 0 - return_total. txn.returns is already
+    // populated with only non-voided returns (see repo.getById), so this
+    // is free. Refusing (rather than cascading) keeps the void auditable:
+    // the operator sees exactly what has to happen first.
+    if (txn.transaction_type === 'sale' && txn.returns && txn.returns.length > 0) {
+      const numbers = txn.returns.map(r => r.transaction_number).join(', ');
+      throw new BusinessRuleError(
+        `Cannot void this sale — it has ${txn.returns.length} active return(s) (${numbers}). Void those first.`
+      );
+    }
+
+    // A4: a shift's expected_cash/variance are a frozen snapshot once closed
+    // — voiding a transaction that fed that snapshot after the fact makes it
+    // permanently unreproducible with no visible trace. Non-admins are
+    // blocked outright; an admin can still override, recorded on the event.
+    let closedShiftOverride = false;
+    if (txn.shift_id) {
+      const shift = await this.shiftRepo.getById(txn.shift_id);
+      if (shift?.status === 'closed') {
+        if (voidedByRole !== 'admin') {
+          throw new BusinessRuleError(
+            'Cannot void a transaction from a closed shift. Ask an admin to make this correction.'
+          );
+        }
+        closedShiftOverride = true;
+      }
+    }
 
     return await this.base.inTransaction(async () => {
       // For sale voids: load already-returned quantities so we don't double-restore
@@ -527,7 +580,7 @@ export class TransactionService {
       this.bus.emit('entity:mutated', {
         action: 'VOID_TRANSACTION', table: 'transactions',
         recordId: id, userId: voidedBy,
-        newValues: { void_reason: r },
+        newValues: { void_reason: r, ...(closedShiftOverride ? { closedShiftOverride: true } : {}) },
       });
 
       return (await this.repo.getById(id))!;
