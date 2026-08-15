@@ -369,6 +369,7 @@ export interface IPurchaseRepository {
     line_total: number;
     expiry_date: string | null;
     batch_number: string | null;
+    conversion_factor_snapshot?: number;
   }): Promise<number>;
   insertPayment(data: {
     purchase_id: number;

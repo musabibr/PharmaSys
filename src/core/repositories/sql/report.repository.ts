@@ -705,9 +705,14 @@ export class ReportRepository implements IReportRepository {
     return await this.base.getAll(`
       WITH 
       PurchaseTotals AS (
-        SELECT pi.product_id, SUM(pi.quantity_received * COALESCE(NULLIF(p.conversion_factor, 0), 1)) as qty 
+        -- E3: conversion_factor_snapshot is the CF that was actually true
+        -- when each purchase happened, not today's — SalesTotals already
+        -- uses quantity_base, which was computed at sale time from
+        -- transaction_items' own snapshot. Using the live products.cf here
+        -- instead made any later CF change (B2) permanently desync the two
+        -- sides, producing a phantom variance no physical count could clear.
+        SELECT pi.product_id, SUM(pi.quantity_received * COALESCE(NULLIF(pi.conversion_factor_snapshot, 0), 1)) as qty
         FROM purchase_items pi
-        JOIN products p ON pi.product_id = p.id
         GROUP BY pi.product_id
       ),
       SalesTotals AS (

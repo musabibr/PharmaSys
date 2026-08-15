@@ -159,18 +159,24 @@ export class PurchaseRepository implements IPurchaseRepository {
     line_total: number;
     expiry_date: string | null;
     batch_number: string | null;
+    /** The product's conversion_factor AT THE TIME of this purchase (E3) —
+     *  mirrors transaction_items.conversion_factor_snapshot so reconciliation
+     *  compares purchases and sales on the same historical scale even after
+     *  a later CF change. Defaults to 1 for callers that don't pass one. */
+    conversion_factor_snapshot?: number;
   }): Promise<number> {
     return await this.base.runReturningId(
       `INSERT INTO purchase_items (
          purchase_id, product_id, batch_id, quantity_received,
          cost_per_parent, selling_price_parent, line_total,
-         expiry_date, batch_number
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         expiry_date, batch_number, conversion_factor_snapshot
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.purchase_id, data.product_id, data.batch_id,
         data.quantity_received, data.cost_per_parent,
         data.selling_price_parent, data.line_total,
         data.expiry_date, data.batch_number,
+        data.conversion_factor_snapshot ?? 1,
       ]
     );
   }

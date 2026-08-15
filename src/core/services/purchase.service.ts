@@ -977,6 +977,7 @@ export class PurchaseService {
           line_total: lineTotal,
           expiry_date: item.expiry_date,
           batch_number: item.batch_number ?? null,
+          conversion_factor_snapshot: cf,
         });
       } else if (item.new_product) {
         // ── New product → find existing or create product + batch ──
@@ -1071,6 +1072,7 @@ export class PurchaseService {
           line_total: lineTotal,
           expiry_date: item.expiry_date,
           batch_number: item.batch_number ?? null,
+          conversion_factor_snapshot: cf,
         });
 
         // Emit product event

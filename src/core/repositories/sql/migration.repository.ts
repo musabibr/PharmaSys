@@ -300,6 +300,7 @@ export class MigrationRepository {
         batch_number TEXT,
         notes TEXT,
         created_at TEXT DEFAULT (datetime('now', 'localtime')),
+        conversion_factor_snapshot INTEGER NOT NULL DEFAULT 1,
         FOREIGN KEY (purchase_id) REFERENCES purchases(id) ON DELETE CASCADE,
         FOREIGN KEY (product_id) REFERENCES products(id),
         FOREIGN KEY (batch_id) REFERENCES batches(id)
@@ -594,6 +595,21 @@ export class MigrationRepository {
     // cascade-eligible path.
     await this._migrateColumn('batches', 'price_manually_set_at',
       'ALTER TABLE batches ADD COLUMN price_manually_set_at TEXT');
+
+    // E3: reconciliation compared purchase quantities (parent units x
+    // TODAY'S conversion factor) against sale quantities (already stored in
+    // base units at the CF that was true when each sale happened). Any CF
+    // change (B2) made the two sides use different scales, producing a
+    // permanent phantom variance no physical count could ever clear —
+    // mirrors the same conversion_factor_snapshot pattern transaction_items
+    // already proved works. Existing rows have no real history to recover,
+    // so they're backfilled from the product's CURRENT cf — the best
+    // available guess, and no worse than what the unpatched query did.
+    await this._migrateColumn('purchase_items', 'conversion_factor_snapshot',
+      'ALTER TABLE purchase_items ADD COLUMN conversion_factor_snapshot INTEGER NOT NULL DEFAULT 1',
+      `UPDATE purchase_items SET conversion_factor_snapshot = (
+         SELECT COALESCE(NULLIF(p.conversion_factor, 0), 1) FROM products p WHERE p.id = purchase_items.product_id
+       )`);
 
     // Cycle counts
     await this.base.rawRun(`CREATE TABLE IF NOT EXISTS cycle_counts (
