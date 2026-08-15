@@ -889,7 +889,7 @@ export interface PharmaSysApi {
     getAll(filters?: unknown): Promise<PaginatedResult<Expense>>;
     create(expenseData: Partial<Expense>): Promise<Expense>;
     update(id: number, data: Partial<Expense>): Promise<Expense>;
-    delete(id: number): Promise<{ success: boolean }>;
+    delete(id: number, reason: string): Promise<{ success: boolean }>;
   };
 
   recurringExpenses: {

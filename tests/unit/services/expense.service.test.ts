@@ -194,21 +194,28 @@ describe('ExpenseService', () => {
     it('deletes expense by id', async () => {
       const { svc, expenseRepo } = createService();
       expenseRepo.getById.mockResolvedValue(sampleExpense);
-      await svc.delete(1, 1);
+      await svc.delete(1, 1, undefined, 'test reason');
       expect(expenseRepo.delete).toHaveBeenCalledWith(1);
     });
 
     it('throws ValidationError for invalid id', async () => {
       const { svc } = createService();
-      await expect(svc.delete(0, 1)).rejects.toThrow(ValidationError);
+      await expect(svc.delete(0, 1, undefined, 'test reason')).rejects.toThrow(ValidationError);
+    });
+
+    it('throws ValidationError when no reason is given', async () => {
+      const { svc, expenseRepo } = createService();
+      expenseRepo.getById.mockResolvedValue(sampleExpense);
+      await expect(svc.delete(1, 1)).rejects.toThrow(ValidationError);
     });
 
     it('emits entity:mutated on delete', async () => {
       const { svc, expenseRepo, bus } = createService();
       expenseRepo.getById.mockResolvedValue(sampleExpense);
-      await svc.delete(1, 1);
+      await svc.delete(1, 1, undefined, 'test reason');
       expect(bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
         action: 'DELETE_EXPENSE',
+        newValues: expect.objectContaining({ delete_reason: 'test reason' }),
       }));
     });
 
@@ -216,7 +223,7 @@ describe('ExpenseService', () => {
       const { svc, expenseRepo, shiftRepo } = createService();
       expenseRepo.getById.mockResolvedValue(sampleExpense); // shift_id: 1
       shiftRepo.getById.mockResolvedValue({ ...sampleShift, status: 'closed' });
-      await expect(svc.delete(1, 1, 'cashier')).rejects.toThrow(BusinessRuleError);
+      await expect(svc.delete(1, 1, 'cashier', 'test reason')).rejects.toThrow(BusinessRuleError);
       expect(expenseRepo.delete).not.toHaveBeenCalled();
     });
 
@@ -224,7 +231,7 @@ describe('ExpenseService', () => {
       const { svc, expenseRepo, shiftRepo, bus } = createService();
       expenseRepo.getById.mockResolvedValue(sampleExpense);
       shiftRepo.getById.mockResolvedValue({ ...sampleShift, status: 'closed' });
-      await svc.delete(1, 1, 'admin');
+      await svc.delete(1, 1, 'admin', 'test reason');
       expect(expenseRepo.delete).toHaveBeenCalledWith(1);
       expect(bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
         action: 'DELETE_EXPENSE',
@@ -236,7 +243,7 @@ describe('ExpenseService', () => {
       const { svc, expenseRepo, shiftRepo } = createService();
       expenseRepo.getById.mockResolvedValue(sampleExpense);
       shiftRepo.getById.mockResolvedValue({ ...sampleShift, status: 'open' });
-      await svc.delete(1, 1, 'cashier');
+      await svc.delete(1, 1, 'cashier', 'test reason');
       expect(expenseRepo.delete).toHaveBeenCalledWith(1);
     });
   });

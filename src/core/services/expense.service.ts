@@ -139,10 +139,16 @@ export class ExpenseService {
     return created;
   }
 
-  async delete(id: number, userId: number, userRole?: string): Promise<void> {
+  async delete(id: number, userId: number, userRole?: string, reason?: string): Promise<void> {
     Validate.id(id);
     const expense = await this.repo.getById(id);
     if (!expense) throw new NotFoundError('Expense', id);
+
+    // A hard-deleted expense leaves no row behind — the reason it was
+    // removed only survives if it's captured on the audit event itself.
+    // Required (like a void reason) so an admin reviewing the audit trail
+    // later can actually see WHY, not just that a deletion happened.
+    const cleanReason = Validate.requiredString(reason, 'Delete reason', 500);
 
     // A4: once a shift closes, its expected_cash/variance are a frozen
     // snapshot — but the expenses that fed that snapshot stayed freely
@@ -173,7 +179,10 @@ export class ExpenseService {
       action: 'DELETE_EXPENSE', table: 'expenses',
       recordId: id, userId,
       oldValues: { amount: expense.amount, expense_date: expense.expense_date, shift_id: expense.shift_id },
-      ...(closedShiftOverride ? { newValues: { closedShiftOverride: true } } : {}),
+      newValues: {
+        delete_reason: cleanReason,
+        ...(closedShiftOverride ? { closedShiftOverride: true } : {}),
+      },
     });
   }
 

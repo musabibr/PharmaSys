@@ -57,7 +57,7 @@ async function request(method, path, body) {
 function get(path)        { return request('GET',    path); }
 function post(path, body) { return request('POST',   path, body); }
 function put(path, body)  { return request('PUT',    path, body); }
-function del(path)        { return request('DELETE', path); }
+function del(path, body)  { return request('DELETE', path, body); }
 
 /** Build query string from an object, filtering out null/undefined/empty values */
 function qs(params) {
@@ -264,7 +264,7 @@ contextBridge.exposeInMainWorld('api', {
     getAll:         async (filters)       => get(`/api/v1/expenses${qs(filters)}`),
     create:         async (expenseData)   => post('/api/v1/expenses', expenseData),
     update:         async (id, data)      => put(`/api/v1/expenses/${id}`, data),
-    delete:         async (id)            => del(`/api/v1/expenses/${id}`),
+    delete:         async (id, reason)    => del(`/api/v1/expenses/${id}`, { reason }),
   },
 
   // ════════════════════════════════════════

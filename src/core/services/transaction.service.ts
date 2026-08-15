@@ -49,6 +49,15 @@ export class TransactionService {
     return (await this.settingsRepo.get('shifts_enabled')) !== 'false';
   }
 
+  /** Numeric setting with a fallback default — used for the configurable
+   *  return/void time windows below. */
+  private async _numericSetting(key: string, fallback: number): Promise<number> {
+    if (!this.settingsRepo) return fallback;
+    const raw = await this.settingsRepo.get(key);
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : fallback;
+  }
+
   async getAll(filters: TransactionFilters): Promise<PaginatedResult<Transaction>> {
     return await this.repo.getAll(filters);
   }
@@ -126,25 +135,27 @@ export class TransactionService {
       );
     }
 
-    // ── 2. Authorization window checks ───────────────────────────────────────
+    // ── 2. Authorization window checks (configurable via settings) ──────────
     const shiftsOn = await this._shiftsEnabled();
     if (shiftsOn && userRole !== 'admin') {
-      // 2-shift window — transaction must be from user's last 2 shifts
-      const recentShiftIds = await this.shiftRepo.getLastNShiftIds(userId, 2);
+      // N-shift window — transaction must be from one of the user's last N shifts
+      const returnWindowShifts = await this._numericSetting('return_window_shifts', 2);
+      const recentShiftIds = await this.shiftRepo.getLastNShiftIds(userId, returnWindowShifts);
       if (original.shift_id && !recentShiftIds.includes(original.shift_id)) {
         throw new ValidationError(
-          'This transaction is too old to return. Returns are only allowed within your last 2 shifts.',
+          `This transaction is too old to return. Returns are only allowed within your last ${returnWindowShifts} shift(s).`,
           'shift'
         );
       }
     } else {
-      // Admin (with shifts on), or anyone (with shifts off): use 7-day date window instead
+      // Admin (with shifts on), or anyone (with shifts off): use the N-day date window instead
       if (original.created_at) {
+        const returnWindowDays = await this._numericSetting('return_window_days', 7);
         const txnDate = new Date(original.created_at).getTime();
-        const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-        if (txnDate < sevenDaysAgo) {
+        const windowStart = Date.now() - returnWindowDays * 24 * 60 * 60 * 1000;
+        if (txnDate < windowStart) {
           throw new ValidationError(
-            'This transaction is too old to return. Returns are only allowed within 7 days.',
+            `This transaction is too old to return. Returns are only allowed within ${returnWindowDays} day(s).`,
             'date'
           );
         }
@@ -449,6 +460,28 @@ export class TransactionService {
     if (!txn) throw new NotFoundError('Transaction', id);
     if (txn.is_voided) throw new ValidationError('Transaction is already voided', 'voided');
 
+    // Void time window (configurable via settings, mirrors the return
+    // window below) — previously there was NO time limit on voiding a
+    // transaction at all. Non-admins are blocked outside the window; an
+    // admin can still void an old transaction, but it's flagged on the
+    // audit event rather than silently allowed (same reasoning as the
+    // closed-shift override just below — an unrestricted admin bypass
+    // with no trace is a standing fraud-review gap).
+    let windowOverride = false;
+    if (txn.created_at) {
+      const voidWindowHours = await this._numericSetting('void_window_hours', 24);
+      const txnAge = Date.now() - new Date(txn.created_at).getTime();
+      if (txnAge > voidWindowHours * 60 * 60 * 1000) {
+        if (voidedByRole !== 'admin') {
+          throw new ValidationError(
+            `This transaction is too old to void. Voids are only allowed within ${voidWindowHours} hour(s).`,
+            'date'
+          );
+        }
+        windowOverride = true;
+      }
+    }
+
     // C2: voidTransaction correctly avoids double-restoring stock for a
     // sale that had a partial return, but never touched the return itself.
     // The sale would then be excluded from revenue while its return stayed
@@ -580,7 +613,11 @@ export class TransactionService {
       this.bus.emit('entity:mutated', {
         action: 'VOID_TRANSACTION', table: 'transactions',
         recordId: id, userId: voidedBy,
-        newValues: { void_reason: r, ...(closedShiftOverride ? { closedShiftOverride: true } : {}) },
+        newValues: {
+          void_reason: r,
+          ...(closedShiftOverride ? { closedShiftOverride: true } : {}),
+          ...(windowOverride ? { windowOverride: true } : {}),
+        },
       });
 
       return (await this.repo.getById(id))!;

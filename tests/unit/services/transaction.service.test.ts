@@ -497,9 +497,14 @@ describe('TransactionService', () => {
   // voidTransaction
   // ═══════════════════════════════════════════════════════════════════════════
   describe('voidTransaction', () => {
+    // sampleTransaction.created_at is a fixed fixture date, long outside any
+    // void window relative to the real clock — these tests aren't about the
+    // window check, so they use a transaction created "just now".
+    const recentTxn = { ...sampleTransaction, created_at: new Date().toISOString() };
+
     it('voids a sale and restores stock', async () => {
       const deps = createService();
-      const txn = { ...sampleTransaction };
+      const txn = { ...recentTxn };
       deps.txnRepo.getById
         .mockResolvedValueOnce(txn)
         .mockResolvedValue({ ...txn, is_voided: 1 });
@@ -516,8 +521,8 @@ describe('TransactionService', () => {
     it('voids a sale and un-sold_out batch', async () => {
       const deps = createService();
       deps.txnRepo.getById
-        .mockResolvedValueOnce(sampleTransaction)
-        .mockResolvedValue({ ...sampleTransaction, is_voided: 1 });
+        .mockResolvedValueOnce(recentTxn)
+        .mockResolvedValue({ ...recentTxn, is_voided: 1 });
       deps.batchRepo.getById.mockResolvedValue({ ...sampleBatch, quantity_base: 0, status: 'sold_out' });
       deps.batchRepo.updateQuantityOptimistic.mockResolvedValue(true);
       await deps.svc.voidTransaction(1, 'error', 1);
@@ -529,7 +534,7 @@ describe('TransactionService', () => {
     it('voids a return and re-deducts stock', async () => {
       const deps = createService();
       const returnTxn = {
-        ...sampleTransaction, transaction_type: 'return' as const,
+        ...recentTxn, transaction_type: 'return' as const,
         items: [{ ...sampleTransaction.items![0] }],
       };
       deps.txnRepo.getById
@@ -547,7 +552,7 @@ describe('TransactionService', () => {
     it('throws when return void has insufficient stock', async () => {
       const deps = createService();
       const returnTxn = {
-        ...sampleTransaction, transaction_type: 'return' as const,
+        ...recentTxn, transaction_type: 'return' as const,
       };
       deps.txnRepo.getById.mockResolvedValue(returnTxn);
       deps.batchRepo.getById.mockResolvedValue({ ...sampleBatch, quantity_base: 5 }); // only 5, need 20
@@ -556,7 +561,7 @@ describe('TransactionService', () => {
 
     it('throws on already voided', async () => {
       const deps = createService();
-      deps.txnRepo.getById.mockResolvedValue({ ...sampleTransaction, is_voided: 1 });
+      deps.txnRepo.getById.mockResolvedValue({ ...recentTxn, is_voided: 1 });
       await expect(deps.svc.voidTransaction(1, 'x', 1)).rejects.toThrow(ValidationError);
     });
 
@@ -568,7 +573,7 @@ describe('TransactionService', () => {
 
     it('throws ConflictError on optimistic lock failure', async () => {
       const deps = createService();
-      deps.txnRepo.getById.mockResolvedValue(sampleTransaction);
+      deps.txnRepo.getById.mockResolvedValue(recentTxn);
       deps.batchRepo.getById.mockResolvedValue(sampleBatch);
       deps.batchRepo.updateQuantityOptimistic.mockResolvedValue(false);
       await expect(deps.svc.voidTransaction(1, 'x', 1)).rejects.toThrow(ConflictError);
@@ -577,8 +582,8 @@ describe('TransactionService', () => {
     it('emits entity:mutated on void', async () => {
       const deps = createService();
       deps.txnRepo.getById
-        .mockResolvedValueOnce(sampleTransaction)
-        .mockResolvedValue({ ...sampleTransaction, is_voided: 1 });
+        .mockResolvedValueOnce(recentTxn)
+        .mockResolvedValue({ ...recentTxn, is_voided: 1 });
       deps.batchRepo.getById.mockResolvedValue(sampleBatch);
       deps.batchRepo.updateQuantityOptimistic.mockResolvedValue(true);
       await deps.svc.voidTransaction(1, 'mistake', 1);
@@ -591,7 +596,7 @@ describe('TransactionService', () => {
     it('refuses to void a sale that has active returns (C2)', async () => {
       const deps = createService();
       deps.txnRepo.getById.mockResolvedValue({
-        ...sampleTransaction,
+        ...recentTxn,
         returns: [{ ...sampleTransaction, id: 2, transaction_number: 'RTN-001', transaction_type: 'return' }],
       });
       await expect(deps.svc.voidTransaction(1, 'x', 1)).rejects.toThrow(BusinessRuleError);
@@ -601,8 +606,8 @@ describe('TransactionService', () => {
     it('allows voiding a sale whose only returns are already voided', async () => {
       const deps = createService();
       deps.txnRepo.getById
-        .mockResolvedValueOnce({ ...sampleTransaction, returns: [] })
-        .mockResolvedValue({ ...sampleTransaction, is_voided: 1 });
+        .mockResolvedValueOnce({ ...recentTxn, returns: [] })
+        .mockResolvedValue({ ...recentTxn, is_voided: 1 });
       deps.batchRepo.getById.mockResolvedValue({ ...sampleBatch, quantity_base: 180 });
       deps.batchRepo.updateQuantityOptimistic.mockResolvedValue(true);
       await deps.svc.voidTransaction(1, 'x', 1);
@@ -612,7 +617,7 @@ describe('TransactionService', () => {
     // ─── A4: closed-shift write protection ──────────────────────────────
     it('blocks voiding a transaction from a closed shift for a non-admin (A4)', async () => {
       const deps = createService();
-      deps.txnRepo.getById.mockResolvedValue(sampleTransaction); // shift_id: 1
+      deps.txnRepo.getById.mockResolvedValue(recentTxn); // shift_id: 1
       deps.shiftRepo.getById.mockResolvedValue({ ...sampleShift, status: 'closed' });
       await expect(deps.svc.voidTransaction(1, 'x', 1, false, 'cashier')).rejects.toThrow(BusinessRuleError);
       expect(deps.txnRepo.markVoided).not.toHaveBeenCalled();
@@ -621,8 +626,8 @@ describe('TransactionService', () => {
     it('allows an admin to void a transaction from a closed shift, flagging the override', async () => {
       const deps = createService();
       deps.txnRepo.getById
-        .mockResolvedValueOnce(sampleTransaction)
-        .mockResolvedValue({ ...sampleTransaction, is_voided: 1 });
+        .mockResolvedValueOnce(recentTxn)
+        .mockResolvedValue({ ...recentTxn, is_voided: 1 });
       deps.shiftRepo.getById.mockResolvedValue({ ...sampleShift, status: 'closed' });
       deps.batchRepo.getById.mockResolvedValue({ ...sampleBatch, quantity_base: 180 });
       deps.batchRepo.updateQuantityOptimistic.mockResolvedValue(true);
@@ -631,6 +636,29 @@ describe('TransactionService', () => {
       expect(deps.bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
         action: 'VOID_TRANSACTION',
         newValues: expect.objectContaining({ closedShiftOverride: true }),
+      }));
+    });
+
+    // ─── Void time window ─────────────────────────────────────────────
+    it('blocks voiding a transaction outside the void window for a non-admin', async () => {
+      const deps = createService();
+      deps.txnRepo.getById.mockResolvedValue(sampleTransaction); // old fixture date
+      await expect(deps.svc.voidTransaction(1, 'x', 1, false, 'cashier')).rejects.toThrow(ValidationError);
+      expect(deps.txnRepo.markVoided).not.toHaveBeenCalled();
+    });
+
+    it('allows an admin to void a transaction outside the void window, flagging the override', async () => {
+      const deps = createService();
+      deps.txnRepo.getById
+        .mockResolvedValueOnce(sampleTransaction) // old fixture date
+        .mockResolvedValue({ ...sampleTransaction, is_voided: 1 });
+      deps.batchRepo.getById.mockResolvedValue({ ...sampleBatch, quantity_base: 180 });
+      deps.batchRepo.updateQuantityOptimistic.mockResolvedValue(true);
+      await deps.svc.voidTransaction(1, 'late correction', 1, false, 'admin');
+      expect(deps.txnRepo.markVoided).toHaveBeenCalled();
+      expect(deps.bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
+        action: 'VOID_TRANSACTION',
+        newValues: expect.objectContaining({ windowOverride: true }),
       }));
     });
   });

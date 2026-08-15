@@ -903,6 +903,13 @@ export class MigrationRepository {
       expiry_warning_days: '90',
       default_markup_percent: '20',
       shifts_enabled: 'true',
+      // How far back a cashier/admin may return or void a transaction —
+      // configurable so an owner can loosen or tighten these per their own
+      // policy instead of the previous hardcoded 2 shifts / 7 days / no
+      // limit at all for voids.
+      return_window_shifts: '2',
+      return_window_days: '7',
+      void_window_hours: '24',
       bank_config: JSON.stringify([
         { id: 'bok', name: 'Bank of Khartoum (BoK)', account_number: '', enabled: true },
         { id: 'fawry', name: 'Fawry', account_number: '', enabled: true },

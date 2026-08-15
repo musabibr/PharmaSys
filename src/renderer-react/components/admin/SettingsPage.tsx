@@ -190,6 +190,9 @@ export function SettingsPage() {
   const [expiryWarningDays, setExpiryWarningDays] = useState('90');
   const [defaultMarkup, setDefaultMarkup] = useState('20');
   const [shiftsEnabled, setShiftsEnabled] = useState(true);
+  const [returnWindowShifts, setReturnWindowShifts] = useState('2');
+  const [returnWindowDays, setReturnWindowDays] = useState('7');
+  const [voidWindowHours, setVoidWindowHours] = useState('24');
   const [savingPreferences, setSavingPreferences] = useState(false);
 
   // ── Security Settings (admin-only) ──────────────────────────────────────
@@ -247,6 +250,9 @@ export function SettingsPage() {
       setExpiryWarningDays(s['expiry_warning_days'] || '90');
       setDefaultMarkup(s['default_markup_percent'] || '20');
       setShiftsEnabled(s['shifts_enabled'] !== 'false');
+      setReturnWindowShifts(s['return_window_shifts'] || '2');
+      setReturnWindowDays(s['return_window_days'] || '7');
+      setVoidWindowHours(s['void_window_hours'] || '24');
       setSessionTimeout(s['session_timeout_minutes'] || '30');
       setLockoutAttempts(s['account_lockout_attempts'] || '5');
       setLockoutDuration(s['account_lockout_duration_minutes'] || '15');
@@ -347,6 +353,21 @@ export function SettingsPage() {
       toast.error(t('Expiry warning days must be a non-negative number'));
       return;
     }
+    const returnShifts = parseInt(returnWindowShifts, 10);
+    const returnDays = parseInt(returnWindowDays, 10);
+    const voidHours = parseInt(voidWindowHours, 10);
+    if (isNaN(returnShifts) || returnShifts < 1) {
+      toast.error(t('Return window (shifts) must be at least 1'));
+      return;
+    }
+    if (isNaN(returnDays) || returnDays < 1) {
+      toast.error(t('Return window (days) must be at least 1'));
+      return;
+    }
+    if (isNaN(voidHours) || voidHours < 1) {
+      toast.error(t('Void window (hours) must be at least 1'));
+      return;
+    }
     if (isNaN(markup) || markup < 0) {
       toast.error(t('Default markup must be a non-negative number'));
       return;
@@ -363,6 +384,9 @@ export function SettingsPage() {
         expiry_warning_days: String(warningDays),
         default_markup_percent: String(markup),
         shifts_enabled: String(shiftsEnabled),
+        return_window_shifts: String(returnShifts),
+        return_window_days: String(returnDays),
+        void_window_hours: String(voidHours),
       };
 
       for (const [key, value] of Object.entries(keys)) {
@@ -812,6 +836,51 @@ export function SettingsPage() {
                       checked={shiftsEnabled}
                       onCheckedChange={setShiftsEnabled}
                     />
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="return-window-shifts">{t('Return Window (Shifts)')}</Label>
+                      <Input
+                        id="return-window-shifts"
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={returnWindowShifts}
+                        onChange={(e) => setReturnWindowShifts(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {t('Cashiers can return a sale from within this many of their own past shifts.')}
+                      </p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="return-window-days">{t('Return Window (Days)')}</Label>
+                      <Input
+                        id="return-window-days"
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={returnWindowDays}
+                        onChange={(e) => setReturnWindowDays(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {t('Admins (or everyone, when shifts are off) can return a sale up to this many days old.')}
+                      </p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="void-window-hours">{t('Void Window (Hours)')}</Label>
+                      <Input
+                        id="void-window-hours"
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={voidWindowHours}
+                        onChange={(e) => setVoidWindowHours(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {t('How long after a sale/return it can be voided. Admins can still void an older transaction; it is flagged in the audit log.')}
+                      </p>
+                    </div>
                   </div>
 
                   <div className="space-y-1.5">

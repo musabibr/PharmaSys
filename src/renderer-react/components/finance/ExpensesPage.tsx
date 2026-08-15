@@ -385,8 +385,23 @@ export function ExpensesPage() {
       : `${t('Are you sure you want to delete this expense?')}\n\n${expense.category_name ?? t('Expense')} — ${formatCurrency(expense.amount)}`;
     if (!(await confirm({ description: message, destructive: true }))) return;
 
+    // A deleted expense leaves no row behind — the reason only survives if
+    // it's captured now. Required, so it's actually there to review later
+    // (in the audit log) instead of a delete nobody can explain afterward.
+    const reasonInput = await prompt({
+      title: t('Reason for deletion'),
+      description: t('This will be recorded in the audit log.'),
+      placeholder: t('e.g. duplicate entry, entered by mistake...'),
+    });
+    if (reasonInput === null) return; // user cancelled
+    const reason = reasonInput.trim();
+    if (!reason) {
+      toast.error(t('A reason is required'));
+      return;
+    }
+
     try {
-      await api.expenses.delete(expense.id);
+      await api.expenses.delete(expense.id, reason);
       toast.success(isRecurring ? t('Entry revoked') : t('Expense deleted'));
       if (expenses.length === 1 && page > 1) {
         setPage(page - 1);

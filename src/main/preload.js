@@ -296,8 +296,8 @@ contextBridge.exposeInMainWorld('api', {
         update: (id, data) =>
             invoke('expenses:update', { id, data }),
 
-        delete: (id) =>
-            invoke('expenses:delete', id),
+        delete: (id, reason) =>
+            invoke('expenses:delete', { id, reason }),
 
         updateCategory: (id, name) =>
             invoke('expenses:updateCategory', { id, name }),

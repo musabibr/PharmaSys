@@ -36,7 +36,7 @@ export function expenseRoutes(services: ServiceContainer): Router {
   }));
 
   router.delete('/:id', requireMicroPerm('finance.expenses.delete'), handle(async (req, res) => {
-    await services.expense.delete(Number(req.params.id), req.user!.id, req.user!.role);
+    await services.expense.delete(Number(req.params.id), req.user!.id, req.user!.role, req.body?.reason);
     res.json({ data: { ok: true } });
   }));
 
