@@ -3,13 +3,14 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { api } from '@/api';
 import type { AuditEntry, User } from '@/api/types';
+import { ACTION_LABELS, actionLabel, actionBadgeVariant, formatDateTime, resolveEntryName } from '@/lib/audit';
+import { AuditDetailDialog } from '@/components/admin/AuditDetailDialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Select,
   SelectContent,
@@ -25,14 +26,6 @@ import {
   TableRow,
   TableCell,
 } from '@/components/ui/table';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from '@/components/ui/dialog';
-import { Separator } from '@/components/ui/separator';
 import { DataPagination } from '@/components/ui/data-pagination';
 import {
   Filter,
@@ -47,49 +40,6 @@ import {
 // ---------------------------------------------------------------------------
 
 const PAGE_SIZE = 10;
-
-const ACTION_LABELS: Record<string, string> = {
-  'LOGIN':                 'User Login',
-  'LOGOUT':                'User Logout',
-  'CREATE_PRODUCT':        'Product Created',
-  'UPDATE_PRODUCT':        'Product Updated',
-  'DELETE_PRODUCT':        'Product Deleted',
-  'BULK_CREATE_PRODUCTS':  'Products Bulk Import',
-  'CREATE_BATCH':          'Stock Batch Added',
-  'UPDATE_BATCH':          'Stock Batch Updated',
-  'REPORT_DAMAGE':         'Damage Reported',
-  'CREATE_SALE':           'Sale Completed',
-  'CREATE_RETURN':         'Return Processed',
-  'VOID_TRANSACTION':      'Transaction Voided',
-  'CREATE_EXPENSE':        'Expense Created',
-  'DELETE_EXPENSE':        'Expense Deleted',
-  'CREATE_CASH_DROP':      'Cash Withdrawal',
-  'OPEN_SHIFT':            'Shift Opened',
-  'CLOSE_SHIFT':           'Shift Closed',
-  'FORCE_CLOSE_SHIFT':     'Shift Force-Closed',
-  'CREATE_USER':           'User Created',
-  'UPDATE_USER':           'User Updated',
-  'RESET_PASSWORD':        'Password Reset',
-  'UNLOCK_ACCOUNT':        'Account Unlocked',
-  'CHANGE_PASSWORD':       'Password Changed',
-  'CREATE_CATEGORY':       'Category Created',
-  'UPDATE_CATEGORY':       'Category Updated',
-  'UPDATE_SETTING':        'Setting Updated',
-  'MANUAL_BACKUP':         'Backup Created',
-  'RESTORE_BACKUP':        'Backup Restored',
-  'HOLD_SALE':             'Sale Held',
-  'DELETE_HELD_SALE':      'Held Sale Deleted',
-  'CREATE_PURCHASE':       'Purchase Created',
-  'UPDATE_PURCHASE':       'Purchase Updated',
-  'MERGE_PURCHASES':       'Purchases Merged',
-  'MARK_PAYMENT_PAID':     'Payment Recorded',
-  'COMPLETE_PENDING_ITEM': 'Parked Item Completed',
-  'DELETE_PENDING_ITEM':   'Parked Item Deleted',
-  'UPDATE_PENDING_ITEM':   'Parked Item Updated',
-  'DELETE_PAYMENT':        'Payment Deleted',
-  'DELETE_PURCHASE_ITEM':  'Purchase Item Deleted',
-  'ADD_PURCHASE_ITEMS':    'Items Added to Purchase',
-};
 
 const ACTION_OPTIONS = Object.keys(ACTION_LABELS);
 
@@ -110,19 +60,6 @@ const TABLE_OPTIONS = [
 // Helpers
 // ---------------------------------------------------------------------------
 
-function formatDateTime(dateStr: string): string {
-  try {
-    const d = new Date(dateStr);
-    return (
-      d.toLocaleDateString() +
-      ' ' +
-      d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    );
-  } catch {
-    return dateStr;
-  }
-}
-
 function getDefaultDateRange(): { from: string; to: string } {
   const now = new Date();
   // Use local date components — stored timestamps use datetime('now', 'localtime'),
@@ -133,26 +70,6 @@ function getDefaultDateRange(): { from: string; to: string } {
   const to = toLocalDate(now);
   const from = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`;
   return { from, to };
-}
-
-type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline' | 'success' | 'warning';
-
-function getActionBadgeVariant(action: string): BadgeVariant {
-  if (action.startsWith('CREATE_')) return 'success';
-  if (action.startsWith('UPDATE_')) return 'secondary';
-  if (action.startsWith('DELETE_') || action.startsWith('VOID_')) return 'destructive';
-  if (action === 'LOGIN' || action === 'LOGOUT') return 'outline';
-  return 'default';
-}
-
-function safeJsonFormat(value: string | null): string {
-  if (!value) return '';
-  try {
-    const parsed = JSON.parse(value);
-    return JSON.stringify(parsed, null, 2);
-  } catch {
-    return value;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -349,7 +266,7 @@ export function AuditPage() {
                     {filters.actions.length === 0
                       ? t('All')
                       : filters.actions.length === 1
-                        ? (ACTION_LABELS[filters.actions[0]] ?? filters.actions[0])
+                        ? t(actionLabel(filters.actions[0]))
                         : t('{{count}} selected', { count: filters.actions.length })}
                   </span>
                   <svg className="h-4 w-4 opacity-50 shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6"/></svg>
@@ -375,7 +292,7 @@ export function AuditPage() {
                           updateFilter('actions', next);
                         }}
                       />
-                      {t(ACTION_LABELS[action] ?? action)}
+                      {t(actionLabel(action))}
                     </label>
                   ))}
                 </div>
@@ -462,8 +379,7 @@ export function AuditPage() {
                 <TableHead>{t('Time')}</TableHead>
                 <TableHead>{t('User')}</TableHead>
                 <TableHead>{t('Action')}</TableHead>
-                <TableHead>{t('Table')}</TableHead>
-                <TableHead>{t('Record ID')}</TableHead>
+                <TableHead>{t('Record')}</TableHead>
                 <TableHead className="text-end">{t('Details')}</TableHead>
               </TableRow>
             </TableHeader>
@@ -482,19 +398,23 @@ export function AuditPage() {
 
                   {/* Action badge */}
                   <TableCell>
-                    <Badge variant={getActionBadgeVariant(entry.action)}>
-                      {t(ACTION_LABELS[entry.action] ?? entry.action)}
+                    <Badge variant={actionBadgeVariant(entry.action)}>
+                      {t(actionLabel(entry.action))}
                     </Badge>
                   </TableCell>
 
-                  {/* Table name */}
+                  {/* Affected record \u2014 a product name whenever resolvable (a
+                      product directly, or the product a batch belongs to).
+                      record_id alone is a meaningless internal id to an
+                      end user; fall back to table/id only for entities that
+                      aren't products or batches (shifts, users, purchases\u2026). */}
                   <TableCell className="text-sm">
-                    {entry.table_name || '\u2014'}
-                  </TableCell>
-
-                  {/* Record ID */}
-                  <TableCell className="tabular-nums text-sm">
-                    {entry.record_id != null ? entry.record_id : '\u2014'}
+                    {resolveEntryName(entry) ?? (
+                      entry.table_name
+                        ? <span className="text-muted-foreground">{entry.table_name}{entry.record_id != null ? ` #${entry.record_id}` : ''}</span>
+                        : '\u2014'
+                    )}
+                    {entry.batch_number && <span className="ms-1 text-xs text-muted-foreground">({entry.batch_number})</span>}
                   </TableCell>
 
                   {/* Details button */}
@@ -528,82 +448,7 @@ export function AuditPage() {
         onPageChange={setPage}
       />
 
-      {/* ---- Detail Dialog ---- */}
-      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{t('Audit Entry Details')}</DialogTitle>
-            <DialogDescription>
-              {detailEntry
-                ? `${detailEntry.action} — ${formatDateTime(detailEntry.created_at)}`
-                : ''}
-            </DialogDescription>
-          </DialogHeader>
-
-          {detailEntry && (
-            <div className="space-y-4">
-              {/* Summary row */}
-              <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-                <div>
-                  <span className="font-medium text-muted-foreground">{t('Action')}:</span>{' '}
-                  <Badge variant={getActionBadgeVariant(detailEntry.action)} className="ms-1">
-                    {t(ACTION_LABELS[detailEntry.action] ?? detailEntry.action)}
-                  </Badge>
-                </div>
-                <div>
-                  <span className="font-medium text-muted-foreground">{t('User')}:</span>{' '}
-                  {detailEntry.username || `#${detailEntry.user_id}`}
-                </div>
-                <div>
-                  <span className="font-medium text-muted-foreground">{t('Table')}:</span>{' '}
-                  {detailEntry.table_name || '\u2014'}
-                </div>
-                <div>
-                  <span className="font-medium text-muted-foreground">{t('Record ID')}:</span>{' '}
-                  {detailEntry.record_id != null ? detailEntry.record_id : '\u2014'}
-                </div>
-                <div className="col-span-2">
-                  <span className="font-medium text-muted-foreground">{t('Time')}:</span>{' '}
-                  {formatDateTime(detailEntry.created_at)}
-                </div>
-              </div>
-
-              <Separator />
-
-              {/* Previous Values */}
-              {detailEntry.old_values && (
-                <div className="space-y-2">
-                  <Label className="text-sm font-semibold">{t('Previous Values')}</Label>
-                  <ScrollArea className="max-h-64 rounded-md border bg-muted/50 p-1">
-                    <pre className="whitespace-pre-wrap break-words p-3 font-mono text-xs leading-relaxed">
-                      {safeJsonFormat(detailEntry.old_values)}
-                    </pre>
-                  </ScrollArea>
-                </div>
-              )}
-
-              {/* New Values */}
-              {detailEntry.new_values && (
-                <div className="space-y-2">
-                  <Label className="text-sm font-semibold">{t('New Values')}</Label>
-                  <ScrollArea className="max-h-64 rounded-md border bg-muted/50 p-1">
-                    <pre className="whitespace-pre-wrap break-words p-3 font-mono text-xs leading-relaxed">
-                      {safeJsonFormat(detailEntry.new_values)}
-                    </pre>
-                  </ScrollArea>
-                </div>
-              )}
-
-              {/* Edge case: dialog opened but both null (shouldn't happen given button guard) */}
-              {!detailEntry.old_values && !detailEntry.new_values && (
-                <p className="text-center text-sm text-muted-foreground">
-                  {t('No detail data available.')}
-                </p>
-              )}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+      <AuditDetailDialog open={detailOpen} onOpenChange={setDetailOpen} entry={detailEntry} />
     </div>
   );
 }

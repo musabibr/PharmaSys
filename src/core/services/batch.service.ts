@@ -415,8 +415,13 @@ export class BatchService {
     // newly-typed price actually reaches the till.
     const count = await this.repo.bulkUpdateSellingPrices(productId, sellingPriceParent, baseChildPrice, sellingPriceChild, false);
     if (count > 0) {
+      // table/recordId identify a PRODUCT (this re-prices every active batch
+      // of that product), not a single batch row — recording table:'batches'
+      // here would let this event attach itself to whichever batch happens to
+      // share the numeric id with the product once history is filtered by
+      // record_id (I1/I2).
       this.bus.emit('entity:mutated', {
-        action: 'BULK_UPDATE_BATCH_PRICES', table: 'batches',
+        action: 'BULK_UPDATE_BATCH_PRICES', table: 'products',
         recordId: productId, userId,
         newValues: { selling_price_parent: sellingPriceParent, updated_count: count },
       });
@@ -489,10 +494,16 @@ export class BatchService {
           r.product_id, r.new_sell_parent, r.new_sell_child, r.new_sell_child, false
         );
       }
+      // No single record_id applies to a catalogue-wide re-price — mark it
+      // explicitly as a bulk event and list the affected products, so a
+      // record_id-filtered history (I1) doesn't silently miss it.
       this.bus.emit('entity:mutated', {
         action: 'BULK_MARGIN_PRICE_UPDATE', table: 'batches',
         recordId: null, userId,
-        newValues: { updatedProducts: rows.length, updatedBatches, options: opts },
+        newValues: {
+          scope: 'bulk', updatedProducts: rows.length, updatedBatches, options: opts,
+          product_ids: rows.map((r) => r.product_id),
+        },
       });
       return { updatedProducts: rows.length, updatedBatches };
     });
@@ -536,7 +547,8 @@ export class BatchService {
         action: 'BULK_MANUAL_PRICE_UPDATE', table: 'batches',
         recordId: null, userId,
         newValues: {
-          updatedProducts: items.length, updatedBatches,
+          scope: 'bulk', updatedProducts: items.length, updatedBatches,
+          product_ids: items.map((i) => i.product_id),
           items: items.map((i) => ({ product_id: i.product_id, selling_price_parent: i.selling_price_parent, selling_price_child: i.selling_price_child ?? null })),
         },
       });

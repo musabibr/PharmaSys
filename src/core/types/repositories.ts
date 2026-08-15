@@ -292,6 +292,7 @@ export interface IAuditRepository {
     newValues?: Record<string, unknown> | null
   ): Promise<void>;
   getAll(filters: AuditLogFilters): Promise<PaginatedResult<AuditLog>>;
+  getProductHistory(productId: number, limit?: number): Promise<AuditLog[]>;
   purgeOlderThan(days: number): Promise<number>;
   getDeletedBatchExpiry(batchId: number): Promise<string | undefined>;
 }

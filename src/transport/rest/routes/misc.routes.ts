@@ -51,6 +51,10 @@ export function auditRoutes(services: ServiceContainer): Router {
     res.json({ data: await services.audit.getAll(req.query as any) });
   }));
 
+  router.get('/product/:productId', requireAdmin, handle(async (req, res) => {
+    res.json({ data: await services.audit.getProductHistory(Number(req.params.productId)) });
+  }));
+
   router.delete('/purge', requireAdmin, handle(async (req, res) => {
     await services.audit.purgeOlderThan(Number(req.body.olderThanDays ?? 90));
     res.json({ data: { ok: true } });

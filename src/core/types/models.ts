@@ -417,6 +417,12 @@ export interface AuditLog {
   created_at: string;
   // Joined fields
   username?: string;
+  // Resolved display name of the affected row — a product name directly for
+  // table_name='products', or the product that owns the batch for
+  // table_name='batches' (record_id is a batch id there, which means
+  // nothing to a pharmacist/cashier reading the history — see I4/UX).
+  product_name?: string | null;
+  batch_number?: string | null;
 }
 
 // ─── Settings ───
@@ -694,6 +700,10 @@ export interface AuditLogFilters {
   user_id?: number;
   action?: string;
   table_name?: string;
+  /** Show only events for this exact row (requires table_name — record_id is not unique across tables). */
+  record_id?: number;
+  /** Free-text filter over action, username, and the JSON old/new values (server-side; I5). */
+  search?: string;
   page?: number;
   limit?: number;
 }

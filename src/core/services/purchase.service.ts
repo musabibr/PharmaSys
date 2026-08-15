@@ -1116,8 +1116,13 @@ export class PurchaseService {
     );
 
     if (changes > 0) {
+      // table/recordId identify a PRODUCT (every other active batch of that
+      // product is re-priced), not the single batch row that triggered it —
+      // table:'batches' here would attach this event to whichever batch
+      // happens to share the numeric id with the product once history is
+      // filtered by record_id (I1/I2).
       this.bus.emit('entity:mutated', {
-        action: 'PROPAGATE_SELLING_PRICE', table: 'batches',
+        action: 'PROPAGATE_SELLING_PRICE', table: 'products',
         recordId: productId, userId,
         newValues: {
           selling_price_parent: sellParent,

@@ -39,6 +39,25 @@ describe('AuditService', () => {
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // getProductHistory (I4)
+  // ═══════════════════════════════════════════════════════════════════════════
+  describe('getProductHistory', () => {
+    it('delegates to repo.getProductHistory', async () => {
+      const { svc, repo } = createService();
+      repo.getProductHistory.mockResolvedValue([sampleLog]);
+
+      const result = await svc.getProductHistory(1);
+      expect(repo.getProductHistory).toHaveBeenCalledWith(1);
+      expect(result).toHaveLength(1);
+    });
+
+    it('throws ValidationError for an invalid product id', async () => {
+      const { svc } = createService();
+      await expect(svc.getProductHistory(0)).rejects.toThrow();
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // purgeOlderThan
   // ═══════════════════════════════════════════════════════════════════════════
   describe('purgeOlderThan', () => {

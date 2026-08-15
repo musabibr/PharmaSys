@@ -198,7 +198,7 @@ export class ProductService {
       this.bus.emit('entity:mutated', {
         action: 'BULK_CREATE_PRODUCTS', table: 'products',
         recordId: null, userId,
-        newValues: { count: successCount, failedCount, errors },
+        newValues: { scope: 'bulk', count: successCount, failedCount, errors },
       });
     }
     return results;

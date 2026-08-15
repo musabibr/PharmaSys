@@ -7,6 +7,10 @@ export function registerAuditHandlers(router: IpcRouter, services: ServiceContai
     return await services.audit.getAll(filters ?? {});
   }, { adminOnly: true });
 
+  router.handle('audit:getProductHistory', async (_user, productId: number) => {
+    return await services.audit.getProductHistory(productId);
+  }, { adminOnly: true });
+
   router.handle('audit:purge', async (_user, olderThanDays: number) => {
     await services.audit.purgeOlderThan(olderThanDays);
     return { ok: true };

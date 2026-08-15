@@ -147,7 +147,7 @@ export function InventoryPage() {
           </TabsContent>
         )}
         {canViewBatches && (
-          <TabsContent value="adjustments" className="flex-1 overflow-hidden">
+          <TabsContent value="adjustments" className="flex-1 min-h-0 overflow-hidden flex flex-col">
             <AdjustmentsTab />
           </TabsContent>
         )}

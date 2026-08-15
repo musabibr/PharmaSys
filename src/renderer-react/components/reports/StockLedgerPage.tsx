@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
 import { Search, AlertTriangle, RefreshCw } from 'lucide-react';
 import { api } from '@/api';
 import { useApiCall } from '@/api/hooks';
@@ -12,7 +13,6 @@ import { Button } from '@/components/ui/button';
 import {
   Table, TableHeader, TableBody, TableHead, TableRow, TableCell,
 } from '@/components/ui/table';
-import { ProductMovementsDialog } from './ProductMovementsDialog';
 
 /**
  * Per-product stock reconciliation ledger. Shows Purchased / Sold / Returned /
@@ -22,10 +22,10 @@ import { ProductMovementsDialog } from './ProductMovementsDialog';
  */
 export function StockLedgerPage() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const { data, loading, error, refetch } = useApiCall(() => api.reports.productStockLedger(), []);
   const [query, setQuery] = useState('');
   const [onlyVariance, setOnlyVariance] = useState(false);
-  const [selected, setSelected] = useState<ProductStockLedgerRow | null>(null);
 
   const rows = useMemo(() => {
     let list: ProductStockLedgerRow[] = data ?? [];
@@ -113,8 +113,8 @@ export function StockLedgerPage() {
                     rows.map(r => (
                       <TableRow
                         key={r.product_id}
-                        onClick={() => setSelected(r)}
-                        title={t('Click for purchase, sales & adjustment details')}
+                        onClick={() => navigate(`/inventory/product/${r.product_id}`)}
+                        title={t('Open product profile')}
                         className={`cursor-pointer hover:bg-muted/50 ${r.variance_base !== 0 ? 'bg-destructive/5' : ''}`}
                       >
                         <TableCell className="font-medium">{r.name}</TableCell>
@@ -136,12 +136,6 @@ export function StockLedgerPage() {
           )}
         </CardContent>
       </Card>
-
-      <ProductMovementsDialog
-        open={!!selected}
-        onOpenChange={(o) => { if (!o) setSelected(null); }}
-        product={selected}
-      />
     </div>
   );
 }

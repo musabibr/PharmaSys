@@ -34,6 +34,7 @@ import type { DeviceMode } from '@/api/types';
 const CashFlowPage = lazy(() => import('@/components/reports/CashFlowPage').then(m => ({ default: m.CashFlowPage })));
 const ProfitLossPage = lazy(() => import('@/components/reports/ProfitLossPage').then(m => ({ default: m.ProfitLossPage })));
 const StockLedgerPage = lazy(() => import('@/components/reports/StockLedgerPage').then(m => ({ default: m.StockLedgerPage })));
+const ProductProfilePage = lazy(() => import('@/components/inventory/ProductProfilePage').then(m => ({ default: m.ProductProfilePage })));
 
 function LazyFallback() {
   return (
@@ -276,6 +277,11 @@ export function App() {
           <Route path="/stock-ledger" element={
             <ProtectedRoute permission="inventory.valuation">
               <Suspense fallback={<LazyFallback />}><StockLedgerPage /></Suspense>
+            </ProtectedRoute>
+          } />
+          <Route path="/inventory/product/:productId" element={
+            <ProtectedRoute permission="inventory.valuation">
+              <Suspense fallback={<LazyFallback />}><ProductProfilePage /></Suspense>
             </ProtectedRoute>
           } />
           {/* Phase 5 — Admin */}

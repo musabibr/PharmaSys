@@ -278,6 +278,12 @@ export interface AuditEntry {
   old_values: string | null;
   new_values: string | null;
   created_at: string;
+  // Resolved product name for the affected row (product directly, or the
+  // product a batch belongs to) — record_id alone is a meaningless internal
+  // id to an end user. Null for a hard-deleted batch; the UI falls back to
+  // old_values.product_name for those (captured at delete time).
+  product_name?: string | null;
+  batch_number?: string | null;
 }
 
 // ─── Report types ───────────────────────────────────────────────────────────
@@ -933,6 +939,8 @@ export interface PharmaSysApi {
 
   audit: {
     getAll(filters?: unknown): Promise<PaginatedResult<AuditEntry>>;
+    /** Full audit trail for one product: its own edits + events on its batches (I4). */
+    getProductHistory(productId: number): Promise<AuditEntry[]>;
   };
 
   settings: {

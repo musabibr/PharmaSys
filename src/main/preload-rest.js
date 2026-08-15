@@ -358,6 +358,8 @@ contextBridge.exposeInMainWorld('api', {
   audit: {
     getAll: async (filters) =>
       get(`/api/v1/audit${qs(filters)}`),
+    getProductHistory: async (productId) =>
+      get(`/api/v1/audit/product/${productId}`),
   },
 
   // ════════════════════════════════════════

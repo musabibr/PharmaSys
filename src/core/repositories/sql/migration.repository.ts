@@ -383,6 +383,9 @@ export class MigrationRepository {
       'CREATE INDEX IF NOT EXISTS idx_transactions_user_date ON transactions(user_id, created_at)',
       'CREATE INDEX IF NOT EXISTS idx_transactions_type_voided ON transactions(transaction_type, is_voided, created_at)',
       'CREATE INDEX IF NOT EXISTS idx_audit_user_date ON audit_logs(user_id, created_at)',
+      // Powers "history of this product/batch" (record_id filter — I1). Without
+      // it, filtering by record_id full-scans a table that grows every sale.
+      'CREATE INDEX IF NOT EXISTS idx_audit_record ON audit_logs(table_name, record_id, created_at DESC)',
       'CREATE INDEX IF NOT EXISTS idx_transactions_parent ON transactions(parent_transaction_id)',
       // Purchase indexes
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_purchases_idempotency_key ON purchases(idempotency_key) WHERE idempotency_key IS NOT NULL',

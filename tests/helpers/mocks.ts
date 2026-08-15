@@ -256,7 +256,9 @@ export function createMockAuditRepo() {
   return {
     log: jest.fn().mockResolvedValue(undefined),
     getAll: jest.fn().mockResolvedValue({ data: [], total: 0, page: 1, limit: 50, totalPages: 0 }),
+    getProductHistory: jest.fn().mockResolvedValue([]),
     purgeOlderThan: jest.fn().mockResolvedValue(0),
+    getDeletedBatchExpiry: jest.fn().mockResolvedValue(undefined),
   };
 }
 

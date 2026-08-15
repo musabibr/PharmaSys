@@ -439,6 +439,8 @@ contextBridge.exposeInMainWorld('api', {
     audit: {
         getAll: (filters) =>
             invoke('audit:getAll', filters),
+        getProductHistory: (productId) =>
+            invoke('audit:getProductHistory', productId),
         // No audit:log — all auditing is server-side only
     },
 
