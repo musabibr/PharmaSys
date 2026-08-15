@@ -5,6 +5,7 @@ import type { SettingsRepository } from '../repositories/sql/settings.repository
 import type { EventBus }           from '../events/event-bus';
 import type { Product, ProductFilters, PaginatedResult, CreateProductInput, UpdateProductInput, BulkCreateProductInput } from '../types/models';
 import { Validate }                from '../common/validation';
+import { diffValues }              from '../common/audit-diff';
 import { NotFoundError, ValidationError } from '../types/errors';
 import { Money }                   from '../common/money';
 
@@ -89,12 +90,18 @@ export class ProductService {
       Validate.positiveInteger(data.conversion_factor, 'Conversion factor');
     }
 
-    // Cascade CF change: rescale quantities and recalculate child prices with new CF.
-    // (batchRepo.inTransaction shares the single DB connection with all repos.)
+    // Cascade CF change: recalculate child prices with the new CF, and ONLY
+    // rescale physical stock when the caller explicitly opts to preserve pack
+    // (box) count. quantity_base is the physical count of smallest units, so
+    // silently rescaling it on every CF edit corrupted stock (the reported
+    // variance bug). Default ('keep_units') leaves quantities untouched.
     if (data.conversion_factor !== undefined && data.conversion_factor !== existing.conversion_factor) {
+      const rescale = data.rescaleStock === 'keep_packs';
       await this.batchRepo.inTransaction(async () => {
         await this.repo.update(id, data);
-        await this.batchRepo.rescaleQuantitiesForProduct(id, existing.conversion_factor!, data.conversion_factor!);
+        if (rescale) {
+          await this.batchRepo.rescaleQuantitiesForProduct(id, existing.conversion_factor!, data.conversion_factor!);
+        }
         await this.batchRepo.recalculateChildPricesForProduct(id, data.conversion_factor!);
       });
 
@@ -102,16 +109,26 @@ export class ProductService {
         action: 'CASCADE_CF_CHANGE', table: 'products',
         recordId: id, userId,
         oldValues: { conversion_factor: existing.conversion_factor },
-        newValues: { conversion_factor: data.conversion_factor },
+        newValues: { conversion_factor: data.conversion_factor, rescaleStock: data.rescaleStock ?? 'keep_units' },
       });
     } else {
       await this.repo.update(id, data);
     }
 
+    // Record the PREVIOUS value of every field the patch actually changed —
+    // without this the audit log can only show what a product became, never
+    // what it was, so a price/barcode/min-stock edit is unrecoverable.
+    const { oldValues, newValues } = diffValues(
+      existing as unknown as Record<string, unknown>,
+      data as Record<string, unknown>,
+    );
+
     this.bus.emit('entity:mutated', {
       action: 'UPDATE_PRODUCT', table: 'products',
       recordId: id, userId,
-      oldValues: { name: existing.name }, newValues: data as Record<string, unknown>,
+      // `product_name` identifies the row in the log without looking like a change.
+      oldValues: { product_name: existing.name, ...oldValues },
+      newValues: { product_name: existing.name, ...newValues },
     });
 
     return await this.getById(id);

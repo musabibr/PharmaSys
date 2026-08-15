@@ -82,6 +82,7 @@ export interface Product {
   child_unit: string;
   conversion_factor: number;
   min_stock_level: number;
+  requires_expiry: number;
   usage_instructions: string | null;
   is_active: number;
   created_at: string;
@@ -131,6 +132,9 @@ export interface Transaction {
   bank_name: string | null;
   reference_number: string | null;
   cash_tendered: number;
+  // Raw amount physically handed over for a cash sale (receipt "change given"
+  // display). cash_tendered is clamped to total_amount (cash retained).
+  cash_received: number | null;
   customer_name: string | null;
   customer_phone: string | null;
   notes: string | null;
@@ -382,6 +386,40 @@ export interface DeadCapitalItem {
   stock_quantity: number;
   oldest_batch_date: string | null;
   days_in_inventory: number;
+}
+
+/** One row of the per-product stock reconciliation ledger (all base units). */
+export interface ProductStockLedgerRow {
+  product_id: number;
+  name: string;
+  parent_unit: string;
+  child_unit: string;
+  conversion_factor: number;
+  purchased_base: number;
+  sold_base: number;
+  returned_base: number;
+  adjusted_removed_base: number;
+  on_hand_base: number;
+  expected_base: number;
+  variance_base: number;
+}
+
+/** Drill-down movement history for a single product (Stock Ledger detail). */
+export interface ProductMovements {
+  purchases: Array<{
+    purchase_number: string; invoice_reference: string | null; purchase_date: string;
+    supplier_name: string | null; quantity_received: number; cost_per_parent: number;
+    line_total: number; expiry_date: string | null; batch_number: string | null;
+  }>;
+  sales: Array<{
+    transaction_number: string; transaction_type: string; created_at: string;
+    is_voided: number; quantity_base: number; unit_type: string;
+    unit_price: number; line_total: number;
+  }>;
+  adjustments: Array<{
+    created_at: string; type: string; reason: string | null;
+    quantity_base: number; batch_id: number | null; username: string | null;
+  }>;
 }
 
 export interface InventoryValuationItem {
@@ -790,7 +828,7 @@ export interface PharmaSysApi {
     getList(filters?: ProductFilters): Promise<PaginatedResult<Product>>;
     getById(id: number): Promise<Product>;
     create(productData: Partial<Product>): Promise<Product>;
-    update(id: number, data: Partial<Product>): Promise<Product>;
+    update(id: number, data: Partial<Product> & { rescaleStock?: 'keep_units' | 'keep_packs' }): Promise<Product>;
     delete(id: number): Promise<{ success: boolean }>;
     search(query: string): Promise<Product[]>;
     findByBarcode(barcode: string): Promise<Product | null>;
@@ -885,6 +923,8 @@ export interface PharmaSysApi {
     inventoryValuation(filters?: unknown): Promise<InventoryValuationResult>;
     purchaseReport(startDate: string, endDate: string, supplierId?: number, paymentStatus?: string): Promise<PurchaseReport>;
     inventoryReconciliation(): Promise<any[]>;
+    productStockLedger(): Promise<ProductStockLedgerRow[]>;
+    productMovements(productId: number): Promise<ProductMovements>;
   };
 
   dashboard: {

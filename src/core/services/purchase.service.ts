@@ -16,6 +16,7 @@ import type {
 } from '../types/models';
 import { Validate } from '../common/validation';
 import { Money } from '../common/money';
+import { normalizeExpiry, NO_EXPIRY_SENTINEL } from '../common/expiry';
 import { NotFoundError, ValidationError, BusinessRuleError, InternalError } from '../types/errors';
 
 export class PurchaseService {
@@ -958,7 +959,7 @@ export class PurchaseService {
           product_id: item.product_id,
           batch_id: batchId,
           quantity_received: item.quantity,
-          cost_per_parent: Money.round(item.cost_per_parent),
+          cost_per_parent: Money.roundCost(item.cost_per_parent),
           selling_price_parent: Money.round(item.selling_price_parent),
           line_total: lineTotal,
           expiry_date: item.expiry_date,
@@ -1052,7 +1053,7 @@ export class PurchaseService {
           product_id: productId,
           batch_id: batchId,
           quantity_received: item.quantity,
-          cost_per_parent: Money.round(item.cost_per_parent),
+          cost_per_parent: Money.roundCost(item.cost_per_parent),
           selling_price_parent: Money.round(item.selling_price_parent),
           line_total: lineTotal,
           expiry_date: item.expiry_date,
@@ -1138,9 +1139,9 @@ export class PurchaseService {
     item: { expiry_date: string; quantity: number; cost_per_parent: number;
             selling_price_parent: number; selling_price_child?: number; batch_number?: string },
   ): Promise<number> {
-    const costParent = Money.round(item.cost_per_parent);
+    const costParent = Money.roundCost(item.cost_per_parent);
     const sellParent = Money.round(item.selling_price_parent);
-    const costChild  = Money.divideToChild(costParent, conversionFactor);
+    const costChild  = Money.costPerChild(costParent, conversionFactor);
     const sellChild  = item.selling_price_child && item.selling_price_child > 0
       ? Money.round(item.selling_price_child)
       : Money.divideToChild(sellParent, conversionFactor);
@@ -1151,14 +1152,11 @@ export class PurchaseService {
     // Bound the free-text batch number (length + trim); null when empty.
     const batchNumber = Validate.optionalString(item.batch_number, 'Batch number', 60);
 
-    // Expiry date is NOT NULL in the schema — default to 2 years from now if missing
-    let expiryDate = item.expiry_date && item.expiry_date.trim()
-      ? item.expiry_date
-      : new Date(Date.now() + 2 * 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    // Normalize non-ISO dates so SQLite date() comparisons work
-    const dmyMatch = expiryDate.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (dmyMatch) expiryDate = `${dmyMatch[3]}-${dmyMatch[2].padStart(2, '0')}-${dmyMatch[1].padStart(2, '0')}`;
-    else if (/^\d{4}-\d{2}$/.test(expiryDate)) expiryDate += '-01';
+    // Expiry is optional: normalize to end-of-month ISO when provided, else use
+    // the no-expiry sentinel (batches.expiry_date is NOT NULL).
+    const expiryDate = item.expiry_date && item.expiry_date.trim()
+      ? (normalizeExpiry(item.expiry_date) || NO_EXPIRY_SENTINEL)
+      : NO_EXPIRY_SENTINEL;
 
     Validate.dateString(expiryDate, 'Expiry date');
 
@@ -1357,7 +1355,7 @@ export class PurchaseService {
           throw new BusinessRuleError('Cannot edit cost of a purchase item whose batch has transaction or adjustment history');
         }
       }
-      updateData.cost_per_parent = Money.round(Validate.positiveNumber(data.cost_per_parent, 'Cost'));
+      updateData.cost_per_parent = Money.roundCost(Validate.positiveNumber(data.cost_per_parent, 'Cost'));
     }
     if (data.selling_price_parent !== undefined) updateData.selling_price_parent = Money.round(data.selling_price_parent);
 
@@ -1385,7 +1383,7 @@ export class PurchaseService {
           params.push(updateData.cost_per_parent);
           // Recalculate child cost from parent cost using CF
           if (cf > 1) {
-            const childCost = Money.divideToChild(updateData.cost_per_parent as number, cf);
+            const childCost = Money.costPerChild(updateData.cost_per_parent as number, cf);
             sets.push('cost_per_child = ?', 'cost_per_child_override = ?');
             params.push(childCost, childCost);
           }

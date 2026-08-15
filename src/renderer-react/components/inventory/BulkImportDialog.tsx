@@ -181,7 +181,7 @@ function mapRow(
   const expiryDate = normalizeDate(cell.expiry_date);
   const quantity = toNum(cell.quantity, 0);
   const quantitySmall = toInt(cell.quantity_small, 0);
-  const costPerParent = toInt(cell.cost_per_parent, 0);
+  const costPerParent = toNum(cell.cost_per_parent, 0);
   const sellPricePerParent = toInt(cell.selling_price_parent, 0);
 
   if (!name) {

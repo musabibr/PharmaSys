@@ -415,6 +415,12 @@ contextBridge.exposeInMainWorld('api', {
 
         inventoryReconciliation: () =>
             invoke('reports:inventoryReconciliation'),
+
+        productStockLedger: () =>
+            invoke('reports:productStockLedger'),
+
+        productMovements: (productId) =>
+            invoke('reports:productMovements', productId),
     },
 
     // ════════════════════════════════════════

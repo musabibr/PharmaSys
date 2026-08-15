@@ -27,7 +27,7 @@ import type { HeldSale } from '@/api/types';
 interface HeldSalesSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onRetrieve: (items: CartItem[]) => void;
+  onRetrieve: (items: CartItem[]) => void | Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -102,7 +102,10 @@ export function HeldSalesSheet({ open, onOpenChange, onRetrieve }: HeldSalesShee
     } catch {
       // Non-critical — proceed with retrieval even if delete fails
     }
-    onRetrieve(items);
+    // Await the retrieval (which may open its own confirm) BEFORE closing this
+    // Sheet, so two Radix overlays never open/close in the same tick — that can
+    // leave pointer-events:none stuck on <body> and freeze the UI.
+    await onRetrieve(items);
     onOpenChange(false);
     toast.success(t('Sale retrieved'));
   }

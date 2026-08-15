@@ -342,7 +342,7 @@ export const sampleProduct: Product = {
   usage_instructions: null,
   category_id: 1, category_name: 'Painkillers',
   barcode: '1234567890', parent_unit: 'Box', child_unit: 'Tablet',
-  conversion_factor: 20, min_stock_level: 10, is_active: 1,
+  conversion_factor: 20, min_stock_level: 10, requires_expiry: 1, is_active: 1,
   created_at: '2026-01-01', updated_at: '2026-01-01',
 };
 
@@ -381,7 +381,7 @@ export const sampleTransaction: Transaction = {
   user_id: 1, shift_id: 1, transaction_type: 'sale',
   subtotal: 800, discount_amount: 0, tax_amount: 0, total_amount: 800,
   payment_method: 'cash', bank_name: null, reference_number: null,
-  cash_tendered: 1000, payment: null,
+  cash_tendered: 800, cash_received: 1000, payment: null,
   customer_name: null, customer_phone: null, notes: null,
   is_voided: 0, void_reason: null, voided_by: null, voided_at: null,
   parent_transaction_id: null,

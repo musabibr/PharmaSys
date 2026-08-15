@@ -4,6 +4,7 @@ import { X, Loader2 } from 'lucide-react';
 import { api } from '@/api';
 import { useApiCall } from '@/api/hooks';
 import { useSettingsStore } from '@/stores/settings.store';
+import { parseCost } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { QtyInput } from '@/components/ui/qty-input';
@@ -352,9 +353,9 @@ export function PendingItemEditDialog({ item, open, onOpenChange, onSave }: Pend
                   id="pi-cost"
                   type="number"
                   min={0}
-                  step={1}
+                  step={0.001}
                   value={draft.costPerParent || ''}
-                  onChange={e => update('costPerParent', Math.round(Number(e.target.value) || 0))}
+                  onChange={e => update('costPerParent', parseCost(e.target.value))}
                 />
               </div>
               <div className="space-y-1.5">
@@ -408,7 +409,7 @@ export function PendingItemEditDialog({ item, open, onOpenChange, onSave }: Pend
 
             {draft.costPerParent > 0 && draft.quantity > 0 && (
               <p className="rounded-md bg-muted px-3 py-2 text-sm font-medium">
-                {t('Line Total')}: {(draft.costPerParent * draft.quantity).toLocaleString()} SDG
+                {t('Line Total')}: {Math.round(draft.costPerParent * draft.quantity).toLocaleString()} SDG
               </p>
             )}
           </div>

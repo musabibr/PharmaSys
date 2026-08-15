@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { api, throwIfError } from '@/api';
 import type { Batch } from '@/api/types';
-import { formatCurrency, formatQuantity, unitLabel } from '@/lib/utils';
+import { formatCurrency, formatQuantity, unitLabel, parseCost } from '@/lib/utils';
+import { ExpiryInput } from '@/components/ui/expiry-input';
 import { usePermission } from '@/hooks/usePermission';
 import { useSettingsStore } from '@/stores/settings.store';
 
@@ -160,7 +161,8 @@ export function BatchForm({
   // ---- Auto-calculate cost per child (only if not manually touched) ----
   useEffect(() => {
     if (!costChildTouched && hasChildUnit && costPerParent > 0) {
-      setCostPerChild(Math.floor(costPerParent / conversionFactor));
+      // Cost keeps up to 3 decimals (floored so child costs never exceed parent).
+      setCostPerChild(Math.floor((costPerParent / conversionFactor) * 1000) / 1000);
     }
   }, [costPerParent, hasChildUnit, conversionFactor, costChildTouched]);
 
@@ -215,12 +217,15 @@ export function BatchForm({
 
   // ---- Validation ----
   function validate(): string | null {
-    if (!expiryDate) return t('Expiry date is required');
+    // Expiry is optional (products can be flagged as non-expiring). If provided
+    // on a new batch it must be in the future.
     if (!isEditMode) {
-      const now = new Date();
-      const pad = (n: number) => String(n).padStart(2, '0');
-      const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-      if (expiryDate <= today) return t('Expiry date must be in the future');
+      if (expiryDate) {
+        const now = new Date();
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+        if (expiryDate <= today) return t('Expiry date must be in the future');
+      }
       if (quantity < 1) return t('Quantity must be at least 1');
     }
     if (costPerParent <= 0) return t('Cost per base unit is required');
@@ -273,7 +278,7 @@ export function BatchForm({
         };
 
         if (hasChildUnit) {
-          createData.cost_per_child_override = costPerChild || Math.floor(costPerParent / conversionFactor);
+          createData.cost_per_child_override = costPerChild || Math.floor((costPerParent / conversionFactor) * 1000) / 1000;
           createData.selling_price_child_override = sellPricePerChild || Math.floor((sellPricePerParent || Math.round(costPerParent * 1.2)) / conversionFactor);
         }
 
@@ -341,15 +346,13 @@ export function BatchForm({
             )}
           </div>
 
-          {/* ---- Expiry date ---- */}
+          {/* ---- Expiry date (optional; MM/YY) ---- */}
           <div className="space-y-2">
-            <Label htmlFor="expiry-date">{t('Expiry Date')} *</Label>
-            <Input
+            <Label htmlFor="expiry-date">{t('Expiry Date')}</Label>
+            <ExpiryInput
               id="expiry-date"
-              type="date"
               value={expiryDate}
-              onChange={(e) => setExpiryDate(e.target.value)}
-              required
+              onChange={setExpiryDate}
               disabled={loading}
             />
           </div>
@@ -392,10 +395,10 @@ export function BatchForm({
                   id="cost-parent"
                   type="number"
                   min={0}
-                  step={1}
+                  step={0.001}
                   value={costPerParent || ''}
                   onChange={(e) => {
-                    setCostPerParent(Math.max(0, parseInt(e.target.value, 10) || 0));
+                    setCostPerParent(Math.max(0, parseCost(e.target.value)));
                   }}
                   placeholder="0"
                   disabled={loading}
@@ -481,13 +484,13 @@ export function BatchForm({
                       id="cost-child"
                       type="number"
                       min={0}
-                      step={1}
+                      step={0.001}
                       value={costPerChild || ''}
                       onChange={(e) => {
                         setCostChildTouched(true);
-                        setCostPerChild(Math.max(0, parseInt(e.target.value, 10) || 0));
+                        setCostPerChild(Math.max(0, parseCost(e.target.value)));
                       }}
-                      placeholder={costPerParent > 0 ? String(Math.floor(costPerParent / conversionFactor)) : '0'}
+                      placeholder={costPerParent > 0 ? String(Math.floor((costPerParent / conversionFactor) * 1000) / 1000) : '0'}
                       disabled={loading}
                     />
                   </div>

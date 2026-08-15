@@ -34,6 +34,108 @@ export class ReportRepository implements IReportRepository {
     private readonly getSettingFn: (key: string) => Promise<string | null>
   ) {}
 
+  /**
+   * Per-product stock reconciliation ledger (base units). Purchased is summed
+   * from purchase invoices (quantity_received × current CF); sold/returned from
+   * non-voided transactions; adjusted_removed is the net removed via inventory
+   * adjustments (convention: quantity_base > 0 = removed); on_hand from batches.
+   * Correlated subqueries prevent join fan-out. Expected/Variance are derived
+   * in the service.
+   */
+  async getProductStockLedger(): Promise<Array<{
+    product_id: number; name: string; parent_unit: string; child_unit: string;
+    conversion_factor: number; purchased_base: number; sold_base: number;
+    returned_base: number; adjusted_removed_base: number; on_hand_base: number;
+  }>> {
+    return await this.base.getAll(
+      `SELECT
+         p.id AS product_id, p.name, p.parent_unit, p.child_unit,
+         COALESCE(NULLIF(p.conversion_factor, 0), 1) AS conversion_factor,
+         COALESCE((SELECT SUM(pi.quantity_received) FROM purchase_items pi
+                   WHERE pi.product_id = p.id), 0)
+           * COALESCE(NULLIF(p.conversion_factor, 0), 1) AS purchased_base,
+         COALESCE((SELECT SUM(ti.quantity_base) FROM transaction_items ti
+                   JOIN transactions t ON ti.transaction_id = t.id
+                   WHERE ti.product_id = p.id AND t.transaction_type = 'sale'
+                     AND t.is_voided = 0), 0) AS sold_base,
+         COALESCE((SELECT SUM(ti.quantity_base) FROM transaction_items ti
+                   JOIN transactions t ON ti.transaction_id = t.id
+                   WHERE ti.product_id = p.id AND t.transaction_type = 'return'
+                     AND t.is_voided = 0), 0) AS returned_base,
+         COALESCE((SELECT SUM(ia.quantity_base) FROM inventory_adjustments ia
+                   WHERE ia.product_id = p.id), 0) AS adjusted_removed_base,
+         COALESCE((SELECT SUM(bt.quantity_base) FROM batches bt
+                   WHERE bt.product_id = p.id), 0) AS on_hand_base
+       FROM products p
+       WHERE p.is_active = 1
+       ORDER BY p.name`,
+      []
+    );
+  }
+
+  /**
+   * Full movement history for one product (drill-down from the Stock Ledger):
+   * every purchase, every sale/return, and every inventory adjustment (with its
+   * reason, e.g. "Manual batch quantity edit") that explains stock changes.
+   */
+  async getProductMovements(productId: number): Promise<{
+    purchases: Array<{
+      purchase_number: string; invoice_reference: string | null; purchase_date: string;
+      supplier_name: string | null; quantity_received: number; cost_per_parent: number;
+      line_total: number; expiry_date: string | null; batch_number: string | null;
+    }>;
+    sales: Array<{
+      transaction_number: string; transaction_type: string; created_at: string;
+      is_voided: number; quantity_base: number; unit_type: string;
+      unit_price: number; line_total: number;
+    }>;
+    adjustments: Array<{
+      created_at: string; type: string; reason: string | null;
+      quantity_base: number; batch_id: number | null; username: string | null;
+    }>;
+  }> {
+    const purchases = await this.base.getAll<{
+      purchase_number: string; invoice_reference: string | null; purchase_date: string;
+      supplier_name: string | null; quantity_received: number; cost_per_parent: number;
+      line_total: number; expiry_date: string | null; batch_number: string | null;
+    }>(
+      `SELECT pu.purchase_number, pu.invoice_reference, pu.purchase_date,
+              s.name AS supplier_name, pi.quantity_received, pi.cost_per_parent,
+              pi.line_total, pi.expiry_date, pi.batch_number
+       FROM purchase_items pi
+       JOIN purchases pu ON pi.purchase_id = pu.id
+       LEFT JOIN suppliers s ON pu.supplier_id = s.id
+       WHERE pi.product_id = ?
+       ORDER BY pu.purchase_date DESC, pu.id DESC`,
+      [productId]
+    );
+    const sales = await this.base.getAll<{
+      transaction_number: string; transaction_type: string; created_at: string;
+      is_voided: number; quantity_base: number; unit_type: string;
+      unit_price: number; line_total: number;
+    }>(
+      `SELECT t.transaction_number, t.transaction_type, t.created_at, t.is_voided,
+              ti.quantity_base, ti.unit_type, ti.unit_price, ti.line_total
+       FROM transaction_items ti
+       JOIN transactions t ON ti.transaction_id = t.id
+       WHERE ti.product_id = ? AND t.transaction_type IN ('sale','return')
+       ORDER BY t.created_at DESC, t.id DESC`,
+      [productId]
+    );
+    const adjustments = await this.base.getAll<{
+      created_at: string; type: string; reason: string | null;
+      quantity_base: number; batch_id: number | null; username: string | null;
+    }>(
+      `SELECT ia.created_at, ia.type, ia.reason, ia.quantity_base, ia.batch_id, u.username
+       FROM inventory_adjustments ia
+       LEFT JOIN users u ON ia.user_id = u.id
+       WHERE ia.product_id = ?
+       ORDER BY ia.created_at DESC, ia.id DESC`,
+      [productId]
+    );
+    return { purchases, sales, adjustments };
+  }
+
   async getCashFlow(startDate: string, endDate: string): Promise<CashFlowReport> {
     // CTE 1: Transaction totals (from transactions table only — no JOIN inflation)
     // CTE 2: COGS totals — fix unit mismatch: cost_price is per-display-unit,

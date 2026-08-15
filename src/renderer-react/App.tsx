@@ -5,6 +5,7 @@ import { DirectionProvider } from '@radix-ui/react-direction';
 import { Toaster, toast } from 'sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { ConfirmProvider } from '@/components/ui/confirm-dialog';
+import { PromptProvider } from '@/components/ui/prompt-dialog';
 import { useAuthStore } from '@/stores/auth.store';
 import { useUiStore } from '@/stores/ui.store';
 import { useSettingsStore } from '@/stores/settings.store';
@@ -32,6 +33,7 @@ import type { DeviceMode } from '@/api/types';
 // Lazy-load report pages (Recharts is ~200KB — defer until user navigates to reports)
 const CashFlowPage = lazy(() => import('@/components/reports/CashFlowPage').then(m => ({ default: m.CashFlowPage })));
 const ProfitLossPage = lazy(() => import('@/components/reports/ProfitLossPage').then(m => ({ default: m.ProfitLossPage })));
+const StockLedgerPage = lazy(() => import('@/components/reports/StockLedgerPage').then(m => ({ default: m.StockLedgerPage })));
 
 function LazyFallback() {
   return (
@@ -207,6 +209,7 @@ export function App() {
   return (
     <DirectionProvider dir={dir}>
     <ConfirmProvider>
+    <PromptProvider>
     <TourProvider>
     <TooltipProvider delayDuration={300}>
       <Routes>
@@ -270,6 +273,11 @@ export function App() {
               <Suspense fallback={<LazyFallback />}><ProfitLossPage /></Suspense>
             </ProtectedRoute>
           } />
+          <Route path="/stock-ledger" element={
+            <ProtectedRoute permission="inventory.valuation">
+              <Suspense fallback={<LazyFallback />}><StockLedgerPage /></Suspense>
+            </ProtectedRoute>
+          } />
           {/* Phase 5 — Admin */}
           <Route path="/users" element={
             <ProtectedRoute adminOnly>
@@ -298,6 +306,7 @@ export function App() {
       </Routes>
     </TooltipProvider>
     </TourProvider>
+    </PromptProvider>
     </ConfirmProvider>
     <Toaster
       position={dir === 'rtl' ? 'top-left' : 'top-right'}

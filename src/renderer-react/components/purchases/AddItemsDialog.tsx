@@ -8,7 +8,7 @@ import {
 import { api, throwIfError } from '@/api';
 import type { Product, Category } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings.store';
-import { formatCurrency, cn } from '@/lib/utils';
+import { formatCurrency, parseCost, cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -774,11 +774,11 @@ export function AddItemsDialog({ purchaseId, purchaseNumber, open, onOpenChange,
                         <TableCell className="whitespace-nowrap">
                           <Input
                             type="number"
-                            step="1"
+                            step="0.001"
                             min="0"
                             value={item.costPerParent || ''}
                             onChange={e => {
-                              const cost = Math.round(Number(e.target.value) || 0);
+                              const cost = parseCost(e.target.value);
                               updateItem(item._key, 'costPerParent', cost);
                               // Auto-fill sell price if empty
                               if (cost > 0 && !item.sellPrice) {

@@ -103,6 +103,32 @@ export const Money = {
   },
 
   /**
+   * COST prices are the ONLY monetary values allowed to be fractional
+   * (up to 3 decimal places). Selling prices, totals, and cash remain whole SDG.
+   * Real-world purchases often have fractional per-unit costs (e.g. a box cost
+   * split across many units), and forcing them to integers loses money.
+   */
+  COST_DECIMALS: 3,
+
+  /** Round a COST value to 3 decimal places (e.g. roundCost(12.3456) → 12.346). */
+  roundCost(value: number | string): number {
+    const n = Number(value) || 0;
+    return Math.round(n * 1000) / 1000;
+  },
+
+  /**
+   * Per-child COST from a (possibly fractional) parent cost.
+   * Floored to 3 dp so child costs never sum above the parent — the cost
+   * counterpart of divideToChild (which is integer-only for selling prices).
+   */
+  costPerChild(parentCost: number, childCount: number): number {
+    const parent = Number(parentCost) || 0;
+    const count = Math.trunc(Number(childCount)) || 1;
+    if (count <= 0) return Math.round(parent * 1000) / 1000;
+    return Math.floor((parent / count) * 1000) / 1000;
+  },
+
+  /**
    * Round an amount to the nearest available SDG denomination.
    * Useful for cash change calculation.
    * Example: roundToDenomination(350) → 200 + 100 + (50 remainder)

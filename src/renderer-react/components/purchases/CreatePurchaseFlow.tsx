@@ -9,7 +9,7 @@ import {
 import { api, throwIfError } from '@/api';
 import type { ExpensePaymentMethod, Product, Category } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings.store';
-import { formatCurrency, cn } from '@/lib/utils';
+import { formatCurrency, formatCost, parseCost, cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -1499,11 +1499,11 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
                         <TableCell className="whitespace-nowrap">
                           <Input
                             type="number"
-                            step="1"
+                            step="0.001"
                             min="0"
                             value={item.costPerParent || ''}
                             onChange={e => {
-                              const cost = Math.round(Number(e.target.value) || 0);
+                              const cost = parseCost(e.target.value);
                               updateItem(item._key, 'costPerParent', cost);
                               // Auto-fill sell price if empty
                               if (cost > 0 && !item.sellPrice) {
@@ -2129,7 +2129,7 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
                                 </div>
                                 <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
                                   <span>{t('Qty')}: {item.quantity}</span>
-                                  <span>{t('Cost')}: {formatCurrency(item.costPerParent)}</span>
+                                  <span>{t('Cost')}: {formatCost(item.costPerParent)}</span>
                                   <span>{t('Sell')}: {formatCurrency(item.sellPrice)}</span>
                                   {item.childUnit && <span>{item.parentUnit} → {item.childUnit} (×{item.convFactor})</span>}
                                   {item.expiryDate && <span>{t('Exp')}: {item.expiryDate}</span>}

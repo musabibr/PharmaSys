@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { Search, Plus, Trash2, Check, Loader2, PackagePlus, ArrowLeft, ArrowRight } from 'lucide-react';
 import type { Product } from '@/api/types';
 import { api } from '@/api';
-import { formatCurrency, formatQuantity, unitLabel } from '@/lib/utils';
+import { formatCurrency, formatQuantity, unitLabel, parseCost } from '@/lib/utils';
 import { useSettingsStore } from '@/stores/settings.store';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -172,7 +172,7 @@ export function QuickStockEntryPage() {
         next.sell = next.cost > 0 ? Math.round(next.cost * (1 + defaultMarkup / 100)) : 0;
       }
       if ((patch.cost !== undefined || patch.cf !== undefined) && !next.costSmallTouched) {
-        next.costSmall = next.cost > 0 && cf > 1 ? Math.floor(next.cost / cf) : 0;
+        next.costSmall = next.cost > 0 && cf > 1 ? Math.floor((next.cost / cf) * 1000) / 1000 : 0;
       }
       if ((patch.cost !== undefined || patch.sell !== undefined || patch.cf !== undefined) && !next.sellSmallTouched) {
         next.sellSmall = next.sell > 0 && cf > 1 ? Math.floor(next.sell / cf) : 0;
@@ -480,15 +480,15 @@ export function QuickStockEntryPage() {
                   <div className="flex flex-wrap items-end gap-2 border-s ps-4">
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">{t('Cost')}/{pUnit}</Label>
-                    <Input type="number" min={0} value={r.cost || ''}
-                      onChange={(e) => update(r._key, { cost: Math.round(Number(e.target.value) || 0) })}
+                    <Input type="number" min={0} step={0.001} value={r.cost || ''}
+                      onChange={(e) => update(r._key, { cost: parseCost(e.target.value) })}
                       className="h-8 w-24" placeholder="0" />
                   </div>
                   {hasSmall && (
                     <div className="space-y-1">
                       <Label className="text-xs text-muted-foreground">{t('Cost')}/{cUnit}</Label>
-                      <Input type="number" min={0} value={r.costSmall || ''}
-                        onChange={(e) => update(r._key, { costSmall: Math.round(Number(e.target.value) || 0), costSmallTouched: true })}
+                      <Input type="number" min={0} step={0.001} value={r.costSmall || ''}
+                        onChange={(e) => update(r._key, { costSmall: parseCost(e.target.value), costSmallTouched: true })}
                         className="h-8 w-24" placeholder={t('auto')} />
                     </div>
                   )}

@@ -183,7 +183,7 @@ function mapRow(
   const expiryDate         = normalizeDate(cell.expiry_date);
   const quantity           = toNum(cell.quantity, 0);
   const quantitySmall      = toInt(cell.quantity_small, 0);
-  const costPerParent      = toInt(cell.cost_per_parent, 0);
+  const costPerParent      = toNum(cell.cost_per_parent, 0);
   const sellPricePerParent = toInt(cell.selling_price_parent, 0);
   const sellPriceChild     = toInt(cell.selling_price_child, 0);
 
@@ -453,6 +453,11 @@ export function ProductImportDialog({ open, onOpenChange, onImported }: ProductI
 
         } else {
           // ── Create new product ────────────────────────────────────────────────
+          // When linking to a purchase, create the PRODUCT ONLY here (quantity_base 0
+          // ⇒ backend skips batch creation); the purchase flow creates the single
+          // batch. Without this guard a new product would be stocked TWICE
+          // (positive stock variance).
+          const linkPurchase = assignPurchaseId !== 'none';
           const result = await api.products.bulkCreate([{
             name:                 row.name,
             generic_name:         row.genericName    || undefined,
@@ -462,12 +467,12 @@ export function ProductImportDialog({ open, onOpenChange, onImported }: ProductI
             child_unit:           row.childUnit       || undefined,
             conversion_factor:    row.convFactor,
             min_stock_level:      row.minStock,
-            batch_number:         row.batchNumber     || undefined,
-            expiry_date:          row.expiryDate,
-            quantity_base:        Math.round(row.quantity * row.convFactor) + row.quantitySmall,
-            cost_per_parent:      row.costPerParent,
-            selling_price_parent: row.sellPricePerParent ||
-              Math.round(row.costPerParent * (1 + defaultMarkup / 100)),
+            batch_number:         linkPurchase ? undefined : (row.batchNumber || undefined),
+            expiry_date:          linkPurchase ? '' : row.expiryDate,
+            quantity_base:        linkPurchase ? 0 : (Math.round(row.quantity * row.convFactor) + row.quantitySmall),
+            cost_per_parent:      linkPurchase ? 0 : row.costPerParent,
+            selling_price_parent: linkPurchase ? 0 : (row.sellPricePerParent ||
+              Math.round(row.costPerParent * (1 + defaultMarkup / 100))),
           }]);
           const arr   = Array.isArray(result) ? result : (result as { data?: unknown[] }).data ?? [];
           const first = arr[0] as { success?: boolean; id?: number; error?: string } | undefined;

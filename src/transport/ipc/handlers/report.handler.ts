@@ -32,6 +32,14 @@ export function registerReportHandlers(router: IpcRouter, services: ServiceConta
     return await services.report.getInventoryReconciliation();
   }, { adminOnly: true });
 
+  router.handle('reports:productStockLedger', async (_user) => {
+    return await services.report.getProductStockLedger();
+  }, { permission: 'inventory.valuation' });
+
+  router.handle('reports:productMovements', async (_user, productId: number) => {
+    return await services.report.getProductMovements(productId);
+  }, { permission: 'inventory.valuation' });
+
   // Frontend uses 'dashboard:stats' (not 'reports:dashboard')
   router.handle('dashboard:stats', async (_user) => {
     return await services.dashboard.getStats();

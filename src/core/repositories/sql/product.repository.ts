@@ -136,8 +136,8 @@ export class ProductRepository implements IProductRepository {
   async create(data: CreateProductInput, categoryId: number | null) {
     return await this.base.runImmediate(
       `INSERT INTO products (name, generic_name, usage_instructions, category_id,
-       barcode, parent_unit, child_unit, conversion_factor, min_stock_level)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       barcode, parent_unit, child_unit, conversion_factor, min_stock_level, requires_expiry)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.name,
         data.generic_name ?? null,
@@ -148,6 +148,7 @@ export class ProductRepository implements IProductRepository {
         data.child_unit ?? 'Strip',
         data.conversion_factor ?? 1,
         data.min_stock_level ?? 0,
+        data.requires_expiry === undefined || data.requires_expiry ? 1 : 0,
       ]
     );
   }
@@ -164,6 +165,7 @@ export class ProductRepository implements IProductRepository {
          child_unit = COALESCE(?, child_unit),
          conversion_factor = COALESCE(?, conversion_factor),
          min_stock_level = COALESCE(?, min_stock_level),
+         requires_expiry = COALESCE(?, requires_expiry),
          is_active = COALESCE(?, is_active),
          updated_at = datetime('now', 'localtime')
        WHERE id = ?`,
@@ -177,6 +179,7 @@ export class ProductRepository implements IProductRepository {
         data.child_unit ?? null,
         data.conversion_factor ?? null,
         data.min_stock_level ?? null,
+        data.requires_expiry !== undefined ? (data.requires_expiry ? 1 : 0) : null,
         data.is_active !== undefined ? (data.is_active ? 1 : 0) : null,
         id,
       ]

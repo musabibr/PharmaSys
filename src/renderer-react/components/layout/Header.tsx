@@ -46,6 +46,7 @@ const BREADCRUMB_MAP: Record<string, string> = {
   '/shifts': 'Shift Management',
   '/cash-flow': 'Cash Flow Report',
   '/profit-loss': 'Profit & Loss',
+  '/stock-ledger': 'Stock Ledger',
   '/users': 'User Management',
   '/audit': 'Audit Log',
   '/settings': 'Settings',

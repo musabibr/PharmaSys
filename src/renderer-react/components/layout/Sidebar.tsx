@@ -29,6 +29,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Zap,
+  ClipboardList,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -65,6 +66,7 @@ function useNavSections(): NavSection[] {
   const canSales            = hasPerm('pos.sales');
   const canCashFlow         = hasPerm('reports.cash_flow');
   const canProfitLoss       = hasPerm('reports.profit_loss');
+  const canStockLedger      = hasPerm('inventory.valuation');
 
   return [
     {
@@ -101,8 +103,9 @@ function useNavSections(): NavSection[] {
       items: [
         { label: 'Cash Flow', icon: TrendingUp, path: '/cash-flow', visible: canCashFlow },
         { label: 'Profit & Loss', icon: BarChart3, path: '/profit-loss', visible: canProfitLoss },
+        { label: 'Stock Ledger', icon: ClipboardList, path: '/stock-ledger', visible: canStockLedger },
       ],
-      visible: () => canCashFlow || canProfitLoss,
+      visible: () => canCashFlow || canProfitLoss || canStockLedger,
     },
     {
       title: 'ADMIN',

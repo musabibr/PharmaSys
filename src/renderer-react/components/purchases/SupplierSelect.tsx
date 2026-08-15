@@ -8,13 +8,7 @@ import { useApiCall } from '@/api/hooks';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { Combobox } from '@/components/ui/combobox';
 import {
   Dialog,
   DialogContent,
@@ -73,22 +67,29 @@ export function SupplierSelect({ value, onChange }: SupplierSelectProps) {
 
   return (
     <>
-      <Select value={value?.toString() ?? NO_SUPPLIER} onValueChange={handleChange}>
-        <SelectTrigger>
-          <SelectValue placeholder={t('Select Supplier')} />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={NO_SUPPLIER}>{t('No Supplier')}</SelectItem>
-          {suppliers?.map(s => (
-            <SelectItem key={s.id} value={s.id.toString()}>{s.name}</SelectItem>
-          ))}
-          <SelectItem value={NEW_SUPPLIER}>
-            <span className="flex items-center gap-1 text-primary">
-              <Plus className="h-3 w-3" /> {t('Add New Supplier')}
-            </span>
-          </SelectItem>
-        </SelectContent>
-      </Select>
+      <Combobox
+        value={value?.toString() ?? NO_SUPPLIER}
+        onValueChange={handleChange}
+        placeholder={t('Select Supplier')}
+        searchPlaceholder={t('Search suppliers...')}
+        options={[
+          { value: NO_SUPPLIER, label: t('No Supplier') },
+          ...(suppliers ?? []).map(s => ({
+            value: s.id.toString(),
+            label: s.name,
+            keywords: s.phone ?? '',
+          })),
+          {
+            value: NEW_SUPPLIER,
+            label: t('Add New Supplier'),
+            node: (
+              <span className="flex items-center gap-1 text-primary">
+                <Plus className="h-3 w-3" /> {t('Add New Supplier')}
+              </span>
+            ),
+          },
+        ]}
+      />
 
       <Dialog open={showNew} onOpenChange={setShowNew}>
         <DialogContent className="sm:max-w-md">

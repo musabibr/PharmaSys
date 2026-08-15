@@ -86,6 +86,7 @@ export class MigrationRepository {
         child_unit TEXT DEFAULT '',
         conversion_factor INTEGER DEFAULT 1 CHECK(conversion_factor > 0),
         min_stock_level INTEGER DEFAULT 0 CHECK(min_stock_level >= 0),
+        requires_expiry INTEGER NOT NULL DEFAULT 1,
         is_active INTEGER DEFAULT 1,
         created_at TEXT DEFAULT (datetime('now', 'localtime')),
         updated_at TEXT DEFAULT (datetime('now', 'localtime')),
@@ -124,6 +125,7 @@ export class MigrationRepository {
         bank_name TEXT,
         reference_number TEXT,
         cash_tendered INTEGER NOT NULL DEFAULT 0 CHECK(cash_tendered >= 0),
+        cash_received INTEGER,
         payment TEXT,
         customer_name TEXT,
         customer_phone TEXT,
@@ -439,6 +441,10 @@ export class MigrationRepository {
     await this._migrateColumn('batches', 'cost_per_child_override',
       'ALTER TABLE batches ADD COLUMN cost_per_child_override INTEGER DEFAULT 0');
 
+    // Per-product flag: does this product require an expiry date? (default yes)
+    await this._migrateColumn('products', 'requires_expiry',
+      'ALTER TABLE products ADD COLUMN requires_expiry INTEGER NOT NULL DEFAULT 1');
+
     // Pillar 3: quantity_base on batches and transaction_items
     await this._migrateQuantityBase();
 
@@ -574,6 +580,8 @@ export class MigrationRepository {
       FOREIGN KEY (batch_id) REFERENCES batches(id)
     )`);
     await this.base.rawRun('CREATE INDEX IF NOT EXISTS idx_cycle_count_items_ccid ON cycle_count_items(cycle_count_id)');
+
+    await this._migrateCashReceived();
 
     this.base.save();
   }
@@ -742,6 +750,36 @@ export class MigrationRepository {
     }
   }
 
+  /**
+   * `cash_tendered` was being used for two different things: the money the
+   * cashier actually handed over (for the receipt's "change given" line) and
+   * the money kept in the drawer (for shift/report reconciliation). When a
+   * cash sale took a note larger than the total, the raw amount handed over
+   * was stored, inflating every downstream cash total and making shifts
+   * close short by the change given.
+   *
+   * `cash_received` now holds the raw amount handed over (receipt display
+   * only); `cash_tendered` is clamped to never exceed `total_amount` so it
+   * always means "cash retained". Existing rows are backfilled: the
+   * already-inflated `cash_tendered` becomes `cash_received`, then
+   * `cash_tendered` is corrected down to `total_amount`.
+   */
+  private async _migrateCashReceived(): Promise<void> {
+    try { await this.base.rawRun('SELECT cash_received FROM transactions LIMIT 0'); } catch {
+      await this.base.rawRun('ALTER TABLE transactions ADD COLUMN cash_received INTEGER');
+      await this.base.rawRun(`
+        UPDATE transactions SET cash_received = cash_tendered
+        WHERE transaction_type = 'sale' AND payment_method = 'cash' AND cash_tendered > total_amount
+      `);
+      await this.base.rawRun(`
+        UPDATE transactions SET cash_tendered = total_amount
+        WHERE transaction_type = 'sale' AND payment_method = 'cash' AND cash_tendered > total_amount
+      `);
+      this.base.save();
+      console.log('[Migration] Added cash_received and clamped historical cash_tendered to total_amount');
+    }
+  }
+
   private async _migrateOldPaymentMethods(): Promise<void> {
     try {
       const rows = await this.base.getAll<{ payment_method: string }>(
@@ -798,9 +836,24 @@ export class MigrationRepository {
         `UPDATE purchase_items SET expiry_date = expiry_date || '-01'
          WHERE expiry_date IS NOT NULL AND length(expiry_date) = 7 AND expiry_date GLOB '????-??'`
       );
-      const total = fixed1 + fixed2 + fixed3 + fixed4;
+      // Snap all real (non-sentinel) ISO expiry dates to END OF MONTH.
+      // Idempotent: rows already at end-of-month are skipped by the <> guard;
+      // the far-future "no expiry" sentinel (>= 2099) is excluded.
+      const fixed5 = await this.base.runAndGetChanges(
+        `UPDATE batches
+         SET expiry_date = date(expiry_date, 'start of month', '+1 month', '-1 day')
+         WHERE expiry_date GLOB '????-??-??' AND expiry_date < '2099-01-01'
+           AND expiry_date <> date(expiry_date, 'start of month', '+1 month', '-1 day')`
+      );
+      const fixed6 = await this.base.runAndGetChanges(
+        `UPDATE purchase_items
+         SET expiry_date = date(expiry_date, 'start of month', '+1 month', '-1 day')
+         WHERE expiry_date IS NOT NULL AND expiry_date GLOB '????-??-??' AND expiry_date < '2099-01-01'
+           AND expiry_date <> date(expiry_date, 'start of month', '+1 month', '-1 day')`
+      );
+      const total = fixed1 + fixed2 + fixed3 + fixed4 + fixed5 + fixed6;
       if (total > 0) {
-        console.log(`[Migration] Normalized expiry dates: ${fixed1 + fixed3} batches, ${fixed2 + fixed4} purchase_items`);
+        console.log(`[Migration] Normalized expiry dates: ${fixed1 + fixed3 + fixed5} batches, ${fixed2 + fixed4 + fixed6} purchase_items`);
       }
     } catch (err: any) {
       console.error('[Migration] expiry date normalization failed:', err.message);

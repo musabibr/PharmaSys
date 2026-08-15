@@ -189,6 +189,7 @@ export interface ITransactionInsertData {
   bank_name: string | null;
   reference_number: string | null;
   cash_tendered: number;
+  cash_received?: number | null;
   payment: string | null;
   customer_name: string | null;
   customer_phone: string | null;

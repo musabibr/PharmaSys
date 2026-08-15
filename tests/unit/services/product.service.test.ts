@@ -173,6 +173,17 @@ describe('ProductService', () => {
       }));
     });
 
+    it('captures the previous value of every changed field (I3)', async () => {
+      const { svc, productRepo, bus } = createService();
+      productRepo.getById.mockResolvedValue(sampleProduct); // min_stock_level: 10
+      await svc.update(1, { min_stock_level: 20 } as any, 1);
+      expect(bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
+        action: 'UPDATE_PRODUCT',
+        oldValues: expect.objectContaining({ min_stock_level: 10 }),
+        newValues: expect.objectContaining({ min_stock_level: 20 }),
+      }));
+    });
+
     it('cascades conversion_factor change to batch child prices', async () => {
       const { svc, productRepo, batchRepo, bus } = createService();
       productRepo.getById
@@ -185,7 +196,7 @@ describe('ProductService', () => {
       expect(bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
         action: 'CASCADE_CF_CHANGE',
         oldValues: { conversion_factor: 20 },
-        newValues: { conversion_factor: 10 },
+        newValues: expect.objectContaining({ conversion_factor: 10 }),
       }));
       expect(result.conversion_factor).toBe(10);
     });

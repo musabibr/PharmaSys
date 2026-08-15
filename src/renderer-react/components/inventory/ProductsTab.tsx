@@ -36,6 +36,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Combobox } from '@/components/ui/combobox';
 import {
   Table,
   TableBody,
@@ -669,19 +670,17 @@ export function ProductsTab() {
           />
         </div>
 
-        <Select value={categoryId} onValueChange={(v) => { setCategoryId(v); }}>
-          <SelectTrigger className="w-44 shrink-0">
-            <SelectValue placeholder={t('All Categories')} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL_CATEGORIES}>{t('All Categories')}</SelectItem>
-            {categories.map((cat) => (
-              <SelectItem key={cat.id} value={String(cat.id)}>
-                {cat.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <Combobox
+          className="w-44 shrink-0"
+          value={categoryId}
+          onValueChange={(v) => { setCategoryId(v); }}
+          placeholder={t('All Categories')}
+          searchPlaceholder={t('Search categories...')}
+          options={[
+            { value: ALL_CATEGORIES, label: t('All Categories') },
+            ...categories.map((cat) => ({ value: String(cat.id), label: cat.name })),
+          ]}
+        />
       </div>
 
       {/* ── Error state ─────────────────────────────────────────────────── */}

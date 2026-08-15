@@ -403,14 +403,16 @@ export class BatchRepository implements IBatchRepository {
   }
 
   /**
-   * Rescale all batch quantities for a product when its conversion factor changes.
-   * quantity_base * newCf / oldCf — SQLite integer division is floor (prevents ghost inventory).
+   * Rescale all batch quantities for a product when its conversion factor
+   * changes AND the user chose to preserve the pack (box) count.
+   * quantity_base × newCf / oldCf, ROUNDED (not floored) to avoid losing the
+   * remainder. Only called when rescaleStock === 'keep_packs'.
    */
   async rescaleQuantitiesForProduct(productId: number, oldCf: number, newCf: number): Promise<void> {
     if (oldCf === newCf) return;
     await this.base.runImmediate(
-      `UPDATE batches SET 
-         quantity_base = quantity_base * ? / ?,
+      `UPDATE batches SET
+         quantity_base = CAST(ROUND(quantity_base * 1.0 * ? / ?) AS INTEGER),
          version = version + 1,
          updated_at = datetime('now', 'localtime')
        WHERE product_id = ?`,

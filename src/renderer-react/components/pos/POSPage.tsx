@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useConfirm } from '@/components/ui/confirm-dialog';
+import { usePrompt } from '@/components/ui/prompt-dialog';
 import { toast } from 'sonner';
 import { useShiftStore } from '@/stores/shift.store';
 import { useSettingsStore } from '@/stores/settings.store';
@@ -21,6 +22,7 @@ import { AlertTriangle } from 'lucide-react';
 export function POSPage() {
   const { t } = useTranslation();
   const confirm = useConfirm();
+  const prompt = usePrompt();
   const currentShift = useShiftStore((s) => s.currentShift);
   const isStaleShift = useShiftStore((s) => s.isStaleShift);
   const shiftsEnabled = useSettingsStore((s) => s.getSetting('shifts_enabled') !== 'false');
@@ -76,16 +78,15 @@ export function POSPage() {
       // Spread items into plain objects to avoid IPC serialization issues
       // with reactive Zustand state proxies
       const plainItems = cartStore.items.map(item => ({ ...item }));
-      // window.prompt may not work in all Electron sandbox configs,
-      // so treat null/failure as "no note" rather than cancelling
-      let note: string | undefined;
-      try {
-        const promptResult = window.prompt(t('Customer note (optional)'));
-        if (promptResult === null) return; // user explicitly cancelled
-        note = promptResult || undefined;
-      } catch {
-        // prompt unavailable — proceed without a note
-      }
+      // Non-blocking React dialog — never use window.prompt() (blocking native
+      // dialog freezes the Electron window until minimize/restore).
+      const promptResult = await prompt({
+        title: t('Hold sale'),
+        description: t('Customer note (optional)'),
+        placeholder: t('Customer note (optional)'),
+      });
+      if (promptResult === null) return; // user cancelled
+      const note = promptResult.trim() || undefined;
       await api.held.save(plainItems, note);
       cartStore.clear();
       toast.success(t('Sale held successfully'));

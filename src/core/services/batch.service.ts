@@ -8,8 +8,10 @@ import type {
   ManualPriceUpdateItem,
 } from '../types/models';
 import { Validate }               from '../common/validation';
+import { diffValues }             from '../common/audit-diff';
 import { NotFoundError, ValidationError, ConflictError, BusinessRuleError } from '../types/errors';
 import { Money }                  from '../common/money';
+import { normalizeExpiry, NO_EXPIRY_SENTINEL } from '../common/expiry';
 
 export class BatchService {
   constructor(
@@ -47,16 +49,24 @@ export class BatchService {
     const product = await this.productRepo.getById(data.product_id);
     if (!product) throw new NotFoundError('Product', data.product_id);
 
-    Validate.futureDate(data.expiry_date, 'Expiry date');
+    // Expiry is optional (a product can be flagged as non-expiring). When
+    // provided, normalize to end-of-month ISO; when blank, use the no-expiry
+    // sentinel so the NOT NULL column and date comparisons keep working.
+    let expiryDate = NO_EXPIRY_SENTINEL;
+    if (data.expiry_date && data.expiry_date.trim()) {
+      expiryDate = normalizeExpiry(data.expiry_date);
+      if (!expiryDate) throw new ValidationError('Invalid expiry date', 'expiry_date');
+    }
     Validate.positiveInteger(data.quantity_base, 'Quantity');
 
-    const costParent = Money.round(Validate.positiveNumber(data.cost_per_parent, 'Cost per base unit'));
+    // Cost may be fractional (up to 3 dp); selling prices stay whole SDG.
+    const costParent = Money.roundCost(Validate.positiveNumber(data.cost_per_parent, 'Cost per base unit'));
     const sellParent = data.selling_price_parent
       ? Money.round(Validate.positiveNumber(data.selling_price_parent, 'Selling price'))
       : 0;
 
     const cf       = product.conversion_factor ?? 1;
-    const costChild  = data.cost_per_child_override    ?? Money.divideToChild(costParent, cf);
+    const costChild  = data.cost_per_child_override    ?? Money.costPerChild(costParent, cf);
     const sellChild  = data.selling_price_child_override ?? (sellParent ? Money.divideToChild(sellParent, cf) : 0);
 
     let result;
@@ -64,8 +74,9 @@ export class BatchService {
       result = await this.repo.create({
         ...data,
         batch_number: Validate.optionalString(data.batch_number, 'Batch number', 60) ?? undefined,
+        expiry_date: expiryDate,
         cost_per_parent: costParent,
-        cost_per_child: Money.divideToChild(costParent, cf),
+        cost_per_child: Money.costPerChild(costParent, cf),
         selling_price_parent: sellParent,
         selling_price_child: sellParent ? Money.divideToChild(sellParent, cf) : 0,
         selling_price_parent_override: sellParent,
@@ -154,14 +165,29 @@ export class BatchService {
       throw new ValidationError('Cost price cannot be negative', 'cost_per_parent');
     }
 
+    // Normalize expiry on edit: end-of-month ISO when provided, no-expiry sentinel when blank.
+    if (data.expiry_date !== undefined) {
+      if (data.expiry_date && data.expiry_date.trim()) {
+        const norm = normalizeExpiry(data.expiry_date);
+        if (!norm) throw new ValidationError('Invalid expiry date', 'expiry_date');
+        data.expiry_date = norm;
+      } else {
+        data.expiry_date = NO_EXPIRY_SENTINEL;
+      }
+    }
+
     // NOTE: cost edits are allowed even after sales. Past sales snapshot their own
     // cost_price into transaction_items, so editing the batch cost only affects future
     // COGS/margin — it does not rewrite already-recorded sales.
 
-    // Auto-recalculate base child prices when parent prices change
+    // Auto-recalculate base child prices when parent prices change.
+    // Cost may be fractional (3 dp); selling prices stay whole SDG.
     const cf = existing.conversion_factor ?? 1;
-    if (data.cost_per_parent !== undefined && cf > 1) {
-      data.cost_per_child = Money.divideToChild(data.cost_per_parent, cf);
+    if (data.cost_per_parent !== undefined) {
+      data.cost_per_parent = Money.roundCost(data.cost_per_parent);
+      if (cf > 1) {
+        data.cost_per_child = Money.costPerChild(data.cost_per_parent, cf);
+      }
     }
     if ((data.selling_price_parent !== undefined || data.selling_price_parent_override !== undefined) && cf > 1) {
       const newSellParent = data.selling_price_parent_override
@@ -229,9 +255,16 @@ export class BatchService {
       }
     }
 
+    // Record the PREVIOUS value of every field the patch actually changed — the
+    // audit trail otherwise only shows what a batch became, never what it was.
+    const { oldValues, newValues } = diffValues(
+      existing as unknown as Record<string, unknown>,
+      data as Record<string, unknown>,
+    );
+
     this.bus.emit('entity:mutated', {
       action: 'UPDATE_BATCH', table: 'batches',
-      recordId: id, userId, newValues: data,
+      recordId: id, userId, oldValues, newValues,
     });
 
     return await this.getById(id);
@@ -374,7 +407,13 @@ export class BatchService {
     const product = await this.productRepo.getById(productId);
     const cf = product?.conversion_factor ?? 1;
     const baseChildPrice = cf > 1 ? Money.divideToChild(sellingPriceParent, cf) : sellingPriceParent;
-    const count = await this.repo.bulkUpdateSellingPrices(productId, sellingPriceParent, baseChildPrice, sellingPriceChild, true);
+    // preserveOverrides=false: the effective sale price in FIFO/checkout is
+    // override-first (batch.selling_price_*_override || selling_price_*), and
+    // every batch is created with a non-zero override. Preserving overrides
+    // here meant this call updated the `batches` table and reported success
+    // while the POS kept charging the old price. Clear the overrides so the
+    // newly-typed price actually reaches the till.
+    const count = await this.repo.bulkUpdateSellingPrices(productId, sellingPriceParent, baseChildPrice, sellingPriceChild, false);
     if (count > 0) {
       this.bus.emit('entity:mutated', {
         action: 'BULK_UPDATE_BATCH_PRICES', table: 'batches',
@@ -518,11 +557,30 @@ export class BatchService {
       );
     }
 
+    // A hard-delete of a batch that still holds stock destroys inventory with
+    // no adjustment record and no quantity captured anywhere — the loss
+    // can't even be quantified after the fact. Require the batch to be
+    // zeroed first (via reportDamage, which already writes a correction/
+    // damage adjustment) so every unit of stock leaves through a path that
+    // is recorded and reconcilable.
+    if (batch.quantity_base > 0) {
+      throw new ValidationError(
+        `Cannot delete batch with ${batch.quantity_base} units of stock remaining. ` +
+        'Report damage/expiry to zero the quantity first, then delete.',
+        'id'
+      );
+    }
+
     await this.repo.deleteBatch(id);
     this.bus.emit('entity:mutated', {
       action: 'DELETE_BATCH', table: 'batches',
       recordId: id, userId,
-      oldValues: { product_name: (batch as any).product_name, batch_number: batch.batch_number, expiry_date: batch.expiry_date },
+      oldValues: {
+        product_name: (batch as any).product_name,
+        batch_number: batch.batch_number,
+        expiry_date: batch.expiry_date,
+        quantity_base: batch.quantity_base,
+      },
     });
   }
 

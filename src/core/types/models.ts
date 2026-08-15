@@ -106,6 +106,7 @@ export interface Product {
   child_unit: string;
   conversion_factor: number;
   min_stock_level: number;
+  requires_expiry: number;     // 1 = needs an expiry date (default), 0 = never expires
   is_active: number;
   total_stock_base?: number;   // Aggregated from active batches
   selling_price?: number;      // Effective price of FIFO batch (parent unit), for display
@@ -156,6 +157,10 @@ export interface Transaction {
   bank_name: string | null;
   reference_number: string | null;
   cash_tendered: number;
+  // Raw amount physically handed over for a cash sale (receipt "change given"
+  // display only). May exceed total_amount. Null for non-cash/legacy rows.
+  // cash_tendered is always clamped to total_amount — it means cash retained.
+  cash_received: number | null;
   payment: string | null; // JSON
   customer_name: string | null;
   customer_phone: string | null;
@@ -455,6 +460,7 @@ export interface CreateProductInput {
   child_unit?: string;
   conversion_factor?: number;
   min_stock_level?: number;
+  requires_expiry?: boolean;
 }
 
 export interface UpdateProductInput {
@@ -467,7 +473,17 @@ export interface UpdateProductInput {
   child_unit?: string;
   conversion_factor?: number;
   min_stock_level?: number;
+  requires_expiry?: boolean;
   is_active?: boolean;
+  /**
+   * When conversion_factor changes on a product that already has stock, decides
+   * what happens to existing quantities:
+   *   'keep_units' (default) — physical unit count is preserved (no rescale).
+   *   'keep_packs'           — pack/box count is preserved (quantity_base is
+   *                            recomputed as base × newCf/oldCf, rounded).
+   * Not persisted; only read by ProductService.update.
+   */
+  rescaleStock?: 'keep_units' | 'keep_packs';
 }
 
 export interface CreateBatchInput {

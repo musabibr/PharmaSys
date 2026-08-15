@@ -6,7 +6,7 @@ import { Loader2, CheckCircle, Clock, CreditCard, AlertTriangle, Pencil, Trash2,
 import { api } from '@/api';
 import type { Purchase, PurchasePayment, ExpensePaymentMethod, PaymentAdjustmentStrategy } from '@/api/types';
 import { Input } from '@/components/ui/input';
-import { formatCurrency, formatDate, displayInvoiceId, cn } from '@/lib/utils';
+import { formatCurrency, formatCost, parseCost, formatDate, displayInvoiceId, cn } from '@/lib/utils';
 import { usePermission } from '@/hooks/usePermission';
 import { useAuthStore } from '@/stores/auth.store';
 import { Badge } from '@/components/ui/badge';
@@ -378,9 +378,9 @@ export function PurchaseDetailDialog({ purchase: initialPurchase, open, onOpenCh
                       </TableCell>
                       <TableCell className="text-end">
                         {isEditing ? (
-                          <Input type="number" min={0} className="h-7 w-24 text-end" value={editCost}
-                            onChange={e => setEditCost(Math.max(0, parseInt(e.target.value, 10) || 0))} />
-                        ) : formatCurrency(item.cost_per_parent)}
+                          <Input type="number" min={0} step={0.001} className="h-7 w-24 text-end" value={editCost}
+                            onChange={e => setEditCost(Math.max(0, parseCost(e.target.value)))} />
+                        ) : formatCost(item.cost_per_parent)}
                       </TableCell>
                       <TableCell className="text-end">
                         {isEditing ? (

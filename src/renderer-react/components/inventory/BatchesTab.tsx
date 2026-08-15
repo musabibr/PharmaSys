@@ -6,7 +6,7 @@ import type { Batch, Product, Category } from '@/api/types';
 import { useDebounce } from '@/hooks/useDebounce';
 import { usePermission } from '@/hooks/usePermission';
 import { useAuthStore } from '@/stores/auth.store';
-import { formatCurrency, formatQuantity } from '@/lib/utils';
+import { formatCurrency, formatCost, formatQuantity, formatExpiryMMYY } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -249,7 +249,7 @@ export function BatchesTab() {
 
     for (const b of batches) {
       totalStock += b.quantity_base;
-      const childCost = getCostPerChild(b) || (cf > 1 ? Math.floor(b.cost_per_parent / cf) : b.cost_per_parent);
+      const childCost = getCostPerChild(b) || (cf > 1 ? Math.floor((b.cost_per_parent / cf) * 1000) / 1000 : b.cost_per_parent);
       costValue += b.quantity_base * childCost;
       const childSell = getSellingPriceChild(b) || (cf > 1 ? Math.floor(getSellingPriceParent(b) / cf) : getSellingPriceParent(b));
       retailValue += b.quantity_base * childSell;
@@ -399,14 +399,14 @@ export function BatchesTab() {
     const cf = selectedProduct.conversion_factor || 1;
     const rows = filteredBatches.map((b) => {
       const sellParent = getSellingPriceParent(b);
-      const costChild = getCostPerChild(b) || (cf > 1 ? Math.floor(b.cost_per_parent / cf) : b.cost_per_parent);
+      const costChild = getCostPerChild(b) || (cf > 1 ? Math.floor((b.cost_per_parent / cf) * 1000) / 1000 : b.cost_per_parent);
       const sellChild = getSellingPriceChild(b) || (cf > 1 ? Math.floor(sellParent / cf) : sellParent);
       const margin = computeMargin(b.cost_per_parent, sellParent);
       const isChildOverridden = b.cost_per_child_override > 0;
 
       const costCols = canViewCosts ? `
-        <td class="num">${formatCurrency(b.cost_per_parent)}</td>
-        <td class="num">${formatCurrency(costChild)}${isChildOverridden ? ' ✏️' : ' (auto)'}</td>
+        <td class="num">${formatCost(b.cost_per_parent)}</td>
+        <td class="num">${formatCost(costChild)}${isChildOverridden ? ' ✏️' : ' (auto)'}</td>
         <td class="num">${formatCurrency(sellParent)}</td>
         <td class="num">${formatCurrency(sellChild)}</td>
         <td>${margin !== null ? `${margin}%` : '—'}</td>
@@ -414,7 +414,7 @@ export function BatchesTab() {
 
       return `<tr>
         <td>${b.batch_number || '—'}</td>
-        <td>${b.expiry_date || '—'}</td>
+        <td>${formatExpiryMMYY(b.expiry_date) || t('No expiry')}</td>
         <td>${formatQuantity(b.quantity_base, selectedProduct.parent_unit, selectedProduct.child_unit, cf)}</td>
         ${costCols}
       </tr>`;
@@ -855,7 +855,7 @@ export function BatchesTab() {
 
                     // Child cost display: show "(auto)" if not overridden
                     const isChildCostOverridden = batch.cost_per_child_override > 0;
-                    const displayCostChild = costChild || (cf > 1 ? Math.floor(batch.cost_per_parent / cf) : batch.cost_per_parent);
+                    const displayCostChild = costChild || (cf > 1 ? Math.floor((batch.cost_per_parent / cf) * 1000) / 1000 : batch.cost_per_parent);
 
                     return (
                       <TableRow
@@ -878,7 +878,7 @@ export function BatchesTab() {
                         </TableCell>
                         <TableCell>
                           <Badge variant={expiry.variant} className="text-xs">
-                            {batch.expiry_date} {expiry.label}
+                            {formatExpiryMMYY(batch.expiry_date) || t('No expiry')} {expiry.label}
                           </Badge>
                         </TableCell>
                         <TableCell className="font-semibold">
@@ -892,10 +892,10 @@ export function BatchesTab() {
                         {canViewCosts && (
                           <>
                             <TableCell className="text-end tabular-nums">
-                              {formatCurrency(batch.cost_per_parent)}
+                              {formatCost(batch.cost_per_parent)}
                             </TableCell>
                             <TableCell className="text-end tabular-nums">
-                              {formatCurrency(displayCostChild)}
+                              {formatCost(displayCostChild)}
                               {isChildCostOverridden ? (
                                 <span className="ms-1 text-xs" title={t('Override')}>✏️</span>
                               ) : cf > 1 ? (
@@ -1052,8 +1052,8 @@ export function BatchesTab() {
                 >
                   <p className="text-sm font-medium">
                     {batch?.batch_number || `ID ${id}`}
-                    {batch?.expiry_date && (
-                      <span className="ms-2 text-xs text-muted-foreground">({batch.expiry_date})</span>
+                    {batch?.expiry_date && formatExpiryMMYY(batch.expiry_date) && (
+                      <span className="ms-2 text-xs text-muted-foreground">({formatExpiryMMYY(batch.expiry_date)})</span>
                     )}
                   </p>
                   {hasWarning && (

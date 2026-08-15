@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { useConfirm } from '@/components/ui/confirm-dialog';
+import { usePrompt } from '@/components/ui/prompt-dialog';
 import {
   Plus,
   Trash2,
@@ -156,6 +157,7 @@ function ExpensesSkeleton() {
 export function ExpensesPage() {
   const { t, i18n } = useTranslation();
   const confirm = useConfirm();
+  const prompt = usePrompt();
   const currentUser = useAuthStore((s) => s.currentUser);
   const canManageExpenses = usePermission('finance.expenses.manage');
   const canDeleteExpenses = usePermission('finance.expenses.delete');
@@ -819,8 +821,8 @@ export function ExpensesPage() {
                           <Button
                             variant="ghost" size="icon" className="h-7 w-7"
                             title={t('Rename')}
-                            onClick={() => {
-                              const newName = window.prompt(t('Rename category'), cat.name);
+                            onClick={async () => {
+                              const newName = await prompt({ title: t('Rename category'), defaultValue: cat.name });
                               if (newName && newName.trim() && newName.trim() !== cat.name) {
                                 api.expenses.updateCategory(cat.id, newName.trim())
                                   .then(() => { toast.success(t('Category updated')); fetchCategories(); })

@@ -11,13 +11,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { Combobox } from '@/components/ui/combobox';
+import { ExpiryInput } from '@/components/ui/expiry-input';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import {
   Dialog,
   DialogContent,
@@ -68,6 +64,7 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
   const defaultMarkup = Number(getSetting('default_markup_percent', '20')) || 20;
 
   // ── Product form state ────────────────────────────────────────────────────
+  const confirm = useConfirm();
   const [name, setName] = useState('');
   const [genericName, setGenericName] = useState('');
   const [categoryId, setCategoryId] = useState<string>(NO_CATEGORY);
@@ -77,6 +74,7 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
   const [childUnit, setChildUnit] = useState('');
   const [conversionFactor, setConversionFactor] = useState(1);
   const [minStockLevel, setMinStockLevel] = useState(0);
+  const [requiresExpiry, setRequiresExpiry] = useState(true);
 
   // ── Initial stock section state (create mode only) ─────────────────────
   const [addStock, setAddStock] = useState(false);
@@ -126,6 +124,7 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
       setChildUnit(product.child_unit || '');
       setConversionFactor(product.conversion_factor || 1);
       setMinStockLevel(product.min_stock_level || 0);
+      setRequiresExpiry(product.requires_expiry !== 0);
     } else {
       setName('');
       setGenericName('');
@@ -136,6 +135,7 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
       setChildUnit('');
       setConversionFactor(1);
       setMinStockLevel(0);
+      setRequiresExpiry(true);
     }
     // Reset stock section
     setAddStock(false);
@@ -198,9 +198,8 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
       return false;
     }
     if (addStock && !isEdit) {
-      if (!expiryDate) {
-        setError(t('Expiry date is required when adding stock'));
-        return false;
+      if (requiresExpiry && !expiryDate) {
+        toast.warning(t('This product is set to require an expiry date, but none was entered.'));
       }
       if (stockQty < 1) {
         setError(t('Quantity must be at least 1'));
@@ -219,10 +218,24 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
     e.preventDefault();
     if (!validate()) return;
 
+    const effectiveConvFactor = childUnit.trim() ? Math.max(1, Math.floor(conversionFactor)) : 1;
+
+    // If units-per-pack changed on a product that already has stock, ask how to
+    // treat existing stock. Default (dismiss) keeps the physical unit count — no
+    // rescale — which prevents the stock-corruption bug.
+    let rescaleStock: 'keep_units' | 'keep_packs' | undefined;
+    if (isEdit && product && effectiveConvFactor !== (product.conversion_factor ?? 1) && (product.total_stock_base ?? 0) > 0) {
+      const keepPacks = await confirm({
+        title: t('Units per pack changed'),
+        description: t('This product has stock and you changed its units per pack.\n\nKeep the same physical unit count (recommended), or keep the same pack/box count and recompute the units?'),
+        confirmLabel: t('Keep pack count'),
+        cancelLabel: t('Keep unit count'),
+      });
+      rescaleStock = keepPacks ? 'keep_packs' : 'keep_units';
+    }
+
     setSaving(true);
     setError(null);
-
-    const effectiveConvFactor = childUnit.trim() ? Math.max(1, Math.floor(conversionFactor)) : 1;
 
     const productPayload: Partial<Product> = {
       name: name.trim(),
@@ -234,13 +247,17 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
       child_unit: childUnit.trim() || '',
       conversion_factor: effectiveConvFactor,
       min_stock_level: Math.max(0, Math.floor(minStockLevel)),
+      requires_expiry: requiresExpiry ? 1 : 0,
     };
 
     try {
       let savedProduct: Product;
 
       if (isEdit && product) {
-        savedProduct = throwIfError(await api.products.update(product.id, productPayload));
+        savedProduct = throwIfError(await api.products.update(product.id, {
+          ...productPayload,
+          ...(rescaleStock ? { rescaleStock } : {}),
+        }));
         toast.success(t('Product updated'));
       } else {
         savedProduct = throwIfError(await api.products.create(productPayload));
@@ -342,19 +359,16 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
             {/* ── Category ─────────────────────────────────────────────── */}
             <div className="space-y-1.5">
               <Label>{t('Category')}</Label>
-              <Select value={categoryId} onValueChange={setCategoryId}>
-                <SelectTrigger>
-                  <SelectValue placeholder={t('Select category')} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NO_CATEGORY}>{t('No Category')}</SelectItem>
-                  {categories.map((cat) => (
-                    <SelectItem key={cat.id} value={String(cat.id)}>
-                      {cat.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Combobox
+                value={categoryId}
+                onValueChange={setCategoryId}
+                placeholder={t('Select category')}
+                searchPlaceholder={t('Search categories...')}
+                options={[
+                  { value: NO_CATEGORY, label: t('No Category') },
+                  ...categories.map((cat) => ({ value: String(cat.id), label: cat.name })),
+                ]}
+              />
             </div>
 
             {/* ── Barcode ───────────────────────────────────────────────── */}
@@ -461,6 +475,17 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
               </p>
             </div>
 
+            {/* ── Requires expiry date ──────────────────────────────────── */}
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={requiresExpiry}
+                onChange={(e) => setRequiresExpiry(e.target.checked)}
+                className="h-4 w-4 accent-primary"
+              />
+              <span className="text-sm">{t('This product requires an expiry date')}</span>
+            </label>
+
             <Separator />
 
             {/* ── Add Initial Stock toggle (create mode only) ────────────── */}
@@ -508,13 +533,12 @@ export function ProductForm({ open, onOpenChange, product, onSaved }: ProductFor
                 {/* Expiry date */}
                 <div className="space-y-1.5">
                   <Label htmlFor="pf-expiry">
-                    {t('Expiry Date')} <span className="text-destructive">*</span>
+                    {t('Expiry Date')} {requiresExpiry && <span className="text-destructive">*</span>}
                   </Label>
-                  <Input
+                  <ExpiryInput
                     id="pf-expiry"
-                    type="date"
                     value={expiryDate}
-                    onChange={(e) => setExpiryDate(e.target.value)}
+                    onChange={setExpiryDate}
                   />
                 </div>
 

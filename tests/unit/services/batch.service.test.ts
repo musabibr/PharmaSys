@@ -385,8 +385,9 @@ describe('BatchService', () => {
       productRepo.getById.mockResolvedValue({ ...sampleProduct, conversion_factor: 10 });
       batchRepo.bulkUpdateSellingPrices.mockResolvedValue(3);
       await svc.updateSellingPricesByProduct(1, 5000, null, 1);
-      // base child = floor(5000 / 10) = 500; preserveOverrides = true for this flow
-      expect(batchRepo.bulkUpdateSellingPrices).toHaveBeenCalledWith(1, 5000, 500, null, true);
+      // base child = floor(5000 / 10) = 500; preserveOverrides = false so the
+      // new price actually reaches the till (overrides win in FIFO otherwise — D1).
+      expect(batchRepo.bulkUpdateSellingPrices).toHaveBeenCalledWith(1, 5000, 500, null, false);
     });
 
     it('emits event when batches are updated', async () => {
@@ -415,6 +416,63 @@ describe('BatchService', () => {
         cost_per_child: 500,          // floor(5000 / 10)
         selling_price_child: 800,     // floor(8000 / 10)
         selling_price_parent_override: 8000,
+      }));
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // deleteBatch — B1: must never hard-delete live stock with no adjustment trail
+  // ═══════════════════════════════════════════════════════════════════════════
+  describe('deleteBatch', () => {
+    it('throws when the batch still has stock, even with no transaction/adjustment history', async () => {
+      const { svc, batchRepo } = createService();
+      batchRepo.getById.mockResolvedValue({ ...sampleBatch, quantity_base: 50 });
+      batchRepo.getBatchDeleteInfo.mockResolvedValue({ quantity_base: 50, txn_count: 0, adj_count: 0 });
+      await expect(svc.deleteBatch(1, 1)).rejects.toThrow(ValidationError);
+      expect(batchRepo.deleteBatch).not.toHaveBeenCalled();
+    });
+
+    it('deletes a zero-quantity batch with no history', async () => {
+      const { svc, batchRepo } = createService();
+      batchRepo.getById.mockResolvedValue({ ...sampleBatch, quantity_base: 0 });
+      batchRepo.getBatchDeleteInfo.mockResolvedValue({ quantity_base: 0, txn_count: 0, adj_count: 0 });
+      await svc.deleteBatch(1, 1);
+      expect(batchRepo.deleteBatch).toHaveBeenCalledWith(1);
+    });
+
+    it('still blocks deletion when transaction/adjustment history exists', async () => {
+      const { svc, batchRepo } = createService();
+      batchRepo.getById.mockResolvedValue({ ...sampleBatch, quantity_base: 0 });
+      batchRepo.getBatchDeleteInfo.mockResolvedValue({ quantity_base: 0, txn_count: 3, adj_count: 0 });
+      await expect(svc.deleteBatch(1, 1)).rejects.toThrow(ValidationError);
+      expect(batchRepo.deleteBatch).not.toHaveBeenCalled();
+    });
+
+    it('records quantity_base in the audit oldValues so the loss is quantifiable', async () => {
+      const { svc, batchRepo, bus } = createService();
+      batchRepo.getById.mockResolvedValue({ ...sampleBatch, quantity_base: 0 });
+      batchRepo.getBatchDeleteInfo.mockResolvedValue({ quantity_base: 0, txn_count: 0, adj_count: 0 });
+      await svc.deleteBatch(1, 1);
+      expect(bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
+        action: 'DELETE_BATCH',
+        oldValues: expect.objectContaining({ quantity_base: 0 }),
+      }));
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // update — I3: audit log must capture the previous value of changed fields
+  // ═══════════════════════════════════════════════════════════════════════════
+  describe('update — audit oldValues (I3)', () => {
+    it('captures the previous value of every field the patch changes', async () => {
+      const { svc, batchRepo, bus } = createService();
+      batchRepo.getById.mockResolvedValue({ ...sampleBatch, cost_per_parent: 500, version: 1 });
+      batchRepo.update.mockResolvedValue(true);
+      await svc.update(1, { cost_per_parent: 700, version: 1 } as any, 1);
+      expect(bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
+        action: 'UPDATE_BATCH',
+        oldValues: expect.objectContaining({ cost_per_parent: 500 }),
+        newValues: expect.objectContaining({ cost_per_parent: 700 }),
       }));
     });
   });

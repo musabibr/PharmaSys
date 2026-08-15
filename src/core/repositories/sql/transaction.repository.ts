@@ -168,7 +168,7 @@ export class TransactionRepository implements ITransactionRepository {
       data.transaction_number, data.user_id, data.shift_id, data.transaction_type,
       data.subtotal, data.discount_amount, data.tax_amount, data.total_amount,
       data.payment_method, data.bank_name, data.reference_number,
-      data.cash_tendered, data.payment,
+      data.cash_tendered, data.cash_received, data.payment,
       data.customer_name, data.customer_phone, data.notes,
       data.parent_transaction_id,
     ];
@@ -180,10 +180,10 @@ export class TransactionRepository implements ITransactionRepository {
            transaction_number, user_id, shift_id, transaction_type,
            subtotal, discount_amount, tax_amount, total_amount,
            payment_method, bank_name, reference_number,
-           cash_tendered, payment,
+           cash_tendered, cash_received, payment,
            customer_name, customer_phone, notes,
            parent_transaction_id, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         params
       );
     }
@@ -193,10 +193,10 @@ export class TransactionRepository implements ITransactionRepository {
          transaction_number, user_id, shift_id, transaction_type,
          subtotal, discount_amount, tax_amount, total_amount,
          payment_method, bank_name, reference_number,
-         cash_tendered, payment,
+         cash_tendered, cash_received, payment,
          customer_name, customer_phone, notes,
          parent_transaction_id
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       params
     );
   }
@@ -228,17 +228,28 @@ export class TransactionRepository implements ITransactionRepository {
   async getReturnedQuantities(originalTransactionId: number): Promise<ReturnedQuantityMap> {
     // Key is batch_id only (not batch_id+unit_type) so that cross-unit returns
     // (e.g. returning strips from a box purchase) share the same base-unit pool.
-    const rows = await this.base.getAll<{ batch_id: number; returned_base: number }>(
-      `SELECT ti.batch_id, SUM(ti.quantity_base) as returned_base
+    //
+    // When the original batch was hard-deleted, the return was stored against a
+    // reconstructed quarantine batch named 'RESTORED-<originalId>-REVIEW'. Map it
+    // back to <originalId> so the return-limit check — which is keyed by the
+    // ORIGINAL batch id — sees prior returns and cannot be bypassed by repeating
+    // the return (which previously fabricated stock + double refunds).
+    const rows = await this.base.getAll<{ batch_key: number; returned_base: number }>(
+      `SELECT
+         CASE WHEN b.batch_number LIKE 'RESTORED-%-REVIEW'
+              THEN CAST(REPLACE(REPLACE(b.batch_number, 'RESTORED-', ''), '-REVIEW', '') AS INTEGER)
+              ELSE ti.batch_id END as batch_key,
+         SUM(ti.quantity_base) as returned_base
        FROM transactions t
        JOIN transaction_items ti ON ti.transaction_id = t.id
+       LEFT JOIN batches b ON ti.batch_id = b.id
        WHERE t.parent_transaction_id = ? AND t.transaction_type = 'return' AND t.is_voided = 0
-       GROUP BY ti.batch_id`,
+       GROUP BY batch_key`,
       [originalTransactionId]
     );
     const map: ReturnedQuantityMap = {};
     for (const r of rows) {
-      map[`${r.batch_id}`] = r.returned_base;
+      map[`${r.batch_key}`] = (map[`${r.batch_key}`] ?? 0) + r.returned_base;
     }
     return map;
   }

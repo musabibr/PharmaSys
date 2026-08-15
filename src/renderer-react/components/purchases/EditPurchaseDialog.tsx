@@ -7,7 +7,7 @@ import * as XLSX from 'xlsx';
 import { api, throwIfError } from '@/api';
 import type { Purchase, PurchasePendingItem, CreatePurchaseItemInput } from '@/api/types';
 import { useApiCall } from '@/api/hooks';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { formatCurrency, formatCost, formatDate } from '@/lib/utils';
 import { PendingItemEditDialog, parseDraft, draftToRaw } from './PendingItemEditDialog';
 import type { PendingItemDraft } from './PendingItemEditDialog';
 
@@ -681,7 +681,7 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
                             <p className="font-medium text-sm truncate">{parsed.name || t('Unknown item')}</p>
                             <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5 text-xs text-muted-foreground">
                               {parsed.quantity > 0 && <span>{t('Qty')}: {parsed.quantity} {parsed.parentUnit}</span>}
-                              {parsed.costPerParent > 0 && <span>{t('Cost')}: {formatCurrency(parsed.costPerParent)}</span>}
+                              {parsed.costPerParent > 0 && <span>{t('Cost')}: {formatCost(parsed.costPerParent)}</span>}
                               {parsed.sellPrice > 0 && <span>{t('Sell')}: {formatCurrency(parsed.sellPrice)}</span>}
                               {parsed.expiryDate && <span>{t('Exp')}: {parsed.expiryDate}</span>}
                               {parsed.batchNumber && <span>{t('Batch')}: {parsed.batchNumber}</span>}
