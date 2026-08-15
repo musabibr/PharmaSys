@@ -48,19 +48,34 @@ export class ReportService {
    * Per-product stock ledger: purchased vs sold vs returned vs adjusted vs
    * on-hand, with a derived Expected and Variance. Lets the owner audit every
    * product and spot discrepancies (e.g. products corrupted by past CF rescales
-   * show Variance ≠ 0).
+   * show Variance ≠ 0). Paginated + filtered server-side — loading the whole
+   * catalogue's reconciliation math (several correlated subqueries per
+   * product) in one shot doesn't scale past a few hundred products.
    */
-  async getProductStockLedger(): Promise<Array<{
-    product_id: number; name: string; parent_unit: string; child_unit: string;
-    conversion_factor: number; purchased_base: number; sold_base: number;
-    returned_base: number; adjusted_removed_base: number; on_hand_base: number;
-    expected_base: number; variance_base: number;
-  }>> {
-    const rows = await this.repo.getProductStockLedger();
-    return rows.map(r => {
-      const expected_base = r.purchased_base + r.returned_base - r.sold_base - r.adjusted_removed_base;
-      return { ...r, expected_base, variance_base: r.on_hand_base - expected_base };
+  async getProductStockLedger(opts: {
+    page?: number; limit?: number; search?: string; onlyVariance?: boolean;
+  } = {}): Promise<{
+    data: Array<{
+      product_id: number; name: string; parent_unit: string; child_unit: string;
+      conversion_factor: number; purchased_base: number; sold_base: number;
+      returned_base: number; adjusted_removed_base: number; on_hand_base: number;
+      expected_base: number; variance_base: number;
+    }>;
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+    varianceCount: number;
+  }> {
+    const page = Math.max(1, opts.page ?? 1);
+    const limit = Math.min(200, Math.max(1, opts.limit ?? 25));
+    const result = await this.repo.getProductStockLedger({
+      page, limit, search: opts.search, onlyVariance: opts.onlyVariance,
     });
+    return {
+      ...result, page, limit,
+      totalPages: Math.max(1, Math.ceil(result.total / limit)),
+    };
   }
 
   /** Drill-down: purchases, sales/returns, and adjustments (with reasons) for one product. */

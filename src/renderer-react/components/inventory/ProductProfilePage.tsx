@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { api } from '@/api';
 import type { Product, Batch, ProductMovements, AuditEntry } from '@/api/types';
 import { formatCurrency, formatCost, formatDate, formatQuantity, unitLabel, displayInvoiceId } from '@/lib/utils';
-import { actionLabel, actionBadgeVariant, summarizeDiff } from '@/lib/audit';
+import { actionLabel, actionBadgeVariant, summarizeFieldNames } from '@/lib/audit';
 import { AuditDetailDialog } from '@/components/admin/AuditDetailDialog';
 import { usePermission, useIsAdmin } from '@/hooks/usePermission';
 import { useConfirm } from '@/components/ui/confirm-dialog';
@@ -562,8 +562,8 @@ export function ProductProfilePage() {
                         <Badge variant={actionBadgeVariant(h.action)}>{t(actionLabel(h.action))}</Badge>
                         {h.batch_number && <span className="ms-1 text-xs text-muted-foreground">({h.batch_number})</span>}
                       </TableCell>
-                      <TableCell className="max-w-[360px] truncate text-xs text-muted-foreground" title={summarizeDiff(h.old_values, h.new_values)}>
-                        {summarizeDiff(h.old_values, h.new_values) || '—'}
+                      <TableCell className="max-w-[360px] truncate text-xs text-muted-foreground" title={t('Click to see full before/after values')}>
+                        {summarizeFieldNames(h.old_values, h.new_values) || '—'}
                       </TableCell>
                       <TableCell className="text-sm">{h.username || '—'}</TableCell>
                     </TableRow>

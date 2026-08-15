@@ -35,42 +35,94 @@ export class ReportRepository implements IReportRepository {
   ) {}
 
   /**
-   * Per-product stock reconciliation ledger (base units). Purchased is summed
-   * from purchase invoices (quantity_received × current CF); sold/returned from
-   * non-voided transactions; adjusted_removed is the net removed via inventory
-   * adjustments (convention: quantity_base > 0 = removed); on_hand from batches.
-   * Correlated subqueries prevent join fan-out. Expected/Variance are derived
-   * in the service.
+   * Per-product stock reconciliation ledger (base units), paginated and
+   * filtered server-side. Purchased is summed from purchase invoices
+   * (quantity_received × current CF); sold/returned from non-voided
+   * transactions; adjusted_removed is the net removed via inventory
+   * adjustments (convention: quantity_base > 0 = removed); on_hand from
+   * batches. Correlated subqueries prevent join fan-out.
+   *
+   * Expected/Variance are computed in SQL (not the service) specifically so
+   * `onlyVariance` can filter on them and LIMIT/OFFSET only run the
+   * per-product subquery set for one page of products instead of the whole
+   * catalogue — the previous unpaginated version ran ~5 correlated
+   * subqueries per product for every product on every load.
    */
-  async getProductStockLedger(): Promise<Array<{
-    product_id: number; name: string; parent_unit: string; child_unit: string;
-    conversion_factor: number; purchased_base: number; sold_base: number;
-    returned_base: number; adjusted_removed_base: number; on_hand_base: number;
-  }>> {
-    return await this.base.getAll(
-      `SELECT
-         p.id AS product_id, p.name, p.parent_unit, p.child_unit,
-         COALESCE(NULLIF(p.conversion_factor, 0), 1) AS conversion_factor,
-         COALESCE((SELECT SUM(pi.quantity_received) FROM purchase_items pi
-                   WHERE pi.product_id = p.id), 0)
-           * COALESCE(NULLIF(p.conversion_factor, 0), 1) AS purchased_base,
-         COALESCE((SELECT SUM(ti.quantity_base) FROM transaction_items ti
-                   JOIN transactions t ON ti.transaction_id = t.id
-                   WHERE ti.product_id = p.id AND t.transaction_type = 'sale'
-                     AND t.is_voided = 0), 0) AS sold_base,
-         COALESCE((SELECT SUM(ti.quantity_base) FROM transaction_items ti
-                   JOIN transactions t ON ti.transaction_id = t.id
-                   WHERE ti.product_id = p.id AND t.transaction_type = 'return'
-                     AND t.is_voided = 0), 0) AS returned_base,
-         COALESCE((SELECT SUM(ia.quantity_base) FROM inventory_adjustments ia
-                   WHERE ia.product_id = p.id), 0) AS adjusted_removed_base,
-         COALESCE((SELECT SUM(bt.quantity_base) FROM batches bt
-                   WHERE bt.product_id = p.id), 0) AS on_hand_base
-       FROM products p
-       WHERE p.is_active = 1
-       ORDER BY p.name`,
+  async getProductStockLedger(opts: {
+    page: number; limit: number; search?: string; onlyVariance?: boolean;
+  }): Promise<{
+    data: Array<{
+      product_id: number; name: string; parent_unit: string; child_unit: string;
+      conversion_factor: number; purchased_base: number; sold_base: number;
+      returned_base: number; adjusted_removed_base: number; on_hand_base: number;
+      expected_base: number; variance_base: number;
+    }>;
+    total: number;
+    varianceCount: number;
+  }> {
+    const page = Math.max(1, opts.page);
+    const limit = Math.min(200, Math.max(1, opts.limit));
+    const offset = (page - 1) * limit;
+
+    const searchWhere = opts.search?.trim() ? 'AND name LIKE ?' : '';
+    const searchParam = opts.search?.trim() ? [`%${opts.search.trim()}%`] : [];
+    const varianceWhere = opts.onlyVariance ? 'AND variance_base != 0' : '';
+
+    const ledgerCte = `
+      WITH raw AS (
+        SELECT
+          p.id AS product_id, p.name, p.parent_unit, p.child_unit,
+          COALESCE(NULLIF(p.conversion_factor, 0), 1) AS conversion_factor,
+          COALESCE((SELECT SUM(pi.quantity_received) FROM purchase_items pi
+                    WHERE pi.product_id = p.id), 0)
+            * COALESCE(NULLIF(p.conversion_factor, 0), 1) AS purchased_base,
+          COALESCE((SELECT SUM(ti.quantity_base) FROM transaction_items ti
+                    JOIN transactions t ON ti.transaction_id = t.id
+                    WHERE ti.product_id = p.id AND t.transaction_type = 'sale'
+                      AND t.is_voided = 0), 0) AS sold_base,
+          COALESCE((SELECT SUM(ti.quantity_base) FROM transaction_items ti
+                    JOIN transactions t ON ti.transaction_id = t.id
+                    WHERE ti.product_id = p.id AND t.transaction_type = 'return'
+                      AND t.is_voided = 0), 0) AS returned_base,
+          COALESCE((SELECT SUM(ia.quantity_base) FROM inventory_adjustments ia
+                    WHERE ia.product_id = p.id), 0) AS adjusted_removed_base,
+          COALESCE((SELECT SUM(bt.quantity_base) FROM batches bt
+                    WHERE bt.product_id = p.id), 0) AS on_hand_base
+        FROM products p
+        WHERE p.is_active = 1
+      ),
+      ledger AS (
+        SELECT *,
+          (purchased_base + returned_base - sold_base - adjusted_removed_base) AS expected_base,
+          (on_hand_base - (purchased_base + returned_base - sold_base - adjusted_removed_base)) AS variance_base
+        FROM raw
+      )`;
+
+    const countRow = await this.base.getOne<{ total: number }>(
+      `${ledgerCte}
+       SELECT COUNT(*) as total FROM ledger WHERE 1=1 ${searchWhere} ${varianceWhere}`,
+      [...searchParam]
+    );
+    const varianceRow = await this.base.getOne<{ total: number }>(
+      `${ledgerCte}
+       SELECT COUNT(*) as total FROM ledger WHERE variance_base != 0`,
       []
     );
+
+    const data = await this.base.getAll<{
+      product_id: number; name: string; parent_unit: string; child_unit: string;
+      conversion_factor: number; purchased_base: number; sold_base: number;
+      returned_base: number; adjusted_removed_base: number; on_hand_base: number;
+      expected_base: number; variance_base: number;
+    }>(
+      `${ledgerCte}
+       SELECT * FROM ledger WHERE 1=1 ${searchWhere} ${varianceWhere}
+       ORDER BY name
+       LIMIT ? OFFSET ?`,
+      [...searchParam, limit, offset]
+    );
+
+    return { data, total: countRow?.total ?? 0, varianceCount: varianceRow?.total ?? 0 };
   }
 
   /**

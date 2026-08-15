@@ -47,8 +47,13 @@ export function reportRoutes(services: ServiceContainer): Router {
     res.json({ data: await services.report.getInventoryReconciliation() });
   }));
 
-  router.get('/product-stock-ledger', requireMicroPerm('inventory.valuation'), handle(async (_req, res) => {
-    res.json({ data: await services.report.getProductStockLedger() });
+  router.get('/product-stock-ledger', requireMicroPerm('inventory.valuation'), handle(async (req, res) => {
+    res.json({ data: await services.report.getProductStockLedger({
+      page: req.query.page ? Number(req.query.page) : undefined,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+      search: req.query.search ? String(req.query.search) : undefined,
+      onlyVariance: req.query.onlyVariance === 'true',
+    }) });
   }));
 
   router.get('/product-movements/:id', requireMicroPerm('inventory.valuation'), handle(async (req, res) => {

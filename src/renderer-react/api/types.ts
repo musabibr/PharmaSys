@@ -929,7 +929,7 @@ export interface PharmaSysApi {
     inventoryValuation(filters?: unknown): Promise<InventoryValuationResult>;
     purchaseReport(startDate: string, endDate: string, supplierId?: number, paymentStatus?: string): Promise<PurchaseReport>;
     inventoryReconciliation(): Promise<any[]>;
-    productStockLedger(): Promise<ProductStockLedgerRow[]>;
+    productStockLedger(opts?: { page?: number; limit?: number; search?: string; onlyVariance?: boolean }): Promise<PaginatedResult<ProductStockLedgerRow> & { varianceCount: number }>;
     productMovements(productId: number): Promise<ProductMovements>;
   };
 

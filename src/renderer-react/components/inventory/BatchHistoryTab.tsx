@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { api } from '@/api';
 import type { AuditEntry } from '@/api/types';
 import { useDebounce } from '@/hooks/useDebounce';
-import { actionLabel, actionBadgeVariant, summarizeDiff, resolveEntryName } from '@/lib/audit';
+import { actionLabel, actionBadgeVariant, summarizeFieldNames, resolveEntryName } from '@/lib/audit';
 import { AuditDetailDialog } from '@/components/admin/AuditDetailDialog';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -117,8 +117,8 @@ export function BatchHistoryTab() {
                       {name ?? <span className="text-muted-foreground">{t('Unknown product')}</span>}
                       {e.batch_number && <span className="ms-1 font-normal text-xs text-muted-foreground">({e.batch_number})</span>}
                     </TableCell>
-                    <TableCell className="max-w-[320px] truncate text-xs text-muted-foreground" title={summarizeDiff(e.old_values, e.new_values)}>
-                      {summarizeDiff(e.old_values, e.new_values) || '—'}
+                    <TableCell className="max-w-[320px] truncate text-xs text-muted-foreground" title={t('Click to see full before/after values')}>
+                      {summarizeFieldNames(e.old_values, e.new_values) || '—'}
                     </TableCell>
                     <TableCell className="text-sm">{e.username || '—'}</TableCell>
                   </TableRow>

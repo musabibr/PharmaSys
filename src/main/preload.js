@@ -416,8 +416,8 @@ contextBridge.exposeInMainWorld('api', {
         inventoryReconciliation: () =>
             invoke('reports:inventoryReconciliation'),
 
-        productStockLedger: () =>
-            invoke('reports:productStockLedger'),
+        productStockLedger: (opts) =>
+            invoke('reports:productStockLedger', opts),
 
         productMovements: (productId) =>
             invoke('reports:productMovements', productId),

@@ -121,25 +121,68 @@ function parseValues(json: string | null): Record<string, unknown> {
   } catch { return {}; }
 }
 
+/** field_name → "Field Name", for keys that aren't already human labels. */
+function fieldLabel(key: string): string {
+  return key
+    .split('_')
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+function formatFieldValue(v: unknown): string {
+  if (v === null || v === undefined || v === '') return '—';
+  if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+  return String(v);
+}
+
+export interface DiffField {
+  key: string;
+  label: string;
+  oldValue: string;
+  newValue: string;
+  changed: boolean;
+}
+
+/**
+ * Structured field-by-field diff — the basis for both the inline row
+ * preview and the detail dialog's table. Never a raw JSON dump: an event
+ * that touches several fields (a batch edit with a new expiry, quantity,
+ * *and* cost in one save) is unreadable as one comma-joined line or one
+ * undifferentiated blob, so both surfaces render this as real rows instead.
+ */
+export function diffFields(oldJson: string | null, newJson: string | null): DiffField[] {
+  const oldV = parseValues(oldJson);
+  const newV = parseValues(newJson);
+  const keys = Object.keys(newV).filter((k) => k !== 'version');
+  return keys.map((k) => {
+    const hasOld = Object.prototype.hasOwnProperty.call(oldV, k);
+    const oldValue = hasOld ? formatFieldValue(oldV[k]) : '—';
+    const newValue = formatFieldValue(newV[k]);
+    return { key: k, label: fieldLabel(k), oldValue, newValue, changed: hasOld && oldValue !== newValue };
+  });
+}
+
 /**
  * One-line "field: old → new" preview for a table cell. Full detail belongs
  * in a dialog (see AuditDetailDialog) — this is a scannable summary, not the
  * only way to see the change, so truncating it is safe.
  */
 export function summarizeDiff(oldJson: string | null, newJson: string | null): string {
-  const oldV = parseValues(oldJson);
-  const newV = parseValues(newJson);
-  const keys = Object.keys(newV).filter((k) => k !== 'version');
-  if (keys.length === 0) return '';
-  return keys
-    .map((k) => {
-      const nv = newV[k] ?? '—';
-      const hasOld = Object.prototype.hasOwnProperty.call(oldV, k);
-      if (!hasOld) return `${k}: ${nv}`;
-      const ov = oldV[k] ?? '—';
-      return ov === nv ? `${k}: ${nv}` : `${k}: ${ov} → ${nv}`;
-    })
+  return diffFields(oldJson, newJson)
+    .map((f) => (f.changed ? `${f.label}: ${f.oldValue} → ${f.newValue}` : `${f.label}: ${f.newValue}`))
     .join(', ');
+}
+
+/** Compact preview for a table cell — field NAMES only, not full values, so a
+ *  multi-field change stays scannable on one line instead of wrapping into a
+ *  wall of text. Click the row for the full before/after table. */
+export function summarizeFieldNames(oldJson: string | null, newJson: string | null): string {
+  const fields = diffFields(oldJson, newJson);
+  if (fields.length === 0) return '';
+  const names = fields.map((f) => f.label);
+  if (names.length <= 3) return names.join(', ');
+  return `${names.slice(0, 3).join(', ')} +${names.length - 3} more`;
 }
 
 export function formatDateTime(dateStr: string): string {

@@ -340,6 +340,12 @@ contextBridge.exposeInMainWorld('api', {
 
     inventoryValuation: async (filters) =>
       get(`/api/v1/reports/inventory-valuation${qs(filters)}`),
+
+    productStockLedger: async (opts) =>
+      get(`/api/v1/reports/product-stock-ledger${qs(opts)}`),
+
+    productMovements: async (productId) =>
+      get(`/api/v1/reports/product-movements/${productId}`),
   },
 
   // ════════════════════════════════════════
