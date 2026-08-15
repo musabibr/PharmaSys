@@ -25,6 +25,20 @@ export class HeldSaleRepository implements IHeldSaleRepository {
     });
   }
 
+  async getById(id: number): Promise<HeldSale | undefined> {
+    const row = await this.base.getOne<HeldSale>(
+      `SELECT * FROM held_sales WHERE id = ?`,
+      [id]
+    );
+    if (!row) return undefined;
+    try {
+      row.items = JSON.parse(row.items_json as string);
+    } catch {
+      (row as HeldSale & { _corrupted?: boolean })._corrupted = true;
+    }
+    return row;
+  }
+
   async save(data: { user_id: number; customer_note: string | null; items_json: string; total_amount: number }) {
     return await this.base.runImmediate(
       `INSERT INTO held_sales (user_id, customer_note, items_json, total_amount) VALUES (?, ?, ?, ?)`,

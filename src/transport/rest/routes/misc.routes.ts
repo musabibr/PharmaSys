@@ -37,7 +37,7 @@ export function heldSaleRoutes(services: ServiceContainer): Router {
   }));
 
   router.delete('/:id', requireAnyMicroPerm(['pos.held_sales', 'pos.sales']), handle(async (req, res) => {
-    await services.heldSale.delete(Number(req.params.id), req.user!.id);
+    await services.heldSale.delete(Number(req.params.id), req.user!.id, req.user!.role);
     res.json({ data: { ok: true } });
   }));
 

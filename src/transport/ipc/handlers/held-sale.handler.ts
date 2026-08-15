@@ -16,7 +16,7 @@ export function registerHeldSaleHandlers(router: IpcRouter, services: ServiceCon
 
   // Frontend uses 'held:delete'
   router.handle('held:delete', async (user, id: number) => {
-    await services.heldSale.delete(id, user!.id);
+    await services.heldSale.delete(id, user!.id, user!.role);
     return { success: true };
   }, { anyPermission: ['pos.held_sales', 'pos.sales'] });
 }

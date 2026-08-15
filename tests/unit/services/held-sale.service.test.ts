@@ -1,5 +1,5 @@
 import { HeldSaleService } from '@core/services/held-sale.service';
-import { ValidationError } from '@core/types/errors';
+import { ValidationError, NotFoundError, PermissionError } from '@core/types/errors';
 import {
   createMockHeldSaleRepo, createMockBus, runResult,
 } from '../../helpers/mocks';
@@ -125,8 +125,9 @@ describe('HeldSaleService', () => {
   // delete
   // ═══════════════════════════════════════════════════════════════════════════
   describe('delete', () => {
-    it('deletes held sale by id', async () => {
+    it('deletes the requesting user\'s own held sale', async () => {
       const { svc, repo } = createService();
+      repo.getById.mockResolvedValue(sampleHeldSale); // user_id: 1
       await svc.delete(1, 1);
       expect(repo.delete).toHaveBeenCalledWith(1);
     });
@@ -136,12 +137,36 @@ describe('HeldSaleService', () => {
       await expect(svc.delete(0, 1)).rejects.toThrow(ValidationError);
     });
 
-    it('emits entity:mutated on delete', async () => {
-      const { svc, bus } = createService();
+    it('throws NotFoundError when the held sale does not exist', async () => {
+      const { svc, repo } = createService();
+      repo.getById.mockResolvedValue(undefined);
+      await expect(svc.delete(99, 1)).rejects.toThrow(NotFoundError);
+    });
+
+    // H6: getAll scoped to the owner but delete did not — any cashier could
+    // remove a colleague's parked sale by guessing a sequential id.
+    it('refuses to delete another user\'s held sale for a non-admin (H6)', async () => {
+      const { svc, repo } = createService();
+      repo.getById.mockResolvedValue({ ...sampleHeldSale, user_id: 2 });
+      await expect(svc.delete(1, 1, 'cashier')).rejects.toThrow(PermissionError);
+      expect(repo.delete).not.toHaveBeenCalled();
+    });
+
+    it('allows an admin to delete another user\'s held sale', async () => {
+      const { svc, repo } = createService();
+      repo.getById.mockResolvedValue({ ...sampleHeldSale, user_id: 2 });
+      await svc.delete(1, 1, 'admin');
+      expect(repo.delete).toHaveBeenCalledWith(1);
+    });
+
+    it('emits entity:mutated on delete, recording the owner', async () => {
+      const { svc, repo, bus } = createService();
+      repo.getById.mockResolvedValue(sampleHeldSale);
       await svc.delete(1, 1);
       expect(bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
         action: 'DELETE_HELD_SALE',
         recordId: 1,
+        oldValues: expect.objectContaining({ owner_user_id: 1 }),
       }));
     });
   });

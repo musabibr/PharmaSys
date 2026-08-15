@@ -3,7 +3,7 @@ import type { EventBus }            from '../events/event-bus';
 import type { HeldSale }            from '../types/models';
 import { Validate }                 from '../common/validation';
 import { Money }                     from '../common/money';
-import { NotFoundError, ValidationError, InternalError } from '../types/errors';
+import { NotFoundError, ValidationError, InternalError, PermissionError } from '../types/errors';
 
 export class HeldSaleService {
   constructor(
@@ -48,12 +48,28 @@ export class HeldSaleService {
     return saved;
   }
 
-  async delete(id: number, userId: number): Promise<void> {
+  async delete(id: number, userId: number, userRole?: string): Promise<void> {
     Validate.id(id);
+
+    // H6: getAll already scopes to the requesting user unless admin, but
+    // delete did not — any cashier could remove a colleague's parked sale
+    // just by guessing a sequential id. Ownership is enforced here so both
+    // transports get it, not only whichever one remembered to check.
+    const existing = await this.repo.getById(id);
+    if (!existing) throw new NotFoundError('HeldSale', id);
+    if (existing.user_id !== userId && userRole !== 'admin') {
+      throw new PermissionError('You can only delete your own held sales');
+    }
+
     await this.repo.delete(id);
     this.bus.emit('entity:mutated', {
       action: 'DELETE_HELD_SALE', table: 'held_sales',
       recordId: id, userId,
+      oldValues: {
+        owner_user_id: existing.user_id,
+        total_amount: existing.total_amount,
+        customer_note: existing.customer_note,
+      },
     });
   }
 }

@@ -176,63 +176,50 @@ export function AddToCartModal({ productId, open, onOpenChange }: AddToCartModal
       return;
     }
 
-    // Check if same product + unit_type already in cart, merge quantities
-    const existingIndex = items.findIndex(
-      (ci) => ci.product_id === product.id && ci.unit_type === unitType
-    );
+    // H1: addItem() itself now merges into a matching existing line (same
+    // product, batch, unit, price, discount) instead of always creating a
+    // new one, and clamps the COMBINED quantity against remaining stock —
+    // centralized in the store so every entry point into the cart gets the
+    // same protection, not just this dialog.
+    const maxInUnit = unitType === 'parent'
+      ? Math.floor(totalBase / conversionFactor)
+      : totalBase;
+    const cartItem: CartItem = {
+      product_id: product.id,
+      product_name: product.name,
+      batch_id: firstBatch.id,
+      batch_number: firstBatch.batch_number,
+      quantity,
+      unit_type: unitType,
+      unit_price: unitPrice,
+      cost_price: costPrice,
+      discount_percent: discountPercent,
+      conversion_factor: conversionFactor,
+      parent_unit: product.parent_unit,
+      child_unit: product.child_unit,
+      availableStock: maxInUnit,
+    };
+    const result = addItem(cartItem);
 
-    if (existingIndex >= 0) {
-      const existing = items[existingIndex];
-      const newQty = existing.quantity + quantity;
-      const newQtyBase = unitType === 'parent' ? newQty * conversionFactor : newQty;
-
-      if (newQtyBase > totalBase) {
-        setError(
-          t('Insufficient stock. Available: {{available}}', {
-            available: formatQuantity(
-              totalBase,
-              product.parent_unit,
-              product.child_unit,
-              conversionFactor
-            ),
-          })
-        );
-        return;
-      }
-
-      // Merge: update quantity (and discount if changed)
-      const updateQuantity = useCartStore.getState().updateQuantity;
-      const updateDiscount = useCartStore.getState().updateDiscount;
-      updateQuantity(existingIndex, newQty);
-      if (discountPercent !== existing.discount_percent) {
-        updateDiscount(existingIndex, discountPercent);
-      }
+    if (result.clamped) {
+      // Still added — just less than requested. Warn rather than block, so
+      // the cashier isn't stuck re-typing a quantity that will never fit
+      // (the audit's fix: show "only N left" inline instead of failing).
+      toast.warning(
+        t('Only {{available}} available — added the maximum possible.', {
+          available: formatQuantity(
+            result.maxAvailable ?? 0,
+            product.parent_unit,
+            product.child_unit,
+            conversionFactor
+          ),
+        })
+      );
     } else {
-      // Add new item — record available stock for cart-side clamping
-      const maxInUnit = unitType === 'parent'
-        ? Math.floor(totalBase / conversionFactor)
-        : totalBase;
-      const cartItem: CartItem = {
-        product_id: product.id,
-        product_name: product.name,
-        batch_id: firstBatch.id,
-        batch_number: firstBatch.batch_number,
-        quantity,
-        unit_type: unitType,
-        unit_price: unitPrice,
-        cost_price: costPrice,
-        discount_percent: discountPercent,
-        conversion_factor: conversionFactor,
-        parent_unit: product.parent_unit,
-        child_unit: product.child_unit,
-        availableStock: maxInUnit,
-      };
-      addItem(cartItem);
+      toast.success(
+        t('Added {{name}} to cart', { name: product.name })
+      );
     }
-
-    toast.success(
-      t('Added {{name}} to cart', { name: product.name })
-    );
     onOpenChange(false);
   }
 

@@ -236,6 +236,7 @@ export function createMockExpenseRepo() {
 export function createMockHeldSaleRepo() {
   return {
     getAll: jest.fn().mockResolvedValue([]),
+    getById: jest.fn().mockResolvedValue(undefined),
     save: jest.fn().mockResolvedValue(runResult(1)),
     delete: jest.fn().mockResolvedValue(undefined),
   };

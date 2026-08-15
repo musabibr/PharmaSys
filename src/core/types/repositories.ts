@@ -273,6 +273,7 @@ export interface IExpenseRepository {
 
 export interface IHeldSaleRepository {
   getAll(userId: number): Promise<HeldSale[]>;
+  getById(id: number): Promise<HeldSale | undefined>;
   save(data: { user_id: number; customer_note: string | null; items_json: string; total_amount: number }): Promise<RunResult>;
   delete(id: number): Promise<void>;
 }

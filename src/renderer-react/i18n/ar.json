@@ -648,6 +648,8 @@
   "Line Total": "إجمالي السطر",
   "Quantity must be at least 1": "الكمية يجب أن تكون 1 على الأقل",
   "Insufficient stock. Available: {{available}}": "مخزون غير كافٍ. المتاح: {{available}}",
+  "Only {{available}} available — added the maximum possible.": "المتاح {{available}} فقط — تمت إضافة أقصى كمية ممكنة.",
+  "Only {{n}} available": "المتاح {{n}} فقط",
   "Added {{name}} to cart": "تمت إضافة {{name}} إلى السلة",
   "Failed to load product details": "فشل تحميل تفاصيل المنتج",
   "Complete the sale by selecting a payment method.": "أكمل البيع باختيار طريقة الدفع.",

@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { Minus, Plus, ShoppingCart, Trash2, X } from 'lucide-react';
 import { useCartStore } from '@/stores/cart.store';
@@ -141,7 +142,15 @@ export function CartPanel({ onCheckout, onHold, onRetrieveHeld, shiftOpen }: Car
                         variant="outline"
                         size="icon"
                         className="h-7 w-7"
-                        onClick={() => updateQuantity(index, item.quantity + 1)}
+                        onClick={() => {
+                          // H2: previously clamped silently — the "+" button
+                          // just stopped responding at the stock ceiling
+                          // with no explanation, looking broken.
+                          const result = updateQuantity(index, item.quantity + 1);
+                          if (result.clamped) {
+                            toast.warning(t('Only {{n}} available', { n: result.maxAvailable ?? result.quantity }));
+                          }
+                        }}
                       >
                         <Plus className="h-3 w-3" />
                       </Button>
