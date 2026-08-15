@@ -17,7 +17,7 @@ import type { IFIFOBatch } from '../types/repositories';
 import { Validate }        from '../common/validation';
 import { Money }           from '../common/money';
 import { todayLocalISO }   from '../common/expiry';
-import { NotFoundError, ValidationError, ConflictError, BusinessRuleError } from '../types/errors';
+import { NotFoundError, ValidationError, ConflictError, BusinessRuleError, InternalError } from '../types/errors';
 
 interface DeductedLine {
   batchId:      number;
@@ -368,41 +368,100 @@ export class TransactionService {
           });
         }
 
-        // ── 6. Calculate refund using ORIGINAL SALE PRICES with discount ─────
-        // For cross-unit returns (sold box → returning strips) derive per-strip price
-        // using floor division so we never refund more than was collected.
-        const unitPrice = (isCrossUnit && cf > 1)
-          ? Money.divideToChild(origItem.unit_price, cf)
-          : origItem.unit_price;
-        const costPrice = (isCrossUnit && cf > 1)
-          ? Money.divideToChild(origItem.cost_price, cf)
-          : origItem.cost_price;
+        // ── 6. Refund each unit at the price the line it came from sold it ───
+        // A batch can hold more than one original line (see the C1 aggregation
+        // above), and those lines can price the same physical unit
+        // differently — 1 box @800 (cf 10) plus 3 loose strips @90 collects
+        // 1070 for 13 strips. Pricing the whole return off whichever single
+        // line matched the requested unit_type refunded all 13 at 90 = 1170,
+        // paying out 100 SDG that was never collected.
+        //
+        // Allocation walks the batch's lines in a stable order (original item
+        // id), skips the units already returned, and takes what this request
+        // needs from each in turn. Because the skip uses the same batch-level
+        // running total the limit check does, refunds over the lifetime of a
+        // batch sum to exactly what was collected, whatever order the returns
+        // happen in.
+        const origLines = original.items!
+          .filter(i => i.batch_id === item.batch_id)
+          .sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
 
-        const discountPct    = origItem.discount_percent ?? 0;
-        const effectivePrice = Money.percent(unitPrice, 100 - discountPct);
-        const lineTotal      = Money.multiply(effectivePrice, item.quantity);
-        const costTotal      = Money.multiply(costPrice, item.quantity);
-        
-        const revenueChange  = -lineTotal;
-        const costChange     = -costTotal;
-        const grossProfit    = Money.subtract(revenueChange, costChange);
+        let toSkip = alreadyBase;
+        let toTake = quantityBase;
 
-        const returnedProportion = origItem.quantity_base > 0 ? quantityBase / origItem.quantity_base : 0;
-        const lineRefundDiscount = Math.round((origItem.checkout_discount_allocation ?? 0) * returnedProportion);
+        for (const src of origLines) {
+          if (toTake <= 0) break;
 
-        lines.push({
-          batchId:      effectiveBatchId,
-          productId:    origItem.product_id,
-          quantityBase,
-          unitType:     item.unit_type,
-          unitPrice,
-          costPrice,
-          discountPct,
-          lineTotal,
-          grossProfit,
-          checkoutDiscountAllocation: lineRefundDiscount,
-          cfSnapshot:   cf,
-        });
+          // Consume this line's share of what was already returned first.
+          const availableHere = src.quantity_base - Math.min(toSkip, src.quantity_base);
+          toSkip = Math.max(0, toSkip - src.quantity_base);
+          if (availableHere <= 0) continue;
+
+          const takeBase = Math.min(toTake, availableHere);
+          toTake -= takeBase;
+
+          const srcCf = src.conversion_factor_snapshot ?? 1;
+          const srcDiscount = src.discount_percent ?? 0;
+
+          // Whole parent units keep their exact parent price; only a partial
+          // pack falls back to the floored per-child price. Deriving
+          // everything per-child would re-introduce the split-rounding drift
+          // (a 101 SDG box at cf 10 would refund 100).
+          let sliceTotal: number;
+          let sliceCost: number;
+          let reportedUnitPrice: number;
+          let reportedCostPrice: number;
+
+          if (src.unit_type === 'parent' && srcCf > 1) {
+            const wholeParents = Math.floor(takeBase / srcCf);
+            const looseChildren = takeBase % srcCf;
+            const childPrice = Money.divideToChild(src.unit_price, srcCf);
+            const childCost  = Money.divideToChild(src.cost_price, srcCf);
+            sliceTotal =
+              Money.multiply(Money.percent(src.unit_price, 100 - srcDiscount), wholeParents) +
+              Money.multiply(Money.percent(childPrice, 100 - srcDiscount), looseChildren);
+            sliceCost =
+              Money.multiply(src.cost_price, wholeParents) +
+              Money.multiply(childCost, looseChildren);
+            reportedUnitPrice = wholeParents > 0 ? src.unit_price : childPrice;
+            reportedCostPrice = wholeParents > 0 ? src.cost_price : childCost;
+          } else {
+            sliceTotal = Money.multiply(Money.percent(src.unit_price, 100 - srcDiscount), takeBase);
+            sliceCost  = Money.multiply(src.cost_price, takeBase);
+            reportedUnitPrice = src.unit_price;
+            reportedCostPrice = src.cost_price;
+          }
+
+          const sliceProportion = src.quantity_base > 0 ? takeBase / src.quantity_base : 0;
+          const sliceRefundDiscount = Math.round(
+            (src.checkout_discount_allocation ?? 0) * sliceProportion
+          );
+
+          lines.push({
+            batchId:      effectiveBatchId,
+            productId:    src.product_id,
+            quantityBase: takeBase,
+            // The unit the slice was SOLD in — that's the basis its refund was
+            // priced on, so the ledger row should say so.
+            unitType:     src.unit_type,
+            unitPrice:    reportedUnitPrice,
+            costPrice:    reportedCostPrice,
+            discountPct:  srcDiscount,
+            lineTotal:    sliceTotal,
+            grossProfit:  Money.subtract(-sliceTotal, -sliceCost),
+            checkoutDiscountAllocation: sliceRefundDiscount,
+            cfSnapshot:   srcCf,
+          });
+        }
+
+        if (toTake > 0) {
+          // The limit check above already guarantees the pool covers this, so
+          // reaching here means the two disagree — fail loudly rather than
+          // silently refunding less than the customer is owed.
+          throw new InternalError(
+            `Return allocation shortfall on batch ${item.batch_id}: ${toTake} base unit(s) unaccounted for.`
+          );
+        }
       }
 
       // ── 7. Calculate return totals with exact per-line checkout discount allocation ──────

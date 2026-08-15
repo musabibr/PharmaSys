@@ -581,6 +581,80 @@ describe('TransactionService', () => {
       }, 1)).rejects.toThrow(ValidationError);
     });
 
+    // ─── C1 (money): each unit refunds at the price the line it came from
+    // sold it, so a batch split across lines can't pay out more than it took.
+    function splitPriceSale() {
+      // Batch 1 sold as 1 box @800 (cf 10 => 10 base) AND 3 loose strips @90.
+      // Collected = 800 + 270 = 1070 for 13 base units.
+      return {
+        ...sampleTransaction,
+        items: [
+          { ...sampleTransaction.items![0], id: 1, batch_id: 1, unit_type: 'parent' as const,
+            quantity_base: 10, unit_price: 800, cost_price: 500, discount_percent: 0,
+            conversion_factor_snapshot: 10, checkout_discount_allocation: 0 },
+          { ...sampleTransaction.items![0], id: 2, batch_id: 1, unit_type: 'child' as const,
+            quantity_base: 3, unit_price: 90, cost_price: 50, discount_percent: 0,
+            conversion_factor_snapshot: 10, checkout_discount_allocation: 0 },
+        ],
+      };
+    }
+
+    function setupSplitPriceReturn(deps: ReturnType<typeof createService>, sale: any, returned = {}) {
+      deps.txnRepo.getById
+        .mockResolvedValueOnce(sale)
+        .mockResolvedValue({ ...sale, id: 2, transaction_type: 'return' });
+      deps.txnRepo.getReturnedQuantities.mockResolvedValue(returned);
+      deps.shiftRepo.findOpenByUser.mockResolvedValue(sampleShift);
+      deps.batchRepo.getById.mockResolvedValue({ ...sampleBatch, quantity_base: 5 });
+      deps.batchRepo.updateQuantityOptimistic.mockResolvedValue(true);
+      deps.txnRepo.insert.mockResolvedValue(2);
+      deps.txnRepo.getNextNumber.mockResolvedValue('RTN-20260225-0001');
+    }
+
+    it('never refunds more than was collected when one batch spans differently-priced lines (C1)', async () => {
+      const deps = createService();
+      setupSplitPriceReturn(deps, splitPriceSale());
+
+      await deps.svc.createReturn({
+        original_transaction_id: 1,
+        items: [{ batch_id: 1, unit_type: 'child', quantity: 13 }],
+      }, 1);
+
+      // Was 1170 (all 13 priced at the strip line's 90) against 1070 collected.
+      expect(deps.txnRepo.insert.mock.calls[0][0].total_amount).toBe(1070);
+    });
+
+    it('splits one requested return across the source lines it draws from (C1)', async () => {
+      const deps = createService();
+      setupSplitPriceReturn(deps, splitPriceSale());
+
+      await deps.svc.createReturn({
+        original_transaction_id: 1,
+        items: [{ batch_id: 1, unit_type: 'child', quantity: 13 }],
+      }, 1);
+
+      // 10 base from the box line, 3 from the strip line — two ledger rows.
+      const inserted = deps.txnRepo.insertItem.mock.calls.map((c: any[]) => c[0]);
+      expect(inserted).toHaveLength(2);
+      expect(inserted.map((l: any) => l.quantity_base).sort((a: number, b: number) => a - b))
+        .toEqual([3, 10]);
+    });
+
+    it('picks up where a previous partial return left off, so the two never overlap (C1)', async () => {
+      const deps = createService();
+      // 5 base already returned — those came off the box line, leaving 5 more
+      // box-priced units then the 3 strip-priced ones.
+      setupSplitPriceReturn(deps, splitPriceSale(), { '1': 5 });
+
+      await deps.svc.createReturn({
+        original_transaction_id: 1,
+        items: [{ batch_id: 1, unit_type: 'child', quantity: 8 }],
+      }, 1);
+
+      // 5 remaining box-line strips @ floor(800/10)=80 => 400, plus 3 @ 90 => 270.
+      expect(deps.txnRepo.insert.mock.calls[0][0].total_amount).toBe(670);
+    });
+
     // ─── C5: restoring a hard-deleted batch must not fabricate a far-future expiry ───
     it('falls back to today\'s date (not 2099-12-31) when a deleted batch\'s original expiry cannot be recovered (C5)', async () => {
       const deps = createService();
