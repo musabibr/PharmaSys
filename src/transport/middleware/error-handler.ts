@@ -9,6 +9,7 @@ import {
   AppError, ValidationError, NotFoundError,
   AuthenticationError, PermissionError, ConflictError,
 } from '../../core/types/errors';
+import { translateSqlError } from '../../core/common/sql-errors';
 
 export interface IpcErrorResponse {
   success: false;
@@ -27,14 +28,22 @@ export type IpcResponse<T = unknown> = IpcSuccessResponse<T> | IpcErrorResponse;
 
 /** Converts any thrown value into a typed IPC error response. */
 export function toIpcError(err: unknown): IpcErrorResponse {
-  if (err instanceof ValidationError) {
-    return { success: false, error: err.message, code: err.code, statusCode: 400, field: err.field };
+  // Last-chance translation: a UNIQUE-constraint violation that no service
+  // caught is a user error, not a server fault — without this it reaches the
+  // generic branch below and becomes an unactionable "unexpected error" in a
+  // packaged build (audit H7). Services translate it closer to the cause
+  // where they can; this is the safety net for the ones that don't.
+  const e = translateSqlError(err);
+
+  if (e instanceof ValidationError) {
+    return { success: false, error: e.message, code: e.code, statusCode: 400, field: e.field };
   }
-  if (err instanceof AppError) {
-    return { success: false, error: err.message, code: err.code, statusCode: err.statusCode };
+  if (e instanceof AppError) {
+    return { success: false, error: e.message, code: e.code, statusCode: e.statusCode };
   }
+  console.error('[IPC Error]', e);
   if (process.env.NODE_ENV !== 'production') {
-    const msg = err instanceof Error ? err.message : 'An unexpected error occurred';
+    const msg = e instanceof Error ? e.message : 'An unexpected error occurred';
     return { success: false, error: msg, code: 'INTERNAL_ERROR', statusCode: 500 };
   }
   return { success: false, error: 'An unexpected error occurred', code: 'INTERNAL_ERROR', statusCode: 500 };
@@ -57,11 +66,15 @@ export async function safeIpc<T>(
 
 /** Express error-handling middleware — must be registered LAST. */
 export function expressErrorHandler(
-  err: unknown,
+  rawErr: unknown,
   _req: Request,
   res: Response,
   _next: NextFunction
 ): void {
+  // Same last-chance constraint translation as toIpcError — both transports
+  // must agree, or the same failure reads differently over REST than IPC.
+  const err = translateSqlError(rawErr);
+
   if (err instanceof ValidationError) {
     res.status(400).json({ error: err.message, code: err.code, field: err.field });
     return;

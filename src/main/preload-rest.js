@@ -29,29 +29,51 @@ function authHeaders() {
 
 // ─── HTTP Helpers ────────────────────────────────────────────────────────────
 
+/** Build an Error carrying the transport's code/status, matching preload.js. */
+function apiError(message, code, statusCode) {
+  const err = new Error(message);
+  err.code = code;
+  if (statusCode !== undefined) err.statusCode = statusCode;
+  return err;
+}
+
+/**
+ * THROWS on failure, exactly like preload.js's invoke().
+ *
+ * This used to RETURN `{ success: false, error }` while preload.js threw.
+ * Renderer code is shared between both modes, so every call site that didn't
+ * remember to wrap its result in throwIfError() silently treated a failed
+ * request as a successful one in LAN/client mode — showing "saved"/"deleted"
+ * toasts for operations the server had rejected. Having exactly one error
+ * boundary, which behaves the same in both modes, is the fix (audit H7);
+ * throwIfError() then degrades to a harmless no-op wherever it's still used.
+ */
 async function request(method, path, body) {
   const opts = { method, headers: authHeaders() };
   if (body !== undefined) opts.body = JSON.stringify(body);
+
+  let res;
+  let json;
   try {
-    const res = await fetch(`${SERVER_URL}${path}`, opts);
-    const json = await res.json();
-    if (!res.ok) {
-      return { success: false, error: json.error || 'Request failed', code: json.code || 'UNKNOWN' };
-    }
-    return json.data;
+    res = await fetch(`${SERVER_URL}${path}`, opts);
+    json = await res.json();
   } catch (err) {
-    // Provide a user-friendly error that includes the server address
+    // Network/parse failure — never reached the server, or it spoke nonsense.
     const host = SERVER_URL.replace('http://', '');
     const detail = err.message || 'Network error';
     if (detail.includes('fetch') || detail.includes('ECONNREFUSED') || detail.includes('network')) {
-      return {
-        success: false,
-        error: `Cannot reach server at ${host}. Make sure the server is running and both devices are on the same network.`,
-        code: 'NETWORK_ERROR',
-      };
+      throw apiError(
+        `Cannot reach server at ${host}. Make sure the server is running and both devices are on the same network.`,
+        'NETWORK_ERROR'
+      );
     }
-    return { success: false, error: `Server error (${host}): ${detail}`, code: 'NETWORK_ERROR' };
+    throw apiError(`Server error (${host}): ${detail}`, 'NETWORK_ERROR');
   }
+
+  if (!res.ok) {
+    throw apiError(json.error || 'Request failed', json.code || 'UNKNOWN', res.status);
+  }
+  return json.data;
 }
 
 function get(path)        { return request('GET',    path); }
@@ -78,9 +100,11 @@ contextBridge.exposeInMainWorld('api', {
   // ════════════════════════════════════════
 
   auth: {
+    // Note: request() now throws on failure, so the old `if (result?.error)`
+    // guards here are gone — a bad login propagates as a thrown Error and is
+    // caught by LoginPage, same as in Electron/IPC mode.
     login: async (username, password) => {
       const result = await post('/api/v1/auth/login', { username, password });
-      if (result?.error) return result;
       _token = result.token;
       return { success: true, user: result.user };
     },
@@ -91,16 +115,20 @@ contextBridge.exposeInMainWorld('api', {
       return { success: true };
     },
 
+    // Deliberately does NOT propagate a failure: "not logged in" is the
+    // normal answer to a session check, not an exceptional one.
     getCurrentUser: async () => {
       if (!_token) return { success: false, user: null };
-      const result = await get('/api/v1/auth/me');
-      if (result?.error) return { success: false, user: null };
-      return { success: true, user: result };
+      try {
+        const result = await get('/api/v1/auth/me');
+        return { success: true, user: result };
+      } catch {
+        return { success: false, user: null };
+      }
     },
 
     changePassword: async (currentPassword, newPassword) => {
-      const result = await post('/api/v1/auth/change-password', { currentPassword, newPassword });
-      if (result?.error) return result;
+      await post('/api/v1/auth/change-password', { currentPassword, newPassword });
       return { success: true };
     },
 
@@ -109,14 +137,12 @@ contextBridge.exposeInMainWorld('api', {
     },
 
     resetPasswordWithSecurityAnswer: async (username, answer, newPassword) => {
-      const result = await post('/api/v1/auth/reset-password', { username, answer, newPassword });
-      if (result?.error) return result;
+      await post('/api/v1/auth/reset-password', { username, answer, newPassword });
       return { success: true };
     },
 
     setSecurityQuestion: async (question, answer) => {
-      const result = await post('/api/v1/auth/security-question/set', { question, answer });
-      if (result?.error) return result;
+      await post('/api/v1/auth/security-question/set', { question, answer });
       return { success: true };
     },
 
@@ -145,14 +171,12 @@ contextBridge.exposeInMainWorld('api', {
     update:   async (id, data)  => put(`/api/v1/users/${id}`, data),
 
     resetPassword: async (userId, newPassword) => {
-      const result = await post(`/api/v1/users/${userId}/reset-password`, { newPassword });
-      if (result?.error) return result;
+      await post(`/api/v1/users/${userId}/reset-password`, { newPassword });
       return { success: true };
     },
 
     unlockAccount: async (userId) => {
-      const result = await post(`/api/v1/users/${userId}/unlock`, {});
-      if (result?.error) return result;
+      await post(`/api/v1/users/${userId}/unlock`, {});
       return { success: true };
     },
   },
@@ -283,7 +307,6 @@ contextBridge.exposeInMainWorld('api', {
 
     close: async (shiftId, actualCash, notes) => {
       const result = await post(`/api/v1/shifts/${shiftId}/close`, { actualCash, notes });
-      if (result?.error) return result;
       return { success: true, ...result };
     },
 
@@ -306,8 +329,7 @@ contextBridge.exposeInMainWorld('api', {
 
   held: {
     save: async (items, customerNote) => {
-      const result = await post('/api/v1/held-sales', { items, customerNote });
-      if (result?.error) return result;
+      await post('/api/v1/held-sales', { items, customerNote });
       return { success: true };
     },
 
@@ -315,8 +337,7 @@ contextBridge.exposeInMainWorld('api', {
       get('/api/v1/held-sales'),
 
     delete: async (id) => {
-      const result = await del(`/api/v1/held-sales/${id}`);
-      if (result?.error) return result;
+      await del(`/api/v1/held-sales/${id}`);
       return { success: true };
     },
   },
@@ -375,7 +396,6 @@ contextBridge.exposeInMainWorld('api', {
   settings: {
     get: async (key) => {
       const result = await get(`/api/v1/settings/${encodeURIComponent(key)}`);
-      if (result?.error) return result;
       return result?.value ?? null;
     },
 
@@ -383,8 +403,7 @@ contextBridge.exposeInMainWorld('api', {
       get('/api/v1/settings'),
 
     set: async (key, value) => {
-      const result = await put(`/api/v1/settings/${encodeURIComponent(key)}`, { value });
-      if (result?.error) return result;
+      await put(`/api/v1/settings/${encodeURIComponent(key)}`, { value });
       return { success: true };
     },
   },

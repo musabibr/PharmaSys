@@ -3,6 +3,7 @@ import type { AuditRepository }    from '../repositories/sql/audit.repository';
 import type { EventBus }            from '../events/event-bus';
 import type { Category }            from '../types/models';
 import { Validate }                 from '../common/validation';
+import { translateSqlError }        from '../common/sql-errors';
 import { NotFoundError }            from '../types/errors';
 
 export class CategoryService {
@@ -43,7 +44,12 @@ export class CategoryService {
     const existing = await this.repo.getById(id);
     if (!existing) throw new NotFoundError('Category', id);
 
-    await this.repo.update(id, cleaned);
+    // H7: renaming onto an existing category name trips the UNIQUE column.
+    try {
+      await this.repo.update(id, cleaned);
+    } catch (err) {
+      throw translateSqlError(err);
+    }
     this.bus.emit('entity:mutated', {
       action: 'UPDATE_CATEGORY', table: 'categories',
       recordId: id, userId,

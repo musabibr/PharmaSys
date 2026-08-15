@@ -143,6 +143,8 @@
   "Transaction / transfer ref": "مرجع التحويل",
   "Cash Amount": "المبلغ النقدي",
   "Bank Amount": "المبلغ البنكي",
+  "This covers the full total.": "هذا يغطي المبلغ الإجمالي بالكامل.",
+  "Switch to Bank Transfer": "التبديل إلى تحويل بنكي",
   "Bank Amt": "مبلغ بنكي",
   "Cash portion": "الجزء النقدي",
   "Bank amount must be greater than zero": "يجب أن يكون المبلغ البنكي أكبر من الصفر",

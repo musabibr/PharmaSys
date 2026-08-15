@@ -10,11 +10,16 @@ if (!window.api) {
 export const api = window.api as PharmaSysApi;
 
 /**
- * Check if an IPC response is an error object and throw if so.
- * The IPC layer returns `{ success: false, error: "...", code: "..." }` on failure
- * instead of throwing, so callers must detect this explicitly.
+ * DEPRECATED — now a no-op. Prefer plain `await api.x.y()` in new code.
  *
- * Usage:  const result = throwIfError(await api.users.update(id, data));
+ * Both preload bridges are the single error boundary and *throw* on failure:
+ * `preload.js` (Electron/IPC) always did, and `preload-rest.js` (LAN client
+ * mode) was fixed to match — it used to return `{ success: false, error }`
+ * instead, which meant any call site that forgot this wrapper silently
+ * treated a failed request as a success in LAN mode (audit H7).
+ *
+ * Kept because ~30 call sites still use it and it is harmless: an error can
+ * no longer reach it. Remove call sites opportunistically; do not add new ones.
  */
 export function throwIfError<T>(result: T): T {
   if (

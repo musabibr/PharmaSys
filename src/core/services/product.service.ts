@@ -6,6 +6,7 @@ import type { EventBus }           from '../events/event-bus';
 import type { Product, ProductFilters, PaginatedResult, CreateProductInput, UpdateProductInput, BulkCreateProductInput } from '../types/models';
 import { Validate }                from '../common/validation';
 import { diffValues }              from '../common/audit-diff';
+import { translateSqlError }       from '../common/sql-errors';
 import { NotFoundError, ValidationError } from '../types/errors';
 import { Money }                   from '../common/money';
 
@@ -62,7 +63,15 @@ export class ProductService {
       Validate.positiveInteger(data.conversion_factor, 'Conversion factor');
     }
 
-    const result = await this.repo.create({ ...data, name }, categoryId);
+    // H7: a duplicate name/barcode is a UNIQUE-constraint violation, which
+    // otherwise falls through every AppError check and reaches the user as
+    // "An unexpected error occurred" in a packaged build.
+    let result;
+    try {
+      result = await this.repo.create({ ...data, name }, categoryId);
+    } catch (err) {
+      throw translateSqlError(err);
+    }
     const newId = result.lastInsertRowid as number;
 
     this.bus.emit('entity:mutated', {
@@ -95,24 +104,31 @@ export class ProductService {
     // (box) count. quantity_base is the physical count of smallest units, so
     // silently rescaling it on every CF edit corrupted stock (the reported
     // variance bug). Default ('keep_units') leaves quantities untouched.
-    if (data.conversion_factor !== undefined && data.conversion_factor !== existing.conversion_factor) {
-      const rescale = data.rescaleStock === 'keep_packs';
-      await this.batchRepo.inTransaction(async () => {
-        await this.repo.update(id, data);
-        if (rescale) {
-          await this.batchRepo.rescaleQuantitiesForProduct(id, existing.conversion_factor!, data.conversion_factor!);
-        }
-        await this.batchRepo.recalculateChildPricesForProduct(id, data.conversion_factor!);
-      });
+    // H7: renaming onto an existing product name is the common way to trip
+    // the UNIQUE index — translate it into a field error rather than letting
+    // it surface as a generic 500.
+    try {
+      if (data.conversion_factor !== undefined && data.conversion_factor !== existing.conversion_factor) {
+        const rescale = data.rescaleStock === 'keep_packs';
+        await this.batchRepo.inTransaction(async () => {
+          await this.repo.update(id, data);
+          if (rescale) {
+            await this.batchRepo.rescaleQuantitiesForProduct(id, existing.conversion_factor!, data.conversion_factor!);
+          }
+          await this.batchRepo.recalculateChildPricesForProduct(id, data.conversion_factor!);
+        });
 
-      this.bus.emit('entity:mutated', {
-        action: 'CASCADE_CF_CHANGE', table: 'products',
-        recordId: id, userId,
-        oldValues: { conversion_factor: existing.conversion_factor },
-        newValues: { conversion_factor: data.conversion_factor, rescaleStock: data.rescaleStock ?? 'keep_units' },
-      });
-    } else {
-      await this.repo.update(id, data);
+        this.bus.emit('entity:mutated', {
+          action: 'CASCADE_CF_CHANGE', table: 'products',
+          recordId: id, userId,
+          oldValues: { conversion_factor: existing.conversion_factor },
+          newValues: { conversion_factor: data.conversion_factor, rescaleStock: data.rescaleStock ?? 'keep_units' },
+        });
+      } else {
+        await this.repo.update(id, data);
+      }
+    } catch (err) {
+      throw translateSqlError(err);
     }
 
     // Record the PREVIOUS value of every field the patch actually changed —

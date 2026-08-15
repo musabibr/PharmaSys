@@ -10,6 +10,7 @@ import type {
 import { Validate }               from '../common/validation';
 import { diffValues }             from '../common/audit-diff';
 import { NotFoundError, ValidationError, ConflictError, BusinessRuleError } from '../types/errors';
+import { translateSqlError }     from '../common/sql-errors';
 import { Money }                  from '../common/money';
 import { normalizeExpiry, NO_EXPIRY_SENTINEL, todayLocalISO } from '../common/expiry';
 
@@ -90,10 +91,13 @@ export class BatchService {
         status,
       });
     } catch (err: any) {
+      // Keep the batch-number case's more specific copy (it can name the
+      // offending value); everything else goes through the shared mapper
+      // so it surfaces as a field error instead of a generic 500 (H7).
       if (err?.message?.includes('UNIQUE constraint failed') && err?.message?.includes('idx_batches_product_batch')) {
         throw new ValidationError(`Batch number "${data.batch_number}" already exists for this product.`, 'batch_number');
       }
-      throw err;
+      throw translateSqlError(err);
     }
 
 
@@ -256,10 +260,13 @@ export class BatchService {
     try {
       success = await this.repo.update(id, existing.version, data);
     } catch (err: any) {
+      // Keep the batch-number case's more specific copy (it can name the
+      // offending value); everything else goes through the shared mapper
+      // so it surfaces as a field error instead of a generic 500 (H7).
       if (err?.message?.includes('UNIQUE constraint failed') && err?.message?.includes('idx_batches_product_batch')) {
         throw new ValidationError(`Batch number "${data.batch_number}" already exists for this product.`, 'batch_number');
       }
-      throw err;
+      throw translateSqlError(err);
     }
 
     if (!success) {

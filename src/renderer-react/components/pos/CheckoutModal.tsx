@@ -89,6 +89,9 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
 
   const parsedBankAmount = parseInt(bankAmount, 10) || 0;
   const cashAmount = isMixed ? totalAmount - parsedBankAmount : 0;
+  /** Mixed-payment bank leg already covers the whole sale — offer the switch
+   *  (H3), never perform it mid-keystroke. */
+  const bankCoversTotal = isMixed && totalAmount > 0 && parsedBankAmount >= totalAmount;
   const parsedCashTendered = parseInt(cashTendered, 10) || 0;
   const changeAmount = paymentMethod === 'cash' ? Math.max(0, parsedCashTendered - totalAmount) : 0;
 
@@ -177,25 +180,24 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
         };
       }
 
-      const result = await api.transactions.create(transactionData) as Transaction & { error?: string; code?: string };
-
-      // Check for error response (IPC/REST return {error, code} on failure)
-      if (result?.error) {
-        if (result.code === 'CONFLICT') {
-          toast.error(t('Another cashier just sold this item. Please review your cart and try again.'));
-          setError(t('Stock conflict — quantities may have changed. Review cart and retry.'));
-        } else {
-          setError(result.error);
-        }
-        return;
-      }
+      // H7: both preload bridges throw on failure, so the old inline
+      // `if (result?.error)` branch here was unreachable — a third
+      // error-unwrapping layer that only looked like it was doing something.
+      // Its CONFLICT-specific copy is preserved in the catch below, keyed off
+      // the `code` the preload attaches to the Error.
+      const result = await api.transactions.create(transactionData) as Transaction;
 
       toast.success(t('Sale completed successfully'));
       cart.clear();
       resetForm();
       onComplete(result);
     } catch (err: any) {
-      setError(err.message || t('Failed to complete sale'));
+      if (err?.code === 'CONFLICT') {
+        toast.error(t('Another cashier just sold this item. Please review your cart and try again.'));
+        setError(t('Stock conflict — quantities may have changed. Review cart and retry.'));
+      } else {
+        setError(err.message || t('Failed to complete sale'));
+      }
     } finally {
       setLoading(false);
     }
@@ -261,7 +263,13 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
                   <button
                     key={pm.value}
                     type="button"
-                    onClick={() => setPaymentMethod(pm.value)}
+                    onClick={() => {
+                      setPaymentMethod(pm.value);
+                      // Leaving "mixed" drops the split — keeping a stale
+                      // bank leg around meant coming back re-triggered the
+                      // old auto-switch immediately (H3).
+                      if (pm.value !== 'mixed') setBankAmount('');
+                    }}
                     className={`flex flex-1 items-center justify-center gap-2 rounded-md border px-3 py-2.5 text-sm font-medium transition-colors ${
                       isActive
                         ? 'border-primary bg-primary/10 text-primary'
@@ -384,19 +392,37 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
                   min="1"
                   max={totalAmount}
                   value={bankAmount}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setBankAmount(val);
-                    // Auto-switch to bank_transfer when bank covers full total
-                    const parsed = parseInt(val, 10) || 0;
-                    if (parsed >= totalAmount && totalAmount > 0) {
-                      setPaymentMethod('bank_transfer');
-                    }
-                  }}
+                  onChange={(e) => setBankAmount(e.target.value)}
                   placeholder="0"
                   disabled={loading}
                 />
               </div>
+              {/*
+                H3: this used to switch paymentMethod to bank_transfer on
+                every keystroke where the parsed amount covered the total —
+                so typing "500" for a 400 total flipped the method at the
+                third character and made this whole Mixed section vanish
+                mid-edit (and bankAmount was left set, so switching back
+                re-triggered it immediately). Offer the switch instead of
+                performing it, so the cashier stays in control of the form
+                they are still filling in.
+              */}
+              {bankCoversTotal && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-300 bg-amber-50 p-2 dark:border-amber-700 dark:bg-amber-950/40">
+                  <span className="text-xs text-amber-800 dark:text-amber-300">
+                    {t('This covers the full total.')}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={loading}
+                    onClick={() => { setPaymentMethod('bank_transfer'); setBankAmount(''); }}
+                  >
+                    {t('Switch to Bank Transfer')}
+                  </Button>
+                </div>
+              )}
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">{t('Cash Amount')}</span>
                 <span className="font-semibold tabular-nums">

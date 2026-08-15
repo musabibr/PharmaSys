@@ -7,6 +7,7 @@ import { NotFoundError, ValidationError } from '../types/errors';
 import { ALL_PERMISSION_KEYS, deriveLegacyPermissions } from '../common/permissions';
 import type { PermissionKey } from '../common/permissions';
 import { diffValues } from '../common/audit-diff';
+import { translateSqlError } from '../common/sql-errors';
 
 function hashPassword(password: string): string {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -46,13 +47,21 @@ export class UserService {
     const { permissionsJson, legacyPerms } = this._resolveInputPermissions(data);
 
     const hash = hashPassword(data.password);
-    const result = await this.repo.create({
-      ...data, username, full_name: fullName, role, password_hash: hash,
-      perm_finance: legacyPerms.perm_finance === 1,
-      perm_inventory: legacyPerms.perm_inventory === 1,
-      perm_reports: legacyPerms.perm_reports === 1,
-      permissions_json: permissionsJson,
-    });
+    // H7: the findByUsername check above races, and is case-sensitive where
+    // the UNIQUE column may not be — translate the constraint violation into
+    // a field error rather than a generic 500.
+    let result;
+    try {
+      result = await this.repo.create({
+        ...data, username, full_name: fullName, role, password_hash: hash,
+        perm_finance: legacyPerms.perm_finance === 1,
+        perm_inventory: legacyPerms.perm_inventory === 1,
+        perm_reports: legacyPerms.perm_reports === 1,
+        permissions_json: permissionsJson,
+      });
+    } catch (err) {
+      throw translateSqlError(err);
+    }
 
     this.bus.emit('entity:mutated', {
       action: 'CREATE_USER', table: 'users',
