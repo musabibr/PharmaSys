@@ -230,9 +230,18 @@ export class TransactionService {
 
         // ── 4. Enforce return quantity limit ──────────────────────────────────
         // Key is batch_id only so cross-unit returns share the same base-unit pool.
+        // C1 fix: a sale can legitimately contain two lines against the same
+        // batch (e.g. "1 box" + "3 strips" both FIFO-resolve to the same
+        // batch). returnedMap aggregates returns per batch, so the sold side
+        // must be aggregated the same way — measuring against origItem alone
+        // (a single matched line) under-reports what's actually returnable
+        // whenever a second line on the same batch exists.
         const key          = `${item.batch_id}`;
+        const soldBaseForBatch = original.items!
+          .filter(i => i.batch_id === item.batch_id)
+          .reduce((sum, i) => sum + i.quantity_base, 0);
         const alreadyBase  = (returnedMap[key] ?? 0) + (inRequestConsumed[key] ?? 0);
-        const remainingBase = origItem.quantity_base - alreadyBase;
+        const remainingBase = soldBaseForBatch - alreadyBase;
 
         if (quantityBase > remainingBase) {
           throw new ValidationError(
@@ -286,10 +295,19 @@ export class TransactionService {
             const auditRepo = this.auditRepo ?? new AuditRepository(this.base);
             const originalExpiry = await auditRepo.getDeletedBatchExpiry(item.batch_id);
 
+            // C5 fix: 2099-12-31 reads as a live, sellable medicine on every
+            // report and in the POS grid — if a pharmacist releases this
+            // batch from quarantine without noticing the RESTORED- prefix,
+            // stock of unknown age re-enters circulation with a 73-year
+            // expiry and every expiry report stays clean. Falling back to
+            // "today" instead means it reads as EXPIRED everywhere (POS,
+            // dashboard, expiry reports) until someone verifies the real
+            // date physically and corrects it — unmistakably wrong is safer
+            // here than unmistakably fine.
             const newBatchId = await this.batchRepo.restoreDeletedBatch({
               product_id:           origItem.product_id,
               batch_number:         `RESTORED-${item.batch_id}-REVIEW`,
-              expiry_date:          originalExpiry ?? '2099-12-31', // Recovered from audit, or quarantine requires review
+              expiry_date:          originalExpiry ?? todayLocalISO(),
               quantity_base:        quantityBase,
               cost_per_parent:      costPerParent,
               cost_per_child:       costPerChild,
@@ -728,6 +746,13 @@ export class TransactionService {
         );
       }
 
+      // First pass: deduct stock and pin down each fragment's price/cost.
+      // Splitting the FIFO line into per-batch fragments doesn't change how
+      // much is charged — the line total is computed from the combined
+      // fragments below, not per fragment (C3).
+      const discountPct = item.discount_percent ?? 0;
+      const fragments: Array<{ batchId: number; take: number; unitPrice: number; costPrice: number }> = [];
+
       for (const batch of batches) {
         if (remainingBase <= 0) break;
 
@@ -752,30 +777,7 @@ export class TransactionService {
             ? batch.cost_per_parent
             : (batch.cost_per_child_override || batch.cost_per_child || 0);
 
-        const discountPct = item.discount_percent ?? 0;
-
-        const effectivePrice = Money.percent(unitPrice, 100 - discountPct);
-        const lineTotal      = item.unit_type === 'parent' 
-                                 ? Math.round((effectivePrice * take) / cf) 
-                                 : Money.multiply(effectivePrice, take);
-        const costTotal      = item.unit_type === 'parent'
-                                 ? Math.round((costPrice * take) / cf)
-                                 : Money.multiply(costPrice, take);
-        const grossProfit    = Money.subtract(lineTotal, costTotal);
-
-        lines.push({
-          batchId:      batch.id,
-          productId:    item.product_id,
-          quantityBase: take,
-          unitType:     item.unit_type,
-          unitPrice,
-          costPrice,
-          discountPct,
-          lineTotal,
-          grossProfit,
-          cfSnapshot:   cf,
-        });
-
+        fragments.push({ batchId: batch.id, take, unitPrice, costPrice });
         remainingBase -= take;
       }
 
@@ -784,6 +786,67 @@ export class TransactionService {
           `Insufficient stock for product "${product.name}"`, 'stock'
         );
       }
+
+      // C3: for a parent-unit sale split across multiple batches at the SAME
+      // price (the common case — either an explicit item.unit_price override,
+      // which is identical for every fragment by construction, or batches
+      // that just happen to share a selling price), each fragment used to be
+      // rounded independently: round(price*take1/cf) + round(price*take2/cf)
+      // can be 1 SDG more or less than round(price*(take1+take2)/cf) — the
+      // customer is charged a different total than quantity × the price shown
+      // at the till. Round the combined total once and distribute it across
+      // fragments (last fragment absorbs the remainder), the same
+      // last-item-gets-the-remainder pattern used for checkout_discount_allocation
+      // below. Child-unit sales don't have this problem — Money.multiply is a
+      // plain multiply, which distributes over addition with no rounding step.
+      // A split across batches with genuinely different prices (no override,
+      // and the batches disagree) has no single total to reconcile against,
+      // so it keeps the old independent-per-fragment rounding.
+      const allSamePrice = item.unit_type === 'parent' && fragments.length > 1
+        && fragments.every(f => f.unitPrice === fragments[0].unitPrice);
+
+      let sharedLineTotal = 0;
+      if (allSamePrice) {
+        const effectivePrice = Money.percent(fragments[0].unitPrice, 100 - discountPct);
+        const totalTake = fragments.reduce((s, f) => s + f.take, 0);
+        sharedLineTotal = Math.round((effectivePrice * totalTake) / cf);
+      }
+
+      let lineTotalRemaining = sharedLineTotal;
+      fragments.forEach((f, idx) => {
+        const effectivePrice = Money.percent(f.unitPrice, 100 - discountPct);
+        let lineTotal: number;
+        if (allSamePrice) {
+          if (idx === fragments.length - 1) {
+            lineTotal = lineTotalRemaining;
+          } else {
+            lineTotal = Math.round((effectivePrice * f.take) / cf);
+            lineTotalRemaining -= lineTotal;
+          }
+        } else {
+          lineTotal = item.unit_type === 'parent'
+            ? Math.round((effectivePrice * f.take) / cf)
+            : Money.multiply(effectivePrice, f.take);
+        }
+
+        const costTotal = item.unit_type === 'parent'
+          ? Math.round((f.costPrice * f.take) / cf)
+          : Money.multiply(f.costPrice, f.take);
+        const grossProfit = Money.subtract(lineTotal, costTotal);
+
+        lines.push({
+          batchId:      f.batchId,
+          productId:    item.product_id,
+          quantityBase: f.take,
+          unitType:     item.unit_type,
+          unitPrice:    f.unitPrice,
+          costPrice:    f.costPrice,
+          discountPct,
+          lineTotal,
+          grossProfit,
+          cfSnapshot:   cf,
+        });
+      });
     }
 
     return lines;
@@ -843,6 +906,29 @@ export class TransactionService {
         `Cash tendered (${rawCashTendered}) is less than the total (${total})`,
         'cash_tendered'
       );
+    }
+
+    // Post-FIFO mixed-payment validation (C4): _validatePayment already
+    // checked cashPart + bankPart === total_amount, but against the
+    // CLIENT-supplied total_amount, before FIFO ran. If the server total
+    // differs (price changed between grid load and checkout, or the C3
+    // multi-batch rounding case), a mixed payment could otherwise commit
+    // with a breakdown that doesn't add up to the stored total — and
+    // cash_tendered derived from it would be wrong, feeding straight back
+    // into the A1 cash-shortage bug. Re-validate against the real computed
+    // `total` and reject rather than silently mis-split; this throws inside
+    // the same inTransaction() as the FIFO deduction above, so the stock
+    // change rolls back with it.
+    if (data.transaction_type === 'sale' && data.payment_method === 'mixed') {
+      const parsed = typeof data.payment === 'string' ? JSON.parse(data.payment) : data.payment;
+      const cashPart = parsed?.cash ?? 0;
+      const bankPart = parsed?.bank ?? 0;
+      if (cashPart + bankPart !== total) {
+        throw new ValidationError(
+          `The order total changed while checking out (was ${data.total_amount}, is now ${total}) — please review and retry.`,
+          'payment'
+        );
+      }
     }
 
     // Serialize payment breakdown to JSON string for storage (IPC delivers it as an object)

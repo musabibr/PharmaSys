@@ -1,5 +1,6 @@
 import { TransactionService } from '@core/services/transaction.service';
 import { ValidationError, NotFoundError, ConflictError, BusinessRuleError } from '@core/types/errors';
+import { todayLocalISO } from '@core/common/expiry';
 import {
   createMockTransactionRepo, createMockBatchRepo, createMockShiftRepo,
   createMockProductRepo, createMockBaseRepo, createMockBus,
@@ -177,6 +178,28 @@ describe('TransactionService', () => {
       expect(deps.txnRepo.insert).toHaveBeenCalled();
     });
 
+    // ─── C4: mixed payment must be re-validated against the SERVER total ───
+    it('rejects a mixed payment whose breakdown no longer matches the total computed after FIFO (C4)', async () => {
+      const deps = createService();
+      setupSaleScenario(deps);
+      // Client validated cash(5000) + bank(3000) = 8000 against its own
+      // total_amount (8000) before FIFO ran. The batch's real price is 8500
+      // (no item.unit_price override, so FIFO uses the batch price) — the
+      // server-computed total is 8500, which the breakdown no longer covers.
+      deps.batchRepo.getAvailableByProduct.mockResolvedValue([
+        { ...sampleFIFOBatch, selling_price_parent_override: 8500 },
+      ]);
+      await expect(deps.svc.createSale({
+        ...saleInput,
+        items: [{ product_id: 1, quantity: 1, unit_type: 'parent' } as any], // no unit_price override
+        payment_method: 'mixed',
+        payment: JSON.stringify({ cash: 5000, bank: 3000 }),
+      }, 1)).rejects.toThrow(ValidationError);
+      // Stock must not have been committed — the failure is inside the same
+      // transaction as the FIFO deduction, so it rolls back.
+      expect(deps.txnRepo.insert).not.toHaveBeenCalled();
+    });
+
     it('throws on mixed payment where parts < total', async () => {
       const deps = createService();
       setupSaleScenario(deps);
@@ -227,6 +250,59 @@ describe('TransactionService', () => {
       expect(deps.batchRepo.updateQuantityOptimistic).toHaveBeenCalledWith(1, 0, 'sold_out', 1);
       // Second batch partially used
       expect(deps.batchRepo.updateQuantityOptimistic).toHaveBeenCalledWith(2, 90, 'active', 1);
+    });
+
+    // ─── C3: FIFO split must not over/under-charge vs the quoted price ───
+    it('rounds a same-price multi-batch split once on the combined total, not per fragment (C3)', async () => {
+      const deps = createService();
+      setupSaleScenario(deps);
+      // cf 10, price 101/box, 3 boxes requested = 30 base units, split 25 + 5
+      // across two batches. round(101*25/10) + round(101*5/10) = 253 + 51 =
+      // 304 under the old independent-per-fragment rounding — 1 SDG more
+      // than 3 * 101 = 303, the price actually quoted for the line.
+      deps.productRepo.getById.mockResolvedValue({ ...sampleProduct, conversion_factor: 10 });
+      deps.batchRepo.getAvailableByProduct.mockResolvedValue([
+        { ...sampleFIFOBatch, id: 1, quantity_base: 25, conversion_factor: 10, version: 1 },
+        { ...sampleFIFOBatch, id: 2, quantity_base: 100, conversion_factor: 10, version: 1 },
+      ]);
+
+      await deps.svc.createSale({
+        ...saleInput,
+        items: [{ product_id: 1, quantity: 3, unit_type: 'parent', unit_price: 101 }],
+      }, 1);
+
+      const insertedLines = deps.txnRepo.insertItem.mock.calls.map((c: any[]) => c[0]);
+      expect(insertedLines).toHaveLength(2);
+      const total = insertedLines.reduce((s: number, l: any) => s + l.line_total, 0);
+      expect(total).toBe(303); // 3 * 101 — must match the quoted price exactly
+      expect(insertedLines[0].line_total).toBe(253); // round(101*25/10)
+      expect(insertedLines[1].line_total).toBe(50);   // remainder, not round(101*5/10)=51
+    });
+
+    it('rounds each fragment independently when batches genuinely have different prices', async () => {
+      const deps = createService();
+      setupSaleScenario(deps);
+      // No item.unit_price override, and the two batches disagree on price —
+      // there's no single "quoted" total to reconcile against, so each
+      // fragment keeps its own independently-rounded total (old behavior).
+      deps.productRepo.getById.mockResolvedValue({ ...sampleProduct, conversion_factor: 10 });
+      deps.batchRepo.getAvailableByProduct.mockResolvedValue([
+        { ...sampleFIFOBatch, id: 1, quantity_base: 25, conversion_factor: 10, selling_price_parent_override: 101, version: 1 },
+        { ...sampleFIFOBatch, id: 2, quantity_base: 100, conversion_factor: 10, selling_price_parent_override: 120, version: 1 },
+      ]);
+
+      await deps.svc.createSale({
+        ...saleInput,
+        // No unit_price override — runtime callers (IPC/REST) can omit it
+        // despite the strict type, in which case each fragment falls back to
+        // its own batch price.
+        items: [{ product_id: 1, quantity: 3, unit_type: 'parent' } as any],
+      }, 1);
+
+      const insertedLines = deps.txnRepo.insertItem.mock.calls.map((c: any[]) => c[0]);
+      expect(insertedLines).toHaveLength(2);
+      expect(insertedLines[0].line_total).toBe(253); // round(101*25/10)
+      expect(insertedLines[1].line_total).toBe(60);   // round(120*5/10) — independent, not remainder-based
     });
 
     it('throws ConflictError on optimistic lock failure', async () => {
@@ -449,6 +525,80 @@ describe('TransactionService', () => {
         items: [{ batch_id: 1, unit_type: 'parent', quantity: 1 }],
       }, 1)).rejects.toThrow(ValidationError);
       expect(deps.batchRepo.updateQuantityOptimistic).not.toHaveBeenCalled();
+    });
+
+    // ─── C1: same batch sold across two lines in one sale ────────────────
+    it('aggregates sold quantity across multiple lines on the same batch when checking the return limit (C1)', async () => {
+      const deps = createService();
+      // Batch 1 sold twice in the same sale: 1 parent (20 base, cf 20) + a
+      // child line (15 base) = 195 base total on batch 1. Nothing returned
+      // yet. Returning 190 base (via the child line) exceeds that child
+      // line's OWN quantity_base (15) but is well within the batch's
+      // aggregate remaining pool (195) — must succeed, not be rejected.
+      const twoLineSale = {
+        ...sampleTransaction,
+        items: [
+          { ...sampleTransaction.items![0], id: 1, batch_id: 1, unit_type: 'parent' as const, quantity_base: 180 },
+          { ...sampleTransaction.items![0], id: 2, batch_id: 1, unit_type: 'child' as const, quantity_base: 15 },
+        ],
+      };
+      deps.txnRepo.getById
+        .mockResolvedValueOnce(twoLineSale)
+        .mockResolvedValue({ ...twoLineSale, id: 2, transaction_type: 'return', transaction_number: 'RTN-20260225-0001' });
+      deps.txnRepo.getReturnedQuantities.mockResolvedValue({});
+      deps.shiftRepo.findOpenByUser.mockResolvedValue(sampleShift);
+      deps.batchRepo.getById.mockResolvedValue({ ...sampleBatch, quantity_base: 5 });
+      deps.batchRepo.updateQuantityOptimistic.mockResolvedValue(true);
+      deps.txnRepo.insert.mockResolvedValue(2);
+      deps.txnRepo.getNextNumber.mockResolvedValue('RTN-20260225-0001');
+
+      await expect(deps.svc.createReturn({
+        original_transaction_id: 1,
+        items: [{ batch_id: 1, unit_type: 'child', quantity: 190 }],
+        notes: 'partial return across split lines',
+      }, 1)).resolves.toBeDefined();
+    });
+
+    it('still rejects a return exceeding the combined total across all lines on the batch (C1)', async () => {
+      const deps = createService();
+      const twoLineSale = {
+        ...sampleTransaction,
+        items: [
+          { ...sampleTransaction.items![0], id: 1, batch_id: 1, unit_type: 'parent' as const, quantity_base: 180 },
+          { ...sampleTransaction.items![0], id: 2, batch_id: 1, unit_type: 'child' as const, quantity_base: 15 },
+        ],
+      };
+      deps.txnRepo.getById.mockResolvedValue(twoLineSale);
+      deps.txnRepo.getReturnedQuantities.mockResolvedValue({});
+      deps.shiftRepo.findOpenByUser.mockResolvedValue(sampleShift);
+      deps.batchRepo.getById.mockResolvedValue({ ...sampleBatch, quantity_base: 5 });
+
+      // 180 + 15 = 195 sold total on batch 1 — requesting 196 must fail.
+      await expect(deps.svc.createReturn({
+        original_transaction_id: 1,
+        items: [{ batch_id: 1, unit_type: 'child', quantity: 196 }],
+        notes: 'over the combined limit',
+      }, 1)).rejects.toThrow(ValidationError);
+    });
+
+    // ─── C5: restoring a hard-deleted batch must not fabricate a far-future expiry ───
+    it('falls back to today\'s date (not 2099-12-31) when a deleted batch\'s original expiry cannot be recovered (C5)', async () => {
+      const deps = createService();
+      setupReturnScenario(deps);
+      // Batch was hard-deleted — getById returns undefined, forcing the
+      // reconstruct-from-audit-log path. No matching DELETE_BATCH audit row
+      // exists (base.getOne default mock resolves undefined), so
+      // getDeletedBatchExpiry can't recover the real expiry.
+      deps.batchRepo.getById.mockResolvedValue(undefined);
+
+      await deps.svc.createReturn(returnInput, 1);
+
+      expect(deps.batchRepo.restoreDeletedBatch).toHaveBeenCalledWith(
+        expect.objectContaining({ expiry_date: todayLocalISO() })
+      );
+      expect(deps.batchRepo.restoreDeletedBatch).not.toHaveBeenCalledWith(
+        expect.objectContaining({ expiry_date: '2099-12-31' })
+      );
     });
 
     it('throws on optimistic lock failure during return', async () => {

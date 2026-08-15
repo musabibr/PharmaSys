@@ -87,13 +87,28 @@ export function ReturnDialog({
       const items = Array.isArray(txn.items) ? txn.items : [];
       const returnable: ReturnableItem[] = [];
 
+      // C1 fix: a sale can legitimately contain two lines against the same
+      // batch (e.g. "1 box" + "3 strips" both FIFO-resolved to the same
+      // batch). alreadyReturnedBase is a batch-level total, so subtracting
+      // it from a single line's own quantity_base under-reports what's
+      // returnable — after any return, the *other* line on the same batch
+      // would show 0 remaining even though the batch's shared pool still
+      // has room. Aggregate the sold side by batch first, matching the
+      // backend's validation exactly, so every line on the same batch
+      // shares the same remaining pool.
+      const soldBaseByBatch: Record<string, number> = {};
+      for (const item of items) {
+        const key = `${item.batch_id}`;
+        soldBaseByBatch[key] = (soldBaseByBatch[key] ?? 0) + item.quantity_base;
+      }
+
       for (const item of items) {
         // Key is batch_id only so cross-unit returns share the same base-unit pool
         const key = `${item.batch_id}`;
         const alreadyReturnedBase = (returnedMap && typeof returnedMap === 'object')
           ? (returnedMap[key] ?? 0)
           : 0;
-        const remainingBase = item.quantity_base - alreadyReturnedBase;
+        const remainingBase = soldBaseByBatch[key] - alreadyReturnedBase;
 
         // Include the item if any base units remain — even < 1 full box counts
         // because the user can return individual strips via cross-unit return.
