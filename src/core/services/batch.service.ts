@@ -5,7 +5,7 @@ import type {
   Batch, CreateBatchInput, UpdateBatchInput,
   InventoryAdjustment, AdjustmentFilters, AdjustmentType, BatchFilters,
   LatestBatchPricing, BulkPriceUpdateOptions, BulkPriceUpdatePreviewRow, BulkPriceUpdateResult,
-  ManualPriceUpdateItem,
+  ManualPriceUpdateItem, PaginatedResult,
 } from '../types/models';
 import { Validate }               from '../common/validation';
 import { diffValues }             from '../common/audit-diff';
@@ -460,7 +460,7 @@ export class BatchService {
     return await this.repo.getExpired();
   }
 
-  async getAdjustments(filters: AdjustmentFilters = {}): Promise<InventoryAdjustment[]> {
+  async getAdjustments(filters: AdjustmentFilters = {}): Promise<PaginatedResult<InventoryAdjustment>> {
     return await this.repo.getAdjustments(filters);
   }
 

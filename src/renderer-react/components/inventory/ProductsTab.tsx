@@ -403,7 +403,11 @@ function BulkDeleteProductsDialog({
             <Label>{t('To Delete ({{count}})', { count: toDelete.length })}</Label>
             {toDelete.map((product) => {
               const info = deleteInfoMap.get(product.id);
-              const hasWarning = info ? (info.has_stock || info.txn_count > 0) : false;
+              // B4: only remaining physical stock actually blocks deactivation
+              // now — transaction/adjustment history never expires and no
+              // longer prevents it, so it's shown as informational, not a
+              // warning (a product with sales history deactivates fine).
+              const hasWarning = info ? info.has_stock : false;
               return (
                 <div
                   key={product.id}
@@ -411,13 +415,15 @@ function BulkDeleteProductsDialog({
                 >
                   <div className="flex-1 min-w-0 space-y-0.5">
                     <p className="text-sm font-medium truncate">{product.name}</p>
-                    {info && hasWarning && (
+                    {info && info.has_stock && (
                       <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-yellow-700 dark:text-yellow-400">
-                        {info.has_stock && <span>⚠ {t('Has active stock')}</span>}
-                        {info.txn_count > 0 && <span>⚠ {t('{{n}} transaction(s)', { n: info.txn_count })}</span>}
+                        <span>⚠ {t('Has active stock')}</span>
                       </div>
                     )}
-                    {info && !hasWarning && (
+                    {info && !info.has_stock && info.txn_count > 0 && (
+                      <p className="text-xs text-muted-foreground">{t('{{n}} transaction(s) — safe to deactivate', { n: info.txn_count })}</p>
+                    )}
+                    {info && !info.has_stock && info.txn_count === 0 && (
                       <p className="text-xs text-muted-foreground">{t('No stock or transactions — safe to delete')}</p>
                     )}
                   </div>

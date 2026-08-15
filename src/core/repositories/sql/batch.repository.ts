@@ -3,9 +3,10 @@ import type { IBatchRepository, IFIFOBatch } from '../../types/repositories';
 import type {
   Batch, BatchStatus, CreateBatchInput, UpdateBatchInput,
   InventoryAdjustment, AdjustmentFilters, AdjustmentType, BatchFilters,
-  LatestBatchPricing,
+  LatestBatchPricing, PaginatedResult,
 } from '../../types/models';
 import { TODAY_SQL } from '../../common/expiry';
+import { PAGINATION } from '../../common/constants';
 export class BatchRepository implements IBatchRepository {
   constructor(private readonly base: BaseRepository) {}
 
@@ -262,7 +263,10 @@ export class BatchRepository implements IBatchRepository {
     );
   }
 
-  async getAdjustments(filters: AdjustmentFilters = {}): Promise<InventoryAdjustment[]> {
+  // G7: had no LIMIT at all — the Adjustments tab loaded the entire
+  // movement history, unbounded, on every visit. Paginated server-side,
+  // matching the pattern already used for the Stock Ledger/product lists.
+  async getAdjustments(filters: AdjustmentFilters = {}): Promise<PaginatedResult<InventoryAdjustment>> {
     const conditions: string[] = [];
     const params: unknown[] = [];
 
@@ -271,19 +275,40 @@ export class BatchRepository implements IBatchRepository {
     if (filters.type)       { conditions.push('ia.type = ?');        params.push(filters.type); }
     if (filters.start_date) { conditions.push("ia.created_at >= ?"); params.push(filters.start_date + ' 00:00:00'); }
     if (filters.end_date)   { conditions.push("ia.created_at <= ?"); params.push(filters.end_date + ' 23:59:59'); }
+    if (filters.search?.trim()) {
+      conditions.push(`(p.name LIKE ? ESCAPE '\\' OR b.batch_number LIKE ? ESCAPE '\\' OR ia.reason LIKE ? ESCAPE '\\')`);
+      const like = `%${filters.search.trim()}%`;
+      params.push(like, like, like);
+    }
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const page  = Math.max(1, filters.page ?? 1);
+    const limit = Math.min(PAGINATION.MAX_LIMIT, Math.max(PAGINATION.MIN_LIMIT, filters.limit ?? PAGINATION.DEFAULT_LIMIT));
+    const offset = (page - 1) * limit;
 
-    return await this.base.getAll<InventoryAdjustment>(
+    const countRow = await this.base.getOne<{ total: number }>(
+      `SELECT COUNT(*) as total
+       FROM inventory_adjustments ia
+       LEFT JOIN products p ON ia.product_id = p.id
+       LEFT JOIN batches b ON ia.batch_id = b.id
+       ${where}`,
+      params
+    );
+
+    const data = await this.base.getAll<InventoryAdjustment>(
       `SELECT ia.*, p.name as product_name, b.batch_number, u.username
        FROM inventory_adjustments ia
        LEFT JOIN products p ON ia.product_id = p.id
        LEFT JOIN batches b ON ia.batch_id = b.id
        LEFT JOIN users u ON ia.user_id = u.id
        ${where}
-       ORDER BY ia.created_at DESC`,
-      params
+       ORDER BY ia.created_at DESC
+       LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
     );
+
+    const total = countRow?.total ?? 0;
+    return { data, total, page, limit, totalPages: Math.max(1, Math.ceil(total / limit)) };
   }
 
   async getAdjustmentById(id: number): Promise<InventoryAdjustment | undefined> {

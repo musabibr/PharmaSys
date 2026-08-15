@@ -163,7 +163,7 @@ export interface IBatchRepository {
     user_id: number;
     reverses_adjustment_id?: number | null;
   }): Promise<RunResult>;
-  getAdjustments(filters?: AdjustmentFilters): Promise<InventoryAdjustment[]>;
+  getAdjustments(filters?: AdjustmentFilters): Promise<PaginatedResult<InventoryAdjustment>>;
   getAdjustmentById(id: number): Promise<InventoryAdjustment | undefined>;
   /** True when some other adjustment already reverses this one (B6). */
   getReversalOf(adjustmentId: number): Promise<InventoryAdjustment | undefined>;

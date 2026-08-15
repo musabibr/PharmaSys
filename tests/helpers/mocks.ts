@@ -135,6 +135,7 @@ export function createMockProductRepo() {
     bulkCreate: jest.fn().mockResolvedValue([]),
     hasActiveBatches: jest.fn().mockResolvedValue(false),
     softDelete: jest.fn().mockResolvedValue(undefined),
+    getDeleteInfo: jest.fn().mockResolvedValue({ has_stock: false, batch_count: 0, txn_count: 0 }),
   };
 }
 
@@ -153,7 +154,7 @@ export function createMockBatchRepo() {
     getExpiring: jest.fn().mockResolvedValue([]),
     getExpired: jest.fn().mockResolvedValue([]),
     insertAdjustment: jest.fn().mockResolvedValue(runResult(1)),
-    getAdjustments: jest.fn().mockResolvedValue([]),
+    getAdjustments: jest.fn().mockResolvedValue({ data: [], total: 0, page: 1, limit: 20, totalPages: 1 }),
     getAdjustmentById: jest.fn().mockResolvedValue(undefined),
     getReversalOf: jest.fn().mockResolvedValue(undefined),
     getBatchesForPriceCascade: jest.fn().mockResolvedValue([]),

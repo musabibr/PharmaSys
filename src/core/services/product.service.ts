@@ -139,8 +139,16 @@ export class ProductService {
     const existing = await this.repo.getById(id);
     if (!existing) throw new NotFoundError('Product', id);
 
-    if (await this.repo.hasActiveBatches(id)) {
-      throw new ValidationError('Cannot delete product with active stock. Sell or adjust all batches first.', 'id');
+    // B4: this is only a SOFT delete (is_active = 0) — history (past sales,
+    // past adjustments) is exactly what a deactivation should NOT be blocked
+    // by, since transaction/adjustment rows never expire. The old check
+    // (hasActiveBatches) also counted history, so any product that had ever
+    // moved a single unit could never be deactivated again — "sell or adjust
+    // all batches first" was permanently unsatisfiable advice. Only
+    // remaining physical stock should block it.
+    const info = await this.repo.getDeleteInfo(id);
+    if (info?.has_stock) {
+      throw new ValidationError('Cannot deactivate a product that still has stock. Sell or adjust all batches to zero first.', 'id');
     }
 
     await this.repo.softDelete(id);

@@ -747,6 +747,8 @@ export interface AdjustmentFilters {
   type?: AdjustmentType;
   start_date?: string;
   end_date?: string;
+  /** Text search across product name, batch number, and reason (G7). */
+  search?: string;
   page?: number;
   limit?: number;
 }

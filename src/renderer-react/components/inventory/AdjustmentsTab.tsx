@@ -21,9 +21,12 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Undo2, Plus, Pencil, Search, RotateCcw } from 'lucide-react';
 import { usePermission } from '@/hooks/usePermission';
 import { useConfirm } from '@/components/ui/confirm-dialog';
+import { useDebounce } from '@/hooks/useDebounce';
+import { DataPagination } from '@/components/ui/data-pagination';
 import { BatchHistoryTab } from './BatchHistoryTab';
 
 const TYPES: AdjustmentType[] = ['damage', 'expiry', 'correction'];
+const PAGE_SIZE = 25;
 
 export function AdjustmentsTab() {
   const { t } = useTranslation();
@@ -31,9 +34,15 @@ export function AdjustmentsTab() {
   const [loading, setLoading] = useState(true);
   const [reversing, setReversing] = useState<number | null>(null);
 
+  // ─── Pagination (G7 — server-side, was an unbounded array before) ─────────
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+
   // ─── Filters ──────────────────────────────────────────────────────────────
   const [typeFilter, setTypeFilter] = useState<AdjustmentType | 'all'>('all');
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounce(search, 300);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
 
@@ -57,29 +66,28 @@ export function AdjustmentsTab() {
   const fetchAdjustments = useCallback(async () => {
     setLoading(true);
     try {
-      const filters: Record<string, unknown> = {};
+      const filters: Record<string, unknown> = { page, limit: PAGE_SIZE };
       if (typeFilter !== 'all') filters.type = typeFilter;
       if (startDate) filters.start_date = startDate;
       if (endDate) filters.end_date = endDate;
-      const data = await api.inventory.getAdjustments(filters) as InventoryAdjustment[];
-      setAdjustments(data);
+      if (debouncedSearch.trim()) filters.search = debouncedSearch.trim();
+      const result = await api.inventory.getAdjustments(filters);
+      setAdjustments(result.data ?? []);
+      setTotal(result.total ?? 0);
+      setTotalPages(result.totalPages ?? 1);
     } catch {
       toast.error(t('Failed to load adjustments'));
     } finally {
       setLoading(false);
     }
-  }, [typeFilter, startDate, endDate, t]);
+  }, [page, typeFilter, startDate, endDate, debouncedSearch, t]);
 
   useEffect(() => { fetchAdjustments(); }, [fetchAdjustments]);
+  // Any filter change re-queries from page 1 — a stale page number past the
+  // new result set would otherwise show an empty page with no explanation.
+  useEffect(() => { setPage(1); }, [typeFilter, startDate, endDate, debouncedSearch]);
 
-  // Client-side text search across product / batch / reason
-  const q = search.trim().toLowerCase();
-  const visible = q
-    ? adjustments.filter(a =>
-        a.product_name?.toLowerCase().includes(q) ||
-        a.batch_number?.toLowerCase().includes(q) ||
-        a.reason?.toLowerCase().includes(q))
-    : adjustments;
+  const visible = adjustments;
 
   const resetFilters = () => {
     setTypeFilter('all');
@@ -94,7 +102,9 @@ export function AdjustmentsTab() {
     try {
       await api.inventory.reverseAdjustment(id);
       toast.success(t('Adjustment reversed successfully'));
-      await fetchAdjustments();
+      // The reversal itself is a new row, sorted newest-first — same
+      // jump-to-page-1 reasoning as submitAdjustment above.
+      if (page === 1) await fetchAdjustments(); else setPage(1);
     } catch (err: any) {
       toast.error(err.message || t('Failed to reverse adjustment'));
     } finally {
@@ -163,7 +173,10 @@ export function AdjustmentsTab() {
       await api.inventory.reportDamage(batchId, qty, reason.trim(), adjType);
       toast.success(editingId !== null ? t('Adjustment updated') : t('Adjustment created'));
       setDialogOpen(false);
-      await fetchAdjustments();
+      // New/edited adjustments sort newest-first — jump to page 1 so the
+      // result is actually visible instead of landing on whatever page the
+      // user happened to be viewing.
+      if (page === 1) await fetchAdjustments(); else setPage(1);
     } catch (err: any) {
       toast.error(err.message || t('Failed to save adjustment'));
     } finally {
@@ -262,7 +275,9 @@ export function AdjustmentsTab() {
               {visible.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={canManage ? 8 : 7} className="h-24 text-center text-muted-foreground">
-                    {adjustments.length ? t('No adjustments match your filters') : t('No adjustments found')}
+                    {(typeFilter !== 'all' || startDate || endDate || search.trim())
+                      ? t('No adjustments match your filters')
+                      : t('No adjustments found')}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -308,6 +323,9 @@ export function AdjustmentsTab() {
             </TableBody>
           </Table>
         </div>
+      )}
+      {!loading && totalPages > 1 && (
+        <DataPagination page={page} totalPages={totalPages} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} />
       )}
         </TabsContent>
 

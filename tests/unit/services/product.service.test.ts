@@ -220,21 +220,34 @@ describe('ProductService', () => {
   // delete
   // ═══════════════════════════════════════════════════════════════════════════
   describe('delete', () => {
-    it('soft-deletes product when no active batches', async () => {
+    it('soft-deletes product when it has no physical stock', async () => {
       const { svc, productRepo } = createService();
       productRepo.getById.mockResolvedValue(sampleProduct);
-      productRepo.hasActiveBatches.mockResolvedValue(false);
+      productRepo.getDeleteInfo.mockResolvedValue({ has_stock: false, batch_count: 0, txn_count: 0 });
 
       await svc.delete(1, 1);
       expect((productRepo as any).softDelete).toHaveBeenCalledWith(1);
     });
 
-    it('throws ValidationError when product has active batches', async () => {
+    it('throws ValidationError when the product still has physical stock', async () => {
       const { svc, productRepo } = createService();
       productRepo.getById.mockResolvedValue(sampleProduct);
-      productRepo.hasActiveBatches.mockResolvedValue(true);
+      productRepo.getDeleteInfo.mockResolvedValue({ has_stock: true, batch_count: 2, txn_count: 0 });
 
       await expect(svc.delete(1, 1)).rejects.toThrow(ValidationError);
+      expect((productRepo as any).softDelete).not.toHaveBeenCalled();
+    });
+
+    // B4: transaction/adjustment history never expires — a product that has
+    // ever sold must still be deactivatable once its physical stock is gone,
+    // otherwise "sell all batches first" is permanently unsatisfiable advice.
+    it('allows deactivation of a product with sales/adjustment history but zero stock (B4)', async () => {
+      const { svc, productRepo } = createService();
+      productRepo.getById.mockResolvedValue(sampleProduct);
+      productRepo.getDeleteInfo.mockResolvedValue({ has_stock: false, batch_count: 0, txn_count: 47 });
+
+      await svc.delete(1, 1);
+      expect((productRepo as any).softDelete).toHaveBeenCalledWith(1);
     });
 
     it('throws NotFoundError when product does not exist', async () => {
@@ -246,7 +259,7 @@ describe('ProductService', () => {
     it('emits entity:mutated event on delete', async () => {
       const { svc, productRepo, bus } = createService();
       productRepo.getById.mockResolvedValue(sampleProduct);
-      productRepo.hasActiveBatches.mockResolvedValue(false);
+      productRepo.getDeleteInfo.mockResolvedValue({ has_stock: false, batch_count: 0, txn_count: 0 });
 
       await svc.delete(1, 1);
       expect(bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({

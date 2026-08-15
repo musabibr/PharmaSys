@@ -493,6 +493,22 @@ describe('BatchService', () => {
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // getAdjustments (G7: now paginated, not an unbounded array)
+  // ═══════════════════════════════════════════════════════════════════════════
+  describe('getAdjustments', () => {
+    it('returns a paginated result, delegating filters to the repo', async () => {
+      const { svc, batchRepo } = createService();
+      const page = { data: [], total: 0, page: 2, limit: 20, totalPages: 1 };
+      batchRepo.getAdjustments.mockResolvedValue(page);
+
+      const result = await svc.getAdjustments({ page: 2, search: 'amox' });
+
+      expect(batchRepo.getAdjustments).toHaveBeenCalledWith({ page: 2, search: 'amox' });
+      expect(result).toEqual(page);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // updateSellingPricesByProduct
   // ═══════════════════════════════════════════════════════════════════════════
   describe('updateSellingPricesByProduct', () => {

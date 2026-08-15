@@ -867,7 +867,8 @@ export interface PharmaSysApi {
 
   inventory: {
     reportDamage(batchId: number, quantity: number, reason: string, type: AdjustmentType): Promise<{ success: boolean }>;
-    getAdjustments(filters?: unknown): Promise<unknown[]>;
+    /** G7: paginated server-side — no longer loads the entire adjustment history at once. */
+    getAdjustments(filters?: unknown): Promise<PaginatedResult<InventoryAdjustment>>;
     reverseAdjustment(id: number): Promise<{ success: boolean }>;
   };
 

@@ -1864,6 +1864,7 @@
   "Delete {{count}} Product(s)": "حذف {{count}} منتج",
   "{{count}} product(s) deleted": "تم حذف {{count}} منتج",
   "{{n}} transaction(s)": "{{n}} معاملة",
+  "{{n}} transaction(s) — safe to deactivate": "{{n}} معاملة — آمن للتعطيل",
   "Activation Required": "التفعيل مطلوب",
   "This copy of PharmaSys has not been activated. Please import your license file to continue.": "هذه النسخة من PharmaSys غير مفعّلة. يرجى استيراد ملف الترخيص للمتابعة.",
   "Device ID": "معرّف الجهاز",
