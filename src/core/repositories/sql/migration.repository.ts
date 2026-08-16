@@ -378,6 +378,20 @@ export class MigrationRepository {
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_batches_product_batch ON batches(product_id, lower(trim(batch_number))) WHERE batch_number IS NOT NULL AND trim(batch_number) != \'\'',
       'CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)',
       'CREATE INDEX IF NOT EXISTS idx_products_name ON products(name)',
+      // G6: findByName matches on LOWER(TRIM(p.name)), which no plain column
+      // index can serve — verified with EXPLAIN QUERY PLAN, that query full-
+      // scans products without an expression index. PurchaseService calls it
+      // once per invoice line inside one open transaction, so a 200-line
+      // invoice meant 200 full scans while holding the write lock.
+      //
+      // _migrateUniqueProductName already creates a UNIQUE expression index
+      // that WOULD serve this — but it cannot be created on a database that
+      // already contains duplicate names, and that failure is swallowed. The
+      // result is that the databases most likely to be large and messy are
+      // exactly the ones left with no usable index, silently and permanently.
+      // This non-unique twin always succeeds, so the lookup is indexed
+      // regardless of data state; the unique one keeps its constraint value.
+      'CREATE INDEX IF NOT EXISTS idx_products_name_norm ON products(LOWER(TRIM(name)))',
       'CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date)',
       'CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at)',
       'CREATE INDEX IF NOT EXISTS idx_shifts_user_status ON shifts(user_id, status)',
