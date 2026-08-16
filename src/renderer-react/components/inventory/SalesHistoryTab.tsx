@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { api } from '@/api';
-import { loadProducts } from '@/stores/products.store';
 import type { Product, User, ProductSaleFilters, ProductSaleRecord } from '@/api/types';
 import { useDebounce } from '@/hooks/useDebounce';
 import { formatCurrency, formatQuantity } from '@/lib/utils';
@@ -58,7 +57,11 @@ export function SalesHistoryTab() {
   const navigate = useNavigate();
 
   // ---- Product multi-select ----
-  const [allProducts, setAllProducts] = useState<Product[]>([]);
+  // G5: this used to load the WHOLE catalogue and filter it in JS to power a
+  // 20-result typeahead. api.products.search() does the same match in SQL and
+  // is already capped server-side, so the transfer is bounded by what's shown
+  // rather than by how many products exist.
+  const [searchResults, setSearchResults] = useState<Product[]>([]);
   const [productSearch, setProductSearch] = useState('');
   const debouncedSearch = useDebounce(productSearch, 200);
   const [showResults, setShowResults] = useState(false);
@@ -81,28 +84,33 @@ export function SalesHistoryTab() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // ---- Load products + users once ----
+  // ---- Load users once ----
   useEffect(() => {
-    loadProducts()
-      .then((prods) => setAllProducts(Array.isArray(prods) ? prods : []))
-      .catch(() => {});
     api.users.getAll()
       .then((users) => setAllUsers(Array.isArray(users) ? users : []))
       .catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ---- Product search results (excludes already-selected) ----
-  const searchResults = debouncedSearch.trim()
-    ? allProducts
-        .filter(
-          (p) =>
-            !selectedProducts.some((s) => s.id === p.id) &&
-            (p.name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-              (p.generic_name ?? '').toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-              (p.barcode ?? '').toLowerCase().includes(debouncedSearch.toLowerCase()))
-        )
-        .slice(0, 20)
-    : [];
+  // ---- Product search results (server-side; excludes already-selected) ----
+  useEffect(() => {
+    const q = debouncedSearch.trim();
+    if (!q) { setSearchResults([]); return; }
+    let cancelled = false;
+    api.products.search(q)
+      .then((prods) => {
+        // A slower earlier request must not overwrite a later one's results.
+        if (cancelled) return;
+        setSearchResults(Array.isArray(prods) ? prods.slice(0, 20) : []);
+      })
+      .catch(() => { if (!cancelled) setSearchResults([]); });
+    return () => { cancelled = true; };
+  }, [debouncedSearch]);
+
+  // Already-selected products are filtered out at render time rather than in
+  // the effect, so selecting one doesn't require a refetch.
+  const visibleResults = searchResults.filter(
+    (p) => !selectedProducts.some((s) => s.id === p.id)
+  );
 
   function addProduct(p: Product) {
     setSelectedProducts((prev) => (prev.some((s) => s.id === p.id) ? prev : [...prev, p]));
@@ -225,10 +233,10 @@ export function SalesHistoryTab() {
                 placeholder={selectedProducts.length > 0 ? t('Add another product...') : t('Search product...')}
                 className="ps-8 h-9 text-sm"
               />
-              {showResults && searchResults.length > 0 && (
+              {showResults && visibleResults.length > 0 && (
                 <div className="absolute z-20 mt-1 w-full rounded-md border bg-popover shadow-md">
                   <div className="max-h-48 overflow-y-auto">
-                    {searchResults.map((p) => (
+                    {visibleResults.map((p) => (
                       <button
                         key={p.id}
                         type="button"

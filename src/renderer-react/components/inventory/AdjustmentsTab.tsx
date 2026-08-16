@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { api } from '@/api';
-import { loadProducts } from '@/stores/products.store';
 import type { InventoryAdjustment, AdjustmentType, Product, Batch } from '@/api/types';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -53,6 +52,7 @@ export function AdjustmentsTab() {
   const [products, setProducts] = useState<Product[]>([]);
   const [productId, setProductId] = useState<number | null>(null);
   const [productSearch, setProductSearch] = useState('');
+  const debouncedProductSearch = useDebounce(productSearch, 250);
   const [showProductResults, setShowProductResults] = useState(false);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [batchId, setBatchId] = useState<number | null>(null);
@@ -120,9 +120,6 @@ export function AdjustmentsTab() {
     setQuantity(''); setAdjType('damage'); setReason('');
     setProductSearch(''); setShowProductResults(false);
     setDialogOpen(true);
-    if (products.length === 0) {
-      try { setProducts(await loadProducts()); } catch { /* ignore */ }
-    }
   };
 
   const openEdit = async (adj: InventoryAdjustment) => {
@@ -135,7 +132,6 @@ export function AdjustmentsTab() {
     setReason(adj.reason ?? '');
     setDialogOpen(true);
     try {
-      if (products.length === 0) setProducts(await loadProducts());
       const bs = await api.batches.getByProduct(adj.product_id);
       setBatches(bs);
       setBatchId(adj.batch_id);
@@ -150,15 +146,26 @@ export function AdjustmentsTab() {
     try { setBatches(await api.batches.getByProduct(p.id)); } catch { setBatches([]); }
   };
 
-  // Local filtered product list for the searchable picker
-  const pq = productSearch.trim().toLowerCase();
-  const productResults = (pq
-    ? products.filter(p =>
-        p.name.toLowerCase().includes(pq) ||
-        (p.generic_name ?? '').toLowerCase().includes(pq) ||
-        (p.barcode ?? '').toLowerCase().includes(pq))
-    : products
-  ).slice(0, 50);
+  // G5: the picker used to hold the entire catalogue and filter it in JS.
+  // getList() does the same name/generic/barcode match in SQL and paginates,
+  // so it serves both the browse case (no query) and the typeahead from one
+  // bounded call — this component no longer depends on the full catalogue.
+  useEffect(() => {
+    if (!dialogOpen) return;
+    let cancelled = false;
+    api.products.getList({
+      search: debouncedProductSearch.trim() || undefined,
+      limit: 50,
+    })
+      .then((res) => {
+        // Guard against a slower earlier query landing after a later one.
+        if (!cancelled) setProducts(Array.isArray(res?.data) ? res.data : []);
+      })
+      .catch(() => { if (!cancelled) setProducts([]); });
+    return () => { cancelled = true; };
+  }, [dialogOpen, debouncedProductSearch]);
+
+  const productResults = products;
 
   const submitAdjustment = async () => {
     const qty = parseInt(quantity, 10);
