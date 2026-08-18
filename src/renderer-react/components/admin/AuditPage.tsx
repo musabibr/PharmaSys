@@ -18,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Combobox } from '@/components/ui/combobox';
 import {
   Table,
   TableHeader,
@@ -236,22 +237,20 @@ export function AuditPage() {
             {/* User filter */}
             <div className="space-y-1.5">
               <Label className="text-xs">{t('User')}</Label>
-              <Select
+              <Combobox
                 value={filters.userId}
                 onValueChange={(v) => updateFilter('userId', v)}
-              >
-                <SelectTrigger className="w-40">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{t('All')}</SelectItem>
-                  {users.map((user) => (
-                    <SelectItem key={user.id} value={String(user.id)}>
-                      {user.full_name || user.username}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                options={users.map((user) => ({
+                  value: String(user.id),
+                  label: user.full_name || user.username,
+                  keywords: user.username,
+                }))}
+                allOption={t('All')}
+                allValue="all"
+                searchPlaceholder={t('Search users...')}
+                emptyText={t('No users found')}
+                className="w-40"
+              />
             </div>
 
             {/* Action filter (multi-select) */}

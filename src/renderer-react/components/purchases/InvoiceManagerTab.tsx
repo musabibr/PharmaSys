@@ -22,6 +22,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import { Combobox } from '@/components/ui/combobox';
 import {
   Tabs, TabsContent, TabsList, TabsTrigger,
 } from '@/components/ui/tabs';
@@ -350,15 +351,16 @@ export function InvoiceManagerTab({ onRefreshList }: InvoiceManagerTabProps) {
               </div>
               <div className="flex flex-col gap-1">
                 <span className="text-xs text-muted-foreground">{t('Supplier')}</span>
-                <Select value={invSupplier} onValueChange={setInvSupplier}>
-                  <SelectTrigger className="h-9 w-44"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">{t('All Suppliers')}</SelectItem>
-                    {suppliers?.map(s => (
-                      <SelectItem key={s.id} value={s.id.toString()}>{s.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Combobox
+                  value={invSupplier}
+                  onValueChange={setInvSupplier}
+                  options={(suppliers ?? []).map(s => ({ value: s.id.toString(), label: s.name }))}
+                  allOption={t('All Suppliers')}
+                  allValue="all"
+                  searchPlaceholder={t('Search suppliers...')}
+                  emptyText={t('No suppliers found')}
+                  className="h-9 w-44"
+                />
               </div>
               <div className="flex flex-col gap-1">
                 <span className="text-xs text-muted-foreground">{t('Status')}</span>
@@ -516,15 +518,16 @@ export function InvoiceManagerTab({ onRefreshList }: InvoiceManagerTabProps) {
               </div>
               <div className="flex flex-col gap-1">
                 <span className="text-xs text-muted-foreground">{t('Supplier')}</span>
-                <Select value={parkSupplier} onValueChange={setParkSupplier}>
-                  <SelectTrigger className="h-9 w-44"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">{t('All Suppliers')}</SelectItem>
-                    {suppliers?.map(s => (
-                      <SelectItem key={s.id} value={s.id.toString()}>{s.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Combobox
+                  value={parkSupplier}
+                  onValueChange={setParkSupplier}
+                  options={(suppliers ?? []).map(s => ({ value: s.id.toString(), label: s.name }))}
+                  allOption={t('All Suppliers')}
+                  allValue="all"
+                  searchPlaceholder={t('Search suppliers...')}
+                  emptyText={t('No suppliers found')}
+                  className="h-9 w-44"
+                />
               </div>
               <div className="flex gap-2">
                 <Button variant="ghost" size="sm" onClick={() => {

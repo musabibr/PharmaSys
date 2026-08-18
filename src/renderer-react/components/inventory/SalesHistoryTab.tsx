@@ -19,6 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Combobox } from '@/components/ui/combobox';
 import {
   Table,
   TableBody,
@@ -262,19 +263,21 @@ export function SalesHistoryTab() {
             {/* User / Cashier */}
             <div className="space-y-1.5">
               <Label className="text-xs">{t('Cashier')}</Label>
-              <Select value={selectedUserId} onValueChange={setSelectedUserId}>
-                <SelectTrigger className="h-9 text-sm w-44">
-                  <SelectValue placeholder={t('All users')} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{t('All users')}</SelectItem>
-                  {allUsers.map((u) => (
-                    <SelectItem key={u.id} value={String(u.id)}>
-                      {u.full_name || u.username}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Combobox
+                value={selectedUserId}
+                onValueChange={setSelectedUserId}
+                options={allUsers.map((u) => ({
+                  value: String(u.id),
+                  label: u.full_name || u.username,
+                  keywords: u.username,
+                }))}
+                allOption={t('All users')}
+                allValue="all"
+                placeholder={t('All users')}
+                searchPlaceholder={t('Search users...')}
+                emptyText={t('No users found')}
+                className="h-9 w-44 text-sm"
+              />
             </div>
 
             {/* Date from */}

@@ -23,6 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Combobox } from '@/components/ui/combobox';
 import {
   Table,
   TableBody,
@@ -269,20 +270,16 @@ export function PurchaseListTab({ onSelect, initialSupplierId, initialStatus, hi
           </div>
           <div className="flex flex-col gap-1">
             <span className="text-xs text-muted-foreground">{t('Supplier')}</span>
-            <Select
+            <Combobox
               value={String(filters.supplierId)}
               onValueChange={v => updateFilter('supplierId', v === 'all' ? 'all' : parseInt(v, 10))}
-            >
-              <SelectTrigger className="h-9 w-44">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{t('All Suppliers')}</SelectItem>
-                {suppliers?.map(s => (
-                  <SelectItem key={s.id} value={s.id.toString()}>{s.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              options={(suppliers ?? []).map(s => ({ value: s.id.toString(), label: s.name }))}
+              allOption={t('All Suppliers')}
+              allValue="all"
+              searchPlaceholder={t('Search suppliers...')}
+              emptyText={t('No suppliers found')}
+              className="h-9 w-44"
+            />
           </div>
           {!hideStatusFilter && (
             <div className="flex flex-col gap-1">

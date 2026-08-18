@@ -16,9 +16,7 @@ import { Input } from '@/components/ui/input';
 import { QtyInput } from '@/components/ui/qty-input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
+import { Combobox } from '@/components/ui/combobox';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
@@ -690,21 +688,15 @@ export function AddItemsDialog({ purchaseId, purchaseNumber, open, onOpenChange,
                             />
                           ) : (
                             <div className="flex items-center gap-1">
-                              <Select
+                              <Combobox
                                 value={item.categoryName || ''}
                                 onValueChange={(val) => updateItem(item._key, 'categoryName', val)}
-                              >
-                                <SelectTrigger className="h-8 text-xs flex-1">
-                                  <SelectValue placeholder={t('Category')} />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {allCategories.map(cat => (
-                                    <SelectItem key={cat.id} value={cat.name}>
-                                      {cat.name}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
+                                options={allCategories.map(cat => ({ value: cat.name, label: cat.name }))}
+                                placeholder={t('Category')}
+                                searchPlaceholder={t('Search categories...')}
+                                emptyText={t('No categories found')}
+                                className="h-8 text-xs flex-1"
+                              />
                               <Button
                                 variant="ghost" size="icon"
                                 className="h-7 w-7 shrink-0"
@@ -891,7 +883,7 @@ export function AddItemsDialog({ purchaseId, purchaseNumber, open, onOpenChange,
                         <Badge variant="secondary" className="ms-1 text-[10px] px-1.5 py-0">{selectedMatchKeys.size} {t('selected')}</Badge>
                       )}:
                     </Label>
-                    <Select
+                    <Combobox
                       value={bulkCategory}
                       disabled={selectedMatchKeys.size === 0}
                       onValueChange={(val) => {
@@ -901,18 +893,12 @@ export function AddItemsDialog({ purchaseId, purchaseNumber, open, onOpenChange,
                         setBulkCategory(val);
                         applyBulkCategory(val);
                       }}
-                    >
-                      <SelectTrigger className="h-8 w-[200px] text-xs">
-                        <SelectValue placeholder={t('Select category')} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {allCategories.map(cat => (
-                          <SelectItem key={cat.id} value={cat.name}>
-                            {cat.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      options={allCategories.map(cat => ({ value: cat.name, label: cat.name }))}
+                      placeholder={t('Select category')}
+                      searchPlaceholder={t('Search categories...')}
+                      emptyText={t('No categories found')}
+                      className="h-8 w-[200px] text-xs"
+                    />
                     {/* New category inline */}
                     <div className="flex items-center gap-1">
                       <Input
@@ -1038,21 +1024,15 @@ export function AddItemsDialog({ purchaseId, purchaseNumber, open, onOpenChange,
                               {item.matchType === 'existing' ? (
                                 <span className="text-sm text-muted-foreground">{item.categoryName || '—'}</span>
                               ) : (
-                                <Select
+                                <Combobox
                                   value={item.categoryName || ''}
                                   onValueChange={(val) => setItemCategory(item._key, val)}
-                                >
-                                  <SelectTrigger className="h-8 text-xs">
-                                    <SelectValue placeholder={t('Select category')} />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {allCategories.map(cat => (
-                                      <SelectItem key={cat.id} value={cat.name}>
-                                        {cat.name}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                  options={allCategories.map(cat => ({ value: cat.name, label: cat.name }))}
+                                  placeholder={t('Select category')}
+                                  searchPlaceholder={t('Search categories...')}
+                                  emptyText={t('No categories found')}
+                                  className="h-8 text-xs"
+                                />
                               )}
                             </TableCell>
                             <TableCell>
@@ -1421,21 +1401,14 @@ function EditItemDialog({ item, onClose, onSave, categories, onCreateCategory, d
             {/* Category */}
             <div className="space-y-1.5">
               <Label>{t('Category')}</Label>
-              <Select
+              <Combobox
                 value={draft.categoryName || ''}
                 onValueChange={val => update('categoryName', val)}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={t('Select category')} />
-                </SelectTrigger>
-                <SelectContent>
-                  {categories.map(cat => (
-                    <SelectItem key={cat.id} value={cat.name}>
-                      {cat.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                options={categories.map(cat => ({ value: cat.name, label: cat.name }))}
+                placeholder={t('Select category')}
+                searchPlaceholder={t('Search categories...')}
+                emptyText={t('No categories found')}
+              />
             </div>
 
             {/* Usage Instructions */}

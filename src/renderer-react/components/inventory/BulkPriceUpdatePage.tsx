@@ -24,6 +24,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import { Combobox } from '@/components/ui/combobox';
 import { DataPagination } from '@/components/ui/data-pagination';
 
 const PAGE_SIZE = 25;
@@ -306,13 +307,16 @@ export function BulkPriceUpdatePage() {
             placeholder={t('Search by name, generic, or barcode...')}
             onChange={(e) => setQuery(e.target.value)} />
         </div>
-        <Select value={category} onValueChange={setCategory}>
-          <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL_CATEGORIES}>{t('All Categories')}</SelectItem>
-            {categories.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-          </SelectContent>
-        </Select>
+        <Combobox
+          value={category}
+          onValueChange={setCategory}
+          options={categories.map((c) => ({ value: c, label: c }))}
+          allOption={t('All Categories')}
+          allValue={ALL_CATEGORIES}
+          searchPlaceholder={t('Search categories...')}
+          emptyText={t('No categories found')}
+          className="w-44"
+        />
         <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
           <Switch checked={lowMarginOnly} onCheckedChange={setLowMarginOnly} />
           {t('Low margin only')}

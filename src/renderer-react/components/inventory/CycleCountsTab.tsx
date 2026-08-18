@@ -19,6 +19,7 @@ import { Label } from '@/components/ui/label';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import { Combobox } from '@/components/ui/combobox';
 import { DataPagination } from '@/components/ui/data-pagination';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 
@@ -347,12 +348,15 @@ export function CycleCountsTab() {
         <TabsContent value="variance" className="flex-1 min-h-0 overflow-hidden data-[state=active]:flex flex-col mt-3">
           <div className="flex h-full flex-col gap-3">
             <div className="flex flex-wrap items-center gap-2">
-              <Select value={varCountId ? String(varCountId) : ''} onValueChange={(v) => loadVariance(Number(v))}>
-                <SelectTrigger className="w-56"><SelectValue placeholder={t('Select a count')} /></SelectTrigger>
-                <SelectContent>
-                  {completedCounts.map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <Combobox
+                value={varCountId ? String(varCountId) : ''}
+                onValueChange={(v) => loadVariance(Number(v))}
+                options={completedCounts.map(c => ({ value: String(c.id), label: c.name }))}
+                placeholder={t('Select a count')}
+                searchPlaceholder={t('Search counts...')}
+                emptyText={t('No completed counts')}
+                className="w-56"
+              />
               <Select value={varType} onValueChange={(v) => setVarType(v as any)}>
                 <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -423,13 +427,17 @@ export function CycleCountsTab() {
                 <Search className="pointer-events-none absolute start-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input className="ps-8" placeholder={t('Search product...')} value={prodSearch} onChange={(e) => { setProdSearch(e.target.value); setBuilderPage(1); }} />
               </div>
-              <Select value={catFilter} onValueChange={(v) => { setCatFilter(v); setBuilderPage(1); }}>
-                <SelectTrigger className="w-44"><SelectValue placeholder={t('Category')} /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{t('All categories')}</SelectItem>
-                  {categories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <Combobox
+                value={catFilter}
+                onValueChange={(v) => { setCatFilter(v); setBuilderPage(1); }}
+                options={categories.map(c => ({ value: c, label: c }))}
+                allOption={t('All categories')}
+                allValue="all"
+                placeholder={t('Category')}
+                searchPlaceholder={t('Search categories...')}
+                emptyText={t('No categories found')}
+                className="w-44"
+              />
             </div>
             <div className="flex items-center justify-between text-xs text-muted-foreground">
               <span>{selectedIds.size} {t('selected')}</span>

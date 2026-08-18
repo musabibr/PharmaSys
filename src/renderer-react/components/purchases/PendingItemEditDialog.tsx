@@ -14,9 +14,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
   DialogFooter, DialogDescription,
 } from '@/components/ui/dialog';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
+import { Combobox } from '@/components/ui/combobox';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -220,22 +218,16 @@ export function PendingItemEditDialog({ item, open, onOpenChange, onSave }: Pend
             {/* Category */}
             <div className="space-y-1.5">
               <Label>{t('Category')}</Label>
-              <Select
+              <Combobox
                 value={draft.categoryName || '__none__'}
                 onValueChange={val => update('categoryName', val === '__none__' ? '' : val)}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={t('Select category')} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">{t('None')}</SelectItem>
-                  {categories?.map(cat => (
-                    <SelectItem key={cat.id} value={cat.name}>
-                      {cat.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                options={(categories ?? []).map(cat => ({ value: cat.name, label: cat.name }))}
+                allOption={t('None')}
+                allValue="__none__"
+                placeholder={t('Select category')}
+                searchPlaceholder={t('Search categories...')}
+                emptyText={t('No categories found')}
+              />
             </div>
 
             {/* Notes */}

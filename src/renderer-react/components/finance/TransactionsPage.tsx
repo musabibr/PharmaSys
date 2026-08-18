@@ -22,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Combobox } from '@/components/ui/combobox';
 import {
   Table,
   TableHeader,
@@ -443,22 +444,20 @@ export function TransactionsPage() {
             {isAdmin && (
               <div className="space-y-1.5">
                 <Label className="text-xs">{t('Cashier')}</Label>
-                <Select
+                <Combobox
                   value={filters.cashierId || '__all__'}
                   onValueChange={(v) => updateFilter('cashierId', v === '__all__' ? '' : v)}
-                >
-                  <SelectTrigger className="w-40">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all__">{t('All Cashiers')}</SelectItem>
-                    {users.map((u) => (
-                      <SelectItem key={u.id} value={String(u.id)}>
-                        {u.full_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  options={users.map((u) => ({
+                    value: String(u.id),
+                    label: u.full_name,
+                    keywords: u.username,
+                  }))}
+                  allOption={t('All Cashiers')}
+                  allValue="__all__"
+                  searchPlaceholder={t('Search cashiers...')}
+                  emptyText={t('No users found')}
+                  className="w-40"
+                />
               </div>
             )}
 

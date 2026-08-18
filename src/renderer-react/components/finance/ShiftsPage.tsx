@@ -30,6 +30,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Combobox } from '@/components/ui/combobox';
 import {
   Dialog,
   DialogContent,
@@ -1236,19 +1237,16 @@ function ShiftHistorySection({ onSelectShift, refreshKey }: ShiftHistorySectionP
           </div>
           <div className="space-y-1">
             <Label className="text-xs">{t('User')}</Label>
-            <Select value={userFilter} onValueChange={setUserFilter}>
-              <SelectTrigger className="h-9 w-[140px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{t('All')}</SelectItem>
-                {users.map((u) => (
-                  <SelectItem key={u.id} value={String(u.id)}>
-                    {u.username}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Combobox
+              value={userFilter}
+              onValueChange={setUserFilter}
+              options={users.map((u) => ({ value: String(u.id), label: u.username }))}
+              allOption={t('All')}
+              allValue="all"
+              searchPlaceholder={t('Search users...')}
+              emptyText={t('No users found')}
+              className="h-9 w-[140px]"
+            />
           </div>
           <Button variant="outline" size="sm" onClick={handleApply} className="h-9 gap-1.5">
             <Filter className="h-3.5 w-3.5" />

@@ -36,13 +36,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { Combobox } from '@/components/ui/combobox';
 import {
   Table,
   TableBody,
@@ -385,17 +379,15 @@ export function EditPurchaseDialog({ purchase, open, onOpenChange, onSaved }: Ed
           {/* Who: Supplier */}
           <div className="space-y-1.5">
             <label className="text-sm font-medium">{t('Supplier')}</label>
-            <Select value={supplierId} onValueChange={setSupplierId}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">{t('No Supplier')}</SelectItem>
-                {suppliers?.map(s => (
-                  <SelectItem key={s.id} value={s.id.toString()}>{s.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Combobox
+              value={supplierId}
+              onValueChange={setSupplierId}
+              options={(suppliers ?? []).map(s => ({ value: s.id.toString(), label: s.name }))}
+              allOption={t('No Supplier')}
+              allValue="none"
+              searchPlaceholder={t('Search suppliers...')}
+              emptyText={t('No suppliers found')}
+            />
           </div>
 
           {/* Invoice Total — editable */}

@@ -18,6 +18,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import { Combobox } from '@/components/ui/combobox';
 import {
   Table, TableHeader, TableBody, TableHead, TableRow, TableCell,
 } from '@/components/ui/table';
@@ -652,34 +653,36 @@ export function ProductImportDialog({ open, onOpenChange, onImported }: ProductI
                 {/* Purchase assignment */}
                 <div className="space-y-2">
                   <Label className="text-sm">{t('Invoice / Purchase (optional)')}</Label>
-                  <Select value={assignPurchaseId} onValueChange={setAssignPurchaseId} disabled={loadingPurchases}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder={t('Select...')} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">{t('None — do not link to an invoice')}</SelectItem>
-                      <SelectItem value="new">
-                        <span className="flex items-center gap-1.5 text-primary font-medium">
-                          <PlusCircle className="h-3.5 w-3.5" />
-                          {t('Create New Invoice from Import')}
-                        </span>
-                      </SelectItem>
-                      {purchases.length > 0 && (
-                        <>
-                          <div className="px-2 py-1.5 text-xs text-muted-foreground font-medium">
-                            {t('Add to Existing Invoice')}
-                          </div>
-                          {purchases.map(p => (
-                            <SelectItem key={p.id} value={p.id.toString()}>
-                              {p.purchase_number}
-                              {p.supplier_name ? ` — ${p.supplier_name}` : ''}
-                              {p.invoice_reference ? ` (${p.invoice_reference})` : ''}
-                            </SelectItem>
-                          ))}
-                        </>
-                      )}
-                    </SelectContent>
-                  </Select>
+                  {/* Searchable: the invoice list grows with every purchase ever made,
+                      and users look an invoice up by number, supplier or reference. */}
+                  <Combobox
+                    value={assignPurchaseId}
+                    onValueChange={setAssignPurchaseId}
+                    disabled={loadingPurchases}
+                    placeholder={t('Select...')}
+                    searchPlaceholder={t('Search by invoice number, supplier or reference...')}
+                    emptyText={t('No matching invoices')}
+                    options={[
+                      { value: 'none', label: t('None — do not link to an invoice') },
+                      {
+                        value: 'new',
+                        label: t('Create New Invoice from Import'),
+                        node: (
+                          <span className="flex items-center gap-1.5 font-medium text-primary">
+                            <PlusCircle className="h-3.5 w-3.5" />
+                            {t('Create New Invoice from Import')}
+                          </span>
+                        ),
+                      },
+                      ...purchases.map(p => ({
+                        value: p.id.toString(),
+                        label: `${p.purchase_number}`
+                          + (p.supplier_name ? ` — ${p.supplier_name}` : '')
+                          + (p.invoice_reference ? ` (${p.invoice_reference})` : ''),
+                        keywords: `${p.supplier_name ?? ''} ${p.invoice_reference ?? ''}`,
+                      })),
+                    ]}
+                  />
                   <p className="text-xs text-muted-foreground">
                     {assignPurchaseId === 'new'
                       ? t('A new invoice will be created with all imported items and their costs.')
@@ -698,17 +701,17 @@ export function ProductImportDialog({ open, onOpenChange, onImported }: ProductI
                       <div className="grid grid-cols-2 gap-3">
                         <div className="space-y-1.5 col-span-2">
                           <Label className="text-xs">{t('Supplier')}</Label>
-                          <Select value={newInvSupplierId} onValueChange={setNewInvSupplierId}>
-                            <SelectTrigger className="h-8">
-                              <SelectValue placeholder={t('Select supplier...')} />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="none">{t('No Supplier')}</SelectItem>
-                              {suppliers.map(s => (
-                                <SelectItem key={s.id} value={s.id.toString()}>{s.name}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <Combobox
+                            value={newInvSupplierId}
+                            onValueChange={setNewInvSupplierId}
+                            options={suppliers.map(s => ({ value: s.id.toString(), label: s.name }))}
+                            allOption={t('No Supplier')}
+                            allValue="none"
+                            placeholder={t('Select supplier...')}
+                            searchPlaceholder={t('Search suppliers...')}
+                            emptyText={t('No suppliers found')}
+                            className="h-8"
+                          />
                         </div>
                         <div className="space-y-1.5">
                           <Label className="text-xs">{t('Invoice Reference')}</Label>

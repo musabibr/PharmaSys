@@ -1,17 +1,11 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { Search, PackageSearch } from 'lucide-react';
 import type { Product, Category } from '@/api/types';
 import { api } from '@/api';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { Combobox } from '@/components/ui/combobox';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent } from '@/components/ui/card';
@@ -80,6 +74,10 @@ function ProductGridImpl({ onProductSelect, refreshKey }: ProductGridProps) {
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [categoryId, setCategoryId] = useState<string>(ALL_CATEGORIES);
   const [categories, setCategories] = useState<Category[]>([]);
+  const categoryOptions = useMemo(
+    () => categories.map((cat) => ({ value: String(cat.id), label: cat.name })),
+    [categories],
+  );
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -238,20 +236,18 @@ function ProductGridImpl({ onProductSelect, refreshKey }: ProductGridProps) {
           />
         </div>
 
-        {/* Category dropdown */}
-        <Select value={categoryId} onValueChange={handleCategoryChange}>
-          <SelectTrigger className="w-44 shrink-0">
-            <SelectValue placeholder={t('All Categories')} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL_CATEGORIES}>{t('All Categories')}</SelectItem>
-            {categories.map((cat) => (
-              <SelectItem key={cat.id} value={String(cat.id)}>
-                {cat.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {/* Category dropdown — searchable: the category list grows with the catalogue */}
+        <Combobox
+          value={categoryId}
+          onValueChange={handleCategoryChange}
+          options={categoryOptions}
+          allOption={t('All Categories')}
+          allValue={ALL_CATEGORIES}
+          placeholder={t('All Categories')}
+          searchPlaceholder={t('Search categories...')}
+          emptyText={t('No categories found')}
+          className="w-44 shrink-0"
+        />
       </div>
 
       {/* ── Error State ──────────────────────────────────────────────── */}

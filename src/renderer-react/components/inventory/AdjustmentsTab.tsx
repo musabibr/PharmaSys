@@ -9,6 +9,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import { Combobox } from '@/components/ui/combobox';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
@@ -390,16 +391,19 @@ export function AdjustmentsTab() {
             </div>
             <div className="space-y-1.5">
               <Label>{t('Batch')}</Label>
-              <Select value={batchId ? String(batchId) : ''} onValueChange={(v) => setBatchId(Number(v))} disabled={!productId}>
-                <SelectTrigger><SelectValue placeholder={t('Select batch')} /></SelectTrigger>
-                <SelectContent>
-                  {batches.map(b => (
-                    <SelectItem key={b.id} value={String(b.id)}>
-                      {(b.batch_number || `#${b.id}`)} — {t('{{n}} in stock', { n: b.quantity_base })}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Combobox
+                value={batchId ? String(batchId) : ''}
+                onValueChange={(v) => setBatchId(Number(v))}
+                disabled={!productId}
+                options={batches.map(b => ({
+                  value: String(b.id),
+                  label: `${b.batch_number || `#${b.id}`} — ${t('{{n}} in stock', { n: b.quantity_base })}`,
+                  keywords: b.expiry_date ?? '',
+                }))}
+                placeholder={t('Select batch')}
+                searchPlaceholder={t('Search batches...')}
+                emptyText={t('No batches found')}
+              />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">

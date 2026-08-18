@@ -45,7 +45,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { SearchableSelect } from '@/components/ui/searchable-select';
+import { Combobox } from '@/components/ui/combobox';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -445,13 +445,13 @@ export function RecurringExpensesPanel({
               {/* Category */}
               <div className="space-y-1.5">
                 <Label>{t('Category')} <span className="text-destructive">*</span></Label>
-                <SearchableSelect
+                <Combobox
                   value={formCategoryId}
                   onValueChange={setFormCategoryId}
                   options={categoryOptions}
                   placeholder={t('Select category')}
                   searchPlaceholder={t('Search categories...')}
-                  emptyMessage={t('No categories found')}
+                  emptyText={t('No categories found')}
                 />
               </div>
 

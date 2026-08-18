@@ -15,7 +15,7 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SearchableSelect } from '@/components/ui/searchable-select';
+import { Combobox } from '@/components/ui/combobox';
 import {
   Table, TableHeader, TableBody, TableHead, TableRow, TableCell,
 } from '@/components/ui/table';
@@ -147,13 +147,13 @@ export function SupplierProductsTab() {
               {loadingProducts ? (
                 <Skeleton className="h-9 w-full" />
               ) : (
-                <SearchableSelect
+                <Combobox
                   value={productId == null ? '' : String(productId)}
                   onValueChange={(v) => setProductId(v ? Number(v) : null)}
                   options={productOptions}
                   placeholder={t('Choose a product to see its suppliers')}
                   searchPlaceholder={t('Search product...')}
-                  emptyMessage={t('No products')}
+                  emptyText={t('No products')}
                 />
               )}
             </div>

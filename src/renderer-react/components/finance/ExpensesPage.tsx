@@ -58,7 +58,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { SearchableSelect } from '@/components/ui/searchable-select';
+import { Combobox } from '@/components/ui/combobox';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -568,16 +568,16 @@ export function ExpensesPage() {
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">{t('Category')}</Label>
-                  <SearchableSelect
+                  <Combobox
                     value={pendingFilters.categoryId}
                     onValueChange={(val) => setPendingFilters((prev) => ({ ...prev, categoryId: val }))}
                     options={categories.map(c => ({ value: String(c.id), label: c.name }))}
                     placeholder={t('All Categories')}
                     searchPlaceholder={t('Search categories...')}
-                    emptyMessage={t('No categories found')}
+                    emptyText={t('No categories found')}
                     allOption={t('All Categories')}
                     allValue={ALL_CATEGORIES}
-                    triggerClassName="h-8 w-40"
+                    className="h-8 w-40"
                   />
                 </div>
                 <div className="space-y-1">
@@ -885,7 +885,7 @@ export function ExpensesPage() {
             <div className="space-y-4 py-2">
               <div className="space-y-1.5">
                 <Label>{t('Category')} <span className="text-destructive">*</span></Label>
-                <SearchableSelect
+                <Combobox
                   value={formCategoryId}
                   onValueChange={setFormCategoryId}
                   options={[
@@ -894,7 +894,7 @@ export function ExpensesPage() {
                   ]}
                   placeholder={t('Select category')}
                   searchPlaceholder={t('Search categories...')}
-                  emptyMessage={t('No categories found')}
+                  emptyText={t('No categories found')}
                 />
               </div>
 

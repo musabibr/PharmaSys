@@ -15,13 +15,7 @@ import {
 } from '@/components/ui/table';
 import type { Category } from '@/api/types';
 import { formatCurrency, formatQuantity } from '@/lib/utils';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { Combobox } from '@/components/ui/combobox';
 import { printHtml } from '@/lib/print';
 import { usePermission } from '@/hooks/usePermission';
 import { DataPagination } from '@/components/ui/data-pagination';
@@ -352,19 +346,17 @@ export function ValuationTab() {
             className="ps-9"
           />
         </div>
-        <Select value={categoryId} onValueChange={setCategoryId}>
-          <SelectTrigger className="w-44 shrink-0">
-            <SelectValue placeholder={t('All Categories')} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">{t('All Categories')}</SelectItem>
-            {categories.map((cat) => (
-              <SelectItem key={cat.id} value={String(cat.id)}>
-                {cat.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <Combobox
+          value={categoryId}
+          onValueChange={setCategoryId}
+          options={categories.map((cat) => ({ value: String(cat.id), label: cat.name }))}
+          allOption={t('All Categories')}
+          allValue="__all__"
+          placeholder={t('All Categories')}
+          searchPlaceholder={t('Search categories...')}
+          emptyText={t('No categories found')}
+          className="w-44 shrink-0"
+        />
         <Button variant="outline" size="sm" onClick={handlePrint} disabled={allItems.length === 0}>
           <Printer className="me-2 h-4 w-4" />
           {t('Print')}

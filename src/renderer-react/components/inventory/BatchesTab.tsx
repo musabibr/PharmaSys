@@ -22,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Combobox } from '@/components/ui/combobox';
 import {
   Table,
   TableHeader,
@@ -477,19 +478,16 @@ export function BatchesTab() {
             {/* Category filter */}
             <div className="w-48 space-y-1.5">
               <Label className="text-xs">{t('Category')}</Label>
-              <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                <SelectTrigger>
-                  <SelectValue placeholder={t('All Categories')} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{t('All Categories')}</SelectItem>
-                  {categories.map((cat) => (
-                    <SelectItem key={cat.id} value={String(cat.id)}>
-                      {cat.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Combobox
+                value={categoryFilter}
+                onValueChange={setCategoryFilter}
+                options={categories.map((cat) => ({ value: String(cat.id), label: cat.name }))}
+                allOption={t('All Categories')}
+                allValue="all"
+                placeholder={t('All Categories')}
+                searchPlaceholder={t('Search categories...')}
+                emptyText={t('No categories found')}
+              />
             </div>
 
             {/* Product dropdown list */}
