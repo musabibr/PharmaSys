@@ -258,6 +258,30 @@ contextBridge.exposeInMainWorld('api', {
   },
 
   // ════════════════════════════════════════
+  //  CASH EXCHANGES
+  // ════════════════════════════════════════
+
+  cashExchanges: {
+    getAll: async (filters) =>
+      get(`/api/v1/cash-exchanges${qs(filters)}`),
+
+    getById: async (id) =>
+      get(`/api/v1/cash-exchanges/${id}`),
+
+    create: async (exchangeData) =>
+      post('/api/v1/cash-exchanges', exchangeData),
+
+    getValidationSettings: async () =>
+      get('/api/v1/cash-exchanges/validation-settings'),
+
+    updateValidationSettings: async (settings) =>
+      put('/api/v1/cash-exchanges/validation-settings', settings),
+
+    validateCashAvailability: async (data) =>
+      post('/api/v1/cash-exchanges/validate-availability', data),
+  },
+
+  // ════════════════════════════════════════
   //  TRANSACTIONS (POS)
   // ════════════════════════════════════════
 

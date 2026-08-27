@@ -242,6 +242,30 @@ contextBridge.exposeInMainWorld('api', {
     },
 
     // ════════════════════════════════════════
+    //  CASH EXCHANGES
+    // ════════════════════════════════════════
+
+    cashExchanges: {
+        getAll: (filters) =>
+            invoke('cashExchanges:getAll', filters),
+
+        getById: (id) =>
+            invoke('cashExchanges:getById', id),
+
+        create: (exchangeData) =>
+            invoke('cashExchanges:create', exchangeData),
+
+        getValidationSettings: () =>
+            invoke('cashExchanges:getValidationSettings'),
+
+        updateValidationSettings: (settings) =>
+            invoke('cashExchanges:updateValidationSettings', settings),
+
+        validateCashAvailability: (data) =>
+            invoke('cashExchanges:validateCashAvailability', data),
+    },
+
+    // ════════════════════════════════════════
     //  TRANSACTIONS (POS)
     //  Note: user_id and shift_id are injected
     //  server-side — never sent from renderer

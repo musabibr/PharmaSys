@@ -17,6 +17,7 @@ import { batchRoutes }               from './routes/batch.routes';
 import { transactionRoutes }         from './routes/transaction.routes';
 import { shiftRoutes }               from './routes/shift.routes';
 import { expenseRoutes }             from './routes/expense.routes';
+import { cashExchangeRoutes }        from './routes/cash-exchange.routes';
 import { reportRoutes }              from './routes/report.routes';
 import {
   categoryRoutes, heldSaleRoutes,
@@ -98,6 +99,7 @@ export function createApp(services: ServiceContainer): Application {
   api.use('/transactions', transactionRoutes(services));
   api.use('/shifts',       shiftRoutes(services));
   api.use('/expenses',     expenseRoutes(services));
+  api.use('/cash-exchanges', cashExchangeRoutes(services));
   api.use('/held-sales',   heldSaleRoutes(services));
   api.use('/reports',      reportRoutes(services));
   api.use('/audit',        auditRoutes(services));

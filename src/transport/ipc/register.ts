@@ -16,6 +16,7 @@ import { registerBatchHandlers }       from './handlers/batch.handler';
 import { registerTransactionHandlers } from './handlers/transaction.handler';
 import { registerShiftHandlers }       from './handlers/shift.handler';
 import { registerExpenseHandlers }     from './handlers/expense.handler';
+import { registerCashExchangeHandlers } from './handlers/cash-exchange.handler';
 import { registerHeldSaleHandlers }    from './handlers/held-sale.handler';
 import { registerReportHandlers }      from './handlers/report.handler';
 import { registerAuditHandlers }       from './handlers/audit.handler';
@@ -41,6 +42,7 @@ export function registerAllHandlers(
   registerTransactionHandlers(router, services);
   registerShiftHandlers(router, services);
   registerExpenseHandlers(router, services);
+  registerCashExchangeHandlers(router, services);
   registerHeldSaleHandlers(router, services);
   registerReportHandlers(router, services);
   registerAuditHandlers(router, services);
