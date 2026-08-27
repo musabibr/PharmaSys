@@ -1,9 +1,11 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { api } from '@/api';
 import { useCartStore } from '@/stores/cart.store';
 import { useSettingsStore } from '@/stores/settings.store';
+import { useShiftStore } from '@/stores/shift.store';
+import { useAuthStore } from '@/stores/auth.store';
 import { formatCurrency } from '@/lib/utils';
 import { usePermission } from '@/hooks/usePermission';
 import { Button } from '@/components/ui/button';
@@ -25,8 +27,8 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { ShoppingCart, CreditCard, Banknote, ArrowLeftRight } from 'lucide-react';
-import type { PaymentMethod, Transaction } from '@/api/types';
+import { ShoppingCart, CreditCard, Banknote, ArrowLeftRight, AlertTriangle, Wallet } from 'lucide-react';
+import type { PaymentMethod, Transaction, CashExchangeValidationSettings, CashAvailabilityValidation } from '@/api/types';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -56,12 +58,15 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
   const { t } = useTranslation();
   const cart = useCartStore();
   const getBankConfig = useSettingsStore((s) => s.getBankConfig);
+  const { currentShift } = useShiftStore();
+  const { currentUser } = useAuthStore();
 
   // ---- Form state ----
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [bankName, setBankName] = useState('');
   const [referenceNumber, setReferenceNumber] = useState('');
   const [bankAmount, setBankAmount] = useState('');
+  const [bankReceivedAmount, setBankReceivedAmount] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [cashTendered, setCashTendered] = useState('');
@@ -71,6 +76,44 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
   const [error, setError] = useState('');
   const canDiscount = usePermission('pos.discounts');
   const canBankTransfer = usePermission('pos.bank_transfer');
+
+  // ---- Cash exchange validation state ----
+  const [validationSettings, setValidationSettings] = useState<CashExchangeValidationSettings | null>(null);
+  const [drawerBalance, setDrawerBalance] = useState<number>(0);
+  const [cashExchangeWarning, setCashExchangeWarning] = useState<string>('');
+  const [showCashExchangeWarning, setShowCashExchangeWarning] = useState(false);
+  const [adminOverride, setAdminOverride] = useState(false);
+  const isAdmin = currentUser?.role === 'admin';
+
+  // ---- Load validation settings when modal opens ----
+  useEffect(() => {
+    if (open) {
+      loadValidationSettings();
+    }
+  }, [open]);
+
+  const loadValidationSettings = async () => {
+    try {
+      const settings = await api.cashExchanges.getValidationSettings();
+      setValidationSettings(settings);
+      
+      // Load current drawer balance if shift is open
+      if (currentShift?.id && settings.use_realtime_calculation) {
+        try {
+          const validation = await api.cashExchanges.validateCashAvailability({
+            amount: 0,
+            shiftId: currentShift.id,
+            adminOverride: false
+          });
+          setDrawerBalance(validation.availableCash);
+        } catch (err) {
+          console.error('Failed to load drawer balance:', err);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load validation settings:', err);
+    }
+  };
 
   // ---- Derived values ----
   const banks = useMemo(() => {
@@ -88,12 +131,53 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
   const isMixed = paymentMethod === 'mixed';
 
   const parsedBankAmount = parseInt(bankAmount, 10) || 0;
+  const parsedBankReceivedAmount = parseInt(bankReceivedAmount, 10) || 0;
   const cashAmount = isMixed ? totalAmount - parsedBankAmount : 0;
   /** Mixed-payment bank leg already covers the whole sale — offer the switch
    *  (H3), never perform it mid-keystroke. */
   const bankCoversTotal = isMixed && totalAmount > 0 && parsedBankAmount >= totalAmount;
   const parsedCashTendered = parseInt(cashTendered, 10) || 0;
   const changeAmount = paymentMethod === 'cash' ? Math.max(0, parsedCashTendered - totalAmount) : 0;
+
+  // ---- Validate cash exchange when bank received amount changes ----
+  useEffect(() => {
+    const exchangeAmount = parseInt(bankReceivedAmount, 10) || 0;
+    if (paymentMethod === 'bank_transfer' && exchangeAmount > totalAmount && validationSettings?.enabled) {
+      validateCashExchange();
+    } else {
+      setCashExchangeWarning('');
+      setShowCashExchangeWarning(false);
+    }
+  }, [bankReceivedAmount, totalAmount, paymentMethod, validationSettings, adminOverride]);
+
+  const validateCashExchange = async () => {
+    if (!currentShift?.id || !validationSettings?.enabled) return;
+
+    const exchangeAmount = (parseInt(bankReceivedAmount, 10) || 0) - totalAmount;
+    try {
+      const validation = await api.cashExchanges.validateCashAvailability({
+        amount: exchangeAmount,
+        shiftId: currentShift.id,
+        adminOverride: adminOverride
+      });
+
+      setDrawerBalance(validation.availableCash);
+
+      if (validation.warning) {
+        setCashExchangeWarning(validation.warning);
+        setShowCashExchangeWarning(true);
+      } else {
+        setCashExchangeWarning('');
+        setShowCashExchangeWarning(false);
+      }
+    } catch (err: any) {
+      // In strict mode, this will throw an error
+      if (validationSettings?.mode === 'strict') {
+        setCashExchangeWarning(err.message || t('Cash exchange validation failed'));
+        setShowCashExchangeWarning(true);
+      }
+    }
+  };
 
   // ---- Validation ----
   function validate(): string | null {
@@ -109,6 +193,9 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
     if (needsBankInfo) {
       if (!bankName) return t('Please select a bank');
       if (!referenceNumber.trim()) return t('Reference number is required');
+      if (paymentMethod === 'bank_transfer' && parsedBankReceivedAmount > 0 && parsedBankReceivedAmount < totalAmount) {
+        return t('Bank amount received must be at least the total amount');
+      }
     }
     if (paymentMethod === 'cash' && parsedCashTendered > 0 && parsedCashTendered < totalAmount) {
       return t('Cash tendered must be at least the total amount');
@@ -117,6 +204,12 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
       if (parsedBankAmount <= 0) return t('Bank amount must be greater than zero');
       if (parsedBankAmount >= totalAmount) return t('Bank amount must be less than total');
     }
+    
+    // Check cash exchange validation in strict mode
+    if (paymentMethod === 'bank_transfer' && parsedBankReceivedAmount > totalAmount && validationSettings?.mode === 'strict' && showCashExchangeWarning && !adminOverride) {
+      return t('Cannot proceed with cash exchange - insufficient drawer balance');
+    }
+    
     return null;
   }
 
@@ -126,6 +219,7 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
     setBankName('');
     setReferenceNumber('');
     setBankAmount('');
+    setBankReceivedAmount('');
     setCashTendered('');
     setCustomerName('');
     setCustomerPhone('');
@@ -133,6 +227,9 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
     setNotes('');
     setError('');
     setLoading(false);
+    setCashExchangeWarning('');
+    setShowCashExchangeWarning(false);
+    setAdminOverride(false);
   }
 
   // ---- Submit ----
@@ -171,6 +268,17 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
       if (needsBankInfo) {
         transactionData.bank_name = bankName;
         transactionData.reference_number = referenceNumber.trim();
+        if (paymentMethod === 'bank_transfer' && parsedBankReceivedAmount > totalAmount) {
+          transactionData.bank_received_amount = parsedBankReceivedAmount;
+          const exchangeAmount = parsedBankReceivedAmount - totalAmount;
+          transactionData.cash_exchange = {
+            bank_name: bankName,
+            reference_number: referenceNumber.trim(),
+            bank_amount: exchangeAmount,
+            cash_amount: exchangeAmount,
+            admin_override: adminOverride,
+          };
+        }
       }
 
       if (isMixed) {
@@ -377,6 +485,104 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
                   disabled={loading}
                 />
               </div>
+
+              {paymentMethod === 'bank_transfer' && (
+                <div className="space-y-2 mt-4 pt-4 border-t">
+                  <Label htmlFor="bank-received-amount">{t('Amount Received in Bank')} {t('(Optional)')}</Label>
+                  <div className="relative">
+                    <Input
+                      id="bank-received-amount"
+                      type="number"
+                      step="1"
+                      min={totalAmount}
+                      value={bankReceivedAmount}
+                      onChange={(e) => setBankReceivedAmount(e.target.value)}
+                      placeholder={String(totalAmount)}
+                      disabled={loading}
+                    />
+                  </div>
+                  
+                  {/* Drawer Balance Display */}
+                  {validationSettings?.enabled && (
+                    currentShift?.id ? (
+                      <div className="mt-2 rounded-md border border-blue-200 bg-blue-50 p-3 dark:border-blue-800 dark:bg-blue-950">
+                        <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400 mb-1">
+                          <Wallet className="h-4 w-4 shrink-0" />
+                          <span className="font-semibold text-sm">{t('Current Drawer Balance')}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-sm text-blue-900 dark:text-blue-200">
+                          <span>{t('Available Cash:')}</span>
+                          <span className="font-bold text-base tabular-nums">
+                            {formatCurrency(drawerBalance)}
+                          </span>
+                        </div>
+                        {validationSettings.cash_calculation_mode === 'shift_with_reserve' && validationSettings.cash_reserve_amount > 0 && (
+                          <p className="text-xs text-blue-700 dark:text-blue-400 mt-1">
+                            {t('Includes reserve: {{amount}} SDG', { amount: validationSettings.cash_reserve_amount })}
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="mt-2 rounded-md border border-yellow-200 bg-yellow-50 p-3 dark:border-yellow-800 dark:bg-yellow-950">
+                        <div className="flex items-center gap-2 text-yellow-600 dark:text-yellow-400 mb-1">
+                          <AlertTriangle className="h-4 w-4 shrink-0" />
+                          <span className="font-semibold text-sm">{t('No Open Shift')}</span>
+                        </div>
+                        <p className="text-xs text-yellow-900 dark:text-yellow-200">
+                          {t('Open a shift before giving cash exchange so the drawer remains reconciled.')}
+                        </p>
+                      </div>
+                    )
+                  )}
+
+                  {parsedBankReceivedAmount > totalAmount && (
+                    <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-700 dark:bg-amber-950/40">
+                      <div className="flex items-center gap-2 text-amber-800 dark:text-amber-300 mb-1">
+                        <ArrowLeftRight className="h-4 w-4 shrink-0" />
+                        <span className="font-semibold text-sm">{t('Cash Exchange Required')}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm text-amber-900 dark:text-amber-200">
+                        <span>{t('Cash to give customer:')}</span>
+                        <span className="font-bold text-base tabular-nums">
+                          {formatCurrency(parsedBankReceivedAmount - totalAmount)}
+                        </span>
+                      </div>
+                      <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
+                        {t('This will automatically create a linked Cash Exchange record.')}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Cash Exchange Warning */}
+                  {showCashExchangeWarning && cashExchangeWarning && (
+                    <div className="mt-2 rounded-md border border-red-300 bg-red-50 p-3 dark:border-red-700 dark:bg-red-950/40">
+                      <div className="flex items-center gap-2 text-red-800 dark:text-red-300 mb-1">
+                        <AlertTriangle className="h-4 w-4 shrink-0" />
+                        <span className="font-semibold text-sm">
+                          {validationSettings?.mode === 'strict' ? t('Cash Exchange Blocked') : t('Cash Exchange Warning')}
+                        </span>
+                      </div>
+                      <p className="text-sm text-red-900 dark:text-red-200 mt-1">
+                        {cashExchangeWarning}
+                      </p>
+                      {isAdmin && validationSettings?.allow_admin_override && (
+                        <div className="mt-2 flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            id="admin-override"
+                            checked={adminOverride}
+                            onChange={(e) => setAdminOverride(e.target.checked)}
+                            className="rounded border-gray-300 text-red-600 focus:ring-red-500"
+                          />
+                          <label htmlFor="admin-override" className="text-xs text-red-700 dark:text-red-400">
+                            {t('Admin override - proceed anyway')}
+                          </label>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

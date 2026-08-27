@@ -148,6 +148,64 @@ export interface Transaction {
   items?: TransactionItem[];
   returned_amount?: number;
   returns?: Transaction[];
+  cash_exchange?: CashExchange;
+}
+
+export interface CashExchange {
+  id: number;
+  linked_transaction_id: number | null;
+  shift_id: number | null;
+  user_id: number;
+  bank_name: string;
+  reference_number: string;
+  bank_amount: number;
+  cash_amount: number;
+  customer_name: string | null;
+  customer_phone: string | null;
+  notes: string | null;
+  created_at: string;
+  username?: string;
+  transaction_number?: string | null;
+  linked_transaction_is_voided?: number | null;
+}
+
+export interface CreateCashExchangeInput {
+  bank_name: string;
+  reference_number: string;
+  bank_amount: number;
+  cash_amount: number;
+  customer_name?: string | null;
+  customer_phone?: string | null;
+  notes?: string | null;
+  admin_override?: boolean;
+}
+
+export interface CashExchangeValidationSettings {
+  enabled: boolean;
+  mode: 'warning' | 'strict';
+  min_cash_threshold: number;
+  allow_admin_override: boolean;
+  use_realtime_calculation: boolean;
+  cash_calculation_mode: 'shift_only' | 'shift_with_reserve';
+  cash_reserve_amount: number;
+}
+
+export interface CashAvailabilityValidation {
+  valid: boolean;
+  availableCash: number;
+  requiredCash: number;
+  warning?: string;
+}
+
+export interface CashExchangeFilters {
+  start_date?: string;
+  end_date?: string;
+  user_id?: number;
+  shift_id?: number;
+  linked_transaction_id?: number;
+  search?: string;
+  page?: number;
+  limit?: number;
 }
 
 export interface TransactionItem {
@@ -462,9 +520,11 @@ export interface ShiftExpectedCash {
   total_cash_returns: number;
   total_cash_expenses: number;
   total_cash_drops: number;
+  total_cash_exchanges: number;
   expected_cash: number;
   total_bank_sales: number;
   total_bank_returns: number;
+  total_bank_exchanges: number;
   total_sales: number;
   total_returns: number;
 }
@@ -875,6 +935,15 @@ export interface PharmaSysApi {
   cashDrops: {
     create(amount: number, reason: string): Promise<{ success: boolean }>;
     getByShift(shiftId: number): Promise<unknown[]>;
+  };
+
+  cashExchanges: {
+    getAll(filters?: CashExchangeFilters): Promise<PaginatedResult<CashExchange>>;
+    getById(id: number): Promise<CashExchange>;
+    create(data: CreateCashExchangeInput): Promise<CashExchange>;
+    getValidationSettings(): Promise<CashExchangeValidationSettings>;
+    updateValidationSettings(settings: Partial<CashExchangeValidationSettings>): Promise<CashExchangeValidationSettings>;
+    validateCashAvailability(data: { amount: number; shiftId: number | null; adminOverride?: boolean }): Promise<CashAvailabilityValidation>;
   };
 
   transactions: {

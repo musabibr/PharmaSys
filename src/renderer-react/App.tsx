@@ -22,6 +22,7 @@ import { QuickStockEntryPage } from '@/components/inventory/QuickStockEntryPage'
 import { BulkPriceUpdatePage } from '@/components/inventory/BulkPriceUpdatePage';
 import { TransactionsPage } from '@/components/finance/TransactionsPage';
 import { ExpensesPage } from '@/components/finance/ExpensesPage';
+import { CashExchangesPage } from '@/components/finance/CashExchangesPage';
 import { ShiftsPage } from '@/components/finance/ShiftsPage';
 import { AuditPage } from '@/components/admin/AuditPage';
 import { SettingsPage } from '@/components/admin/SettingsPage';
@@ -252,6 +253,11 @@ export function App() {
               <ExpensesPage />
             </ProtectedRoute>
           } />
+          <Route path="/cash-exchanges" element={
+            <ProtectedRoute anyPermission={['finance.cash_exchanges.view', 'finance.cash_exchanges.view_own', 'finance.cash_exchanges.manage']}>
+              <CashExchangesPage />
+            </ProtectedRoute>
+          } />
           <Route path="/shifts" element={
             <ProtectedRoute anyPermission={['finance.shifts.view', 'finance.shifts.view_own']}>
               <ShiftsPage />
@@ -275,7 +281,7 @@ export function App() {
             </ProtectedRoute>
           } />
           <Route path="/stock-ledger" element={
-            <ProtectedRoute permission="inventory.valuation">
+            <ProtectedRoute permission="inventory.stock_ledger">
               <Suspense fallback={<LazyFallback />}><StockLedgerPage /></Suspense>
             </ProtectedRoute>
           } />
