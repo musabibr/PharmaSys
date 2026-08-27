@@ -254,6 +254,11 @@ export function CloseShiftDialog({ open, onOpenChange, onComplete }: CloseShiftD
                   amount={expected.total_cash_drops}
                   sign="-"
                 />
+                <BreakdownRow
+                  label={t('Cash Exchanges (given to customers)')}
+                  amount={expected.total_cash_exchanges}
+                  sign="-"
+                />
                 <Separator className="my-1.5" />
                 <BreakdownRow
                   label={t('Expected Cash')}

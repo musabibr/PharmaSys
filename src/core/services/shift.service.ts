@@ -188,6 +188,21 @@ export class ShiftService {
   }
 
   /**
+   * Get real-time expected cash for a shift (current drawer balance).
+   * This calculates the theoretical cash that should be in the drawer right now.
+   */
+  async getCurrentExpectedCash(shiftId: number): Promise<number> {
+    Validate.id(shiftId);
+    const shift = await this.repo.getById(shiftId);
+    if (!shift) throw new NotFoundError('Shift', shiftId);
+    if (shift.status !== 'open') {
+      throw new ValidationError('Shift is not open', 'shift');
+    }
+    const expected = await this.repo.getExpectedCash(shiftId);
+    return expected.expected_cash;
+  }
+
+  /**
    * Admin-only: force-close any user's shift (e.g. stale or orphaned shifts).
    */
   async forceClose(

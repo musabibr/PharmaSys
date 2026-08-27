@@ -218,6 +218,23 @@ export class MigrationRepository {
         FOREIGN KEY (shift_id) REFERENCES shifts(id),
         FOREIGN KEY (user_id) REFERENCES users(id)
       )`,
+      `CREATE TABLE IF NOT EXISTS cash_exchanges (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        linked_transaction_id INTEGER UNIQUE,
+        shift_id INTEGER,
+        user_id INTEGER NOT NULL,
+        bank_name TEXT NOT NULL,
+        reference_number TEXT NOT NULL,
+        bank_amount INTEGER NOT NULL CHECK(bank_amount > 0),
+        cash_amount INTEGER NOT NULL CHECK(cash_amount > 0),
+        customer_name TEXT,
+        customer_phone TEXT,
+        notes TEXT,
+        created_at TEXT DEFAULT (datetime('now', 'localtime')),
+        FOREIGN KEY (linked_transaction_id) REFERENCES transactions(id),
+        FOREIGN KEY (shift_id) REFERENCES shifts(id),
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      )`,
       `CREATE TABLE IF NOT EXISTS held_sales (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
@@ -396,6 +413,8 @@ export class MigrationRepository {
       'CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at)',
       'CREATE INDEX IF NOT EXISTS idx_shifts_user_status ON shifts(user_id, status)',
       'CREATE INDEX IF NOT EXISTS idx_cash_drops_shift ON cash_drops(shift_id)',
+      'CREATE INDEX IF NOT EXISTS idx_cash_exchanges_shift ON cash_exchanges(shift_id)',
+      'CREATE INDEX IF NOT EXISTS idx_cash_exchanges_created ON cash_exchanges(created_at)',
       'CREATE INDEX IF NOT EXISTS idx_inventory_adjustments_batch ON inventory_adjustments(batch_id)',
       'CREATE INDEX IF NOT EXISTS idx_transactions_user_date ON transactions(user_id, created_at)',
       'CREATE INDEX IF NOT EXISTS idx_transactions_type_voided ON transactions(transaction_type, is_voided, created_at)',
@@ -490,6 +509,28 @@ export class MigrationRepository {
 
     // Pillar 2: cash_drops user_id
     await this._migrateCashDropUserId();
+
+    // Cash exchanges deliberately live outside transactions: a later invoice
+    // return or void must never erase the completed bank-to-cash operation.
+    await this.base.rawRun(`CREATE TABLE IF NOT EXISTS cash_exchanges (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      linked_transaction_id INTEGER UNIQUE,
+      shift_id INTEGER,
+      user_id INTEGER NOT NULL,
+      bank_name TEXT NOT NULL,
+      reference_number TEXT NOT NULL,
+      bank_amount INTEGER NOT NULL CHECK(bank_amount > 0),
+      cash_amount INTEGER NOT NULL CHECK(cash_amount > 0),
+      customer_name TEXT,
+      customer_phone TEXT,
+      notes TEXT,
+      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (linked_transaction_id) REFERENCES transactions(id),
+      FOREIGN KEY (shift_id) REFERENCES shifts(id),
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )`);
+    await this.base.rawRun('CREATE INDEX IF NOT EXISTS idx_cash_exchanges_shift ON cash_exchanges(shift_id)');
+    await this.base.rawRun('CREATE INDEX IF NOT EXISTS idx_cash_exchanges_created ON cash_exchanges(created_at)');
 
     // Pillar 4: batch status
     await this._migrateBatchStatus();

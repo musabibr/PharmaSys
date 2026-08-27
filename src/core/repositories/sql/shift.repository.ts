@@ -52,8 +52,10 @@ export class ShiftRepository implements IShiftRepository {
       `SELECT s.*, u.username,
          COALESCE((SELECT SUM(cash_tendered) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'sale'), 0) as total_cash_sales,
          COALESCE((SELECT SUM(cash_tendered) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'return'), 0) as total_cash_returns,
+         COALESCE((SELECT SUM(cash_amount) FROM cash_exchanges WHERE shift_id = s.id), 0) as total_cash_exchanges,
          COALESCE((SELECT SUM(CASE WHEN payment_method = 'cash' THEN 0 ELSE total_amount - cash_tendered END) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'sale'), 0) as total_bank_sales,
          COALESCE((SELECT SUM(CASE WHEN payment_method = 'cash' THEN 0 ELSE total_amount - cash_tendered END) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'return'), 0) as total_bank_returns,
+         COALESCE((SELECT SUM(bank_amount) FROM cash_exchanges WHERE shift_id = s.id), 0) as total_bank_exchanges,
          COALESCE((SELECT SUM(total_amount) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'sale'), 0) as total_sales,
          COALESCE((SELECT SUM(total_amount) FROM transactions WHERE shift_id = s.id AND is_voided = 0 AND transaction_type = 'return'), 0) as total_returns,
          COALESCE((SELECT SUM(amount) FROM expenses WHERE shift_id = s.id AND is_revoked = 0 AND id NOT IN (SELECT expense_id FROM purchase_payments WHERE expense_id IS NOT NULL)), 0) as total_expenses
@@ -129,6 +131,16 @@ export class ShiftRepository implements IShiftRepository {
       `SELECT COALESCE(SUM(amount), 0) as total FROM cash_drops WHERE shift_id = ?`,
       [shiftId]
     );
+    const cashExchanges = await this.base.getOne<{ total: number }>(
+      `SELECT COALESCE(SUM(cash_amount), 0) as total
+       FROM cash_exchanges WHERE shift_id = ?`,
+      [shiftId]
+    );
+    const bankExchanges = await this.base.getOne<{ total: number }>(
+      `SELECT COALESCE(SUM(bank_amount), 0) as total
+       FROM cash_exchanges WHERE shift_id = ?`,
+      [shiftId]
+    );
 
     // Bank portion of sales (total_amount - cash_tendered = bank amount; a
     // pure-cash sale must contribute 0 here even if cash_tendered was ever
@@ -150,9 +162,14 @@ export class ShiftRepository implements IShiftRepository {
     const returnsCash = cashOut?.total ?? 0;
     const expenses    = cashExp?.total ?? 0;
     const drops       = cashDrops?.total ?? 0;
+    const exchanges   = cashExchanges?.total ?? 0;
     const salesBank   = bankIn?.total ?? 0;
     const returnsBank = bankOut?.total ?? 0;
-    const expected    = Math.round(opening + salesCash - returnsCash - expenses - drops);
+    const exchangeBank = bankExchanges?.total ?? 0;
+    
+    // Expected cash: physical cash in drawer
+    // Cash exchanges subtract because we give cash back
+    const expected    = Math.round(opening + salesCash - returnsCash - expenses - drops - exchanges);
 
     return {
       opening_amount: opening,
@@ -160,9 +177,11 @@ export class ShiftRepository implements IShiftRepository {
       total_cash_returns: returnsCash,
       total_cash_expenses: expenses,
       total_cash_drops: drops,
+      total_cash_exchanges: exchanges,
       expected_cash: expected,
       total_bank_sales: salesBank,
       total_bank_returns: returnsBank,
+      total_bank_exchanges: exchangeBank,
       total_sales: salesCash + salesBank,
       total_returns: returnsCash + returnsBank,
     };
