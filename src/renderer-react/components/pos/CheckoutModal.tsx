@@ -76,6 +76,7 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
   const [error, setError] = useState('');
   const canDiscount = usePermission('pos.discounts');
   const canBankTransfer = usePermission('pos.bank_transfer');
+  const isAdmin = currentUser?.role === 'admin';
   const canOverrideAdmin = usePermission('finance.cash_exchanges.manage') && isAdmin;
 
   // ---- Cash exchange validation state ----
