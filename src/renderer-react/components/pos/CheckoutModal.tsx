@@ -85,7 +85,6 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
   const [cashExchangeWarning, setCashExchangeWarning] = useState<string>('');
   const [showCashExchangeWarning, setShowCashExchangeWarning] = useState(false);
   const [adminOverride, setAdminOverride] = useState(false);
-  const isAdmin = currentUser?.role === 'admin';
 
   // ---- Load validation settings when modal opens ----
   useEffect(() => {
