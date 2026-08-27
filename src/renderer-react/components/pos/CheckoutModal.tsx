@@ -561,32 +561,31 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
                   </div>
                   
                   {/* Drawer Balance Display */}
-                  {validationSettings?.enabled && (
-                    currentShift?.id ? (
-                      <div className="mt-2 rounded-md border border-blue-200 bg-blue-50 p-3 dark:border-blue-800 dark:bg-blue-950">
-                        <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400 mb-1">
-                          <Wallet className="h-4 w-4 shrink-0" />
-                          <span className="font-semibold text-sm">{t('Current Drawer Balance')}</span>
-                        </div>
-                        <div className="flex items-center justify-between text-sm text-blue-900 dark:text-blue-200">
-                          <span>{t('Available Cash:')}</span>
-                          <span className="font-bold text-base tabular-nums">
-                            {formatCurrency(drawerBalance)}
-                          </span>
-                        </div>
-                        {validationSettings.cash_calculation_mode === 'shift_with_reserve' && validationSettings.cash_reserve_amount > 0 && (
-                          <p className="text-xs text-blue-700 dark:text-blue-400 mt-1">
-                            {t('Includes reserve: {{amount}} SDG', { amount: validationSettings.cash_reserve_amount })}
-                          </p>
-                        )}
+                  {currentShift?.id ? (
+                    <div className="mt-2 rounded-md border border-blue-200 bg-blue-50 p-3 dark:border-blue-800 dark:bg-blue-950">
+                      <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400 mb-1">
+                        <Wallet className="h-4 w-4 shrink-0" />
+                        <span className="font-semibold text-sm">{t('Current Drawer Balance')}</span>
                       </div>
-                    ) : (
-                      <div className="mt-2 rounded-md border border-yellow-200 bg-yellow-50 p-3 dark:border-yellow-800 dark:bg-yellow-950">
-                        <div className="flex items-center gap-2 text-yellow-600 dark:text-yellow-400 mb-1">
-                          <AlertTriangle className="h-4 w-4 shrink-0" />
-                          <span className="font-semibold text-sm">{t('No Open Shift')}</span>
-                        </div>
-                        <p className="text-xs text-yellow-900 dark:text-yellow-200">
+                      <div className="flex items-center justify-between text-sm text-blue-900 dark:text-blue-200">
+                        <span>{t('Available Cash:')}</span>
+                        <span className="font-bold text-base tabular-nums">
+                          {formatCurrency(drawerBalance)}
+                        </span>
+                      </div>
+                      {validationSettings?.cash_calculation_mode === 'shift_with_reserve' && validationSettings.cash_reserve_amount > 0 && (
+                        <p className="text-xs text-blue-700 dark:text-blue-400 mt-1">
+                          {t('Includes reserve: {{amount}} SDG', { amount: validationSettings.cash_reserve_amount })}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="mt-2 rounded-md border border-yellow-200 bg-yellow-50 p-3 dark:border-yellow-800 dark:bg-yellow-950">
+                      <div className="flex items-center gap-2 text-yellow-600 dark:text-yellow-400 mb-1">
+                        <AlertTriangle className="h-4 w-4 shrink-0" />
+                        <span className="font-semibold text-sm">{t('No Open Shift')}</span>
+                      </div>
+                      <p className="text-xs text-yellow-900 dark:text-yellow-200">
                           {t('Open a shift before giving cash exchange so the drawer remains reconciled.')}
                         </p>
                       </div>
