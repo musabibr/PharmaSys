@@ -1,6 +1,6 @@
 import type { BaseRepository } from './base.repository';
 import type { IShiftRepository } from '../../types/repositories';
-import type { Shift, ShiftFilters, ShiftExpectedCash, ShiftReport, PaginatedResult, Transaction, Expense, CashDrop } from '../../types/models';
+import type { Shift, ShiftFilters, ShiftExpectedCash, ShiftReport, PaginatedResult, Transaction, Expense, CashDrop, CashExchange } from '../../types/models';
 import { NotFoundError } from '../../types/errors';
 
 export class ShiftRepository implements IShiftRepository {
@@ -210,6 +210,12 @@ export class ShiftRepository implements IShiftRepository {
        WHERE cd.shift_id = ?`,
       [shiftId]
     );
+    const cashExchanges = await this.base.getAll<CashExchange>(
+      `SELECT ce.*, u.username FROM cash_exchanges ce
+       JOIN users u ON ce.user_id = u.id
+       WHERE ce.shift_id = ? ORDER BY ce.created_at DESC`,
+      [shiftId]
+    );
 
     const sales    = transactions.filter(t => t.transaction_type === 'sale'   && !t.is_voided);
     const returns_ = transactions.filter(t => t.transaction_type === 'return' && !t.is_voided);
@@ -219,11 +225,13 @@ export class ShiftRepository implements IShiftRepository {
       transactions,
       expenses,
       cash_drops: cashDrops,
+      cash_exchanges: cashExchanges,
       summary: {
         total_sales:     sales.reduce((s, t)    => s + t.total_amount, 0),
         total_returns:   returns_.reduce((s, t) => s + t.total_amount, 0),
         total_expenses:  expenses.reduce((s, e) => s + e.amount, 0),
         total_cash_drops: cashDrops.reduce((s, d) => s + d.amount, 0),
+        total_cash_exchanges: cashExchanges.reduce((s, e) => s + e.cash_amount, 0),
         transaction_count: sales.length,
       },
     };
