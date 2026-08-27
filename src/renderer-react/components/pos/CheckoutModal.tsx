@@ -546,7 +546,7 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
 
               {paymentMethod === 'bank_transfer' && (
                 <div className="space-y-2 mt-4 pt-4 border-t">
-                  <Label htmlFor="bank-received-amount">{t('Amount Received in Bank')} {t('(Optional)')}</Label>
+                  <Label htmlFor="bank-received-amount">{t('Amount Received')} {t('(Optional)')}</Label>
                   <div className="relative">
                     <Input
                       id="bank-received-amount"
@@ -589,7 +589,6 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
                           {t('Open a shift before giving cash exchange so the drawer remains reconciled.')}
                         </p>
                       </div>
-                    )
                   )}
 
                   {parsedBankReceivedAmount > totalAmount && (

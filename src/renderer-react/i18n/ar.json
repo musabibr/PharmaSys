@@ -1252,7 +1252,7 @@
   "Admin override - proceed anyway": "تجاوز المشرف - المتابعة على أي حال",
   "Cannot proceed with cash exchange - insufficient drawer balance": "لا يمكن المتابعة مع التبادل النقدي - رصيد الدرج غير كافٍ",
   "Cash exchange validation failed": "فشل التحقق من التبادل النقدي",
-  "Amount Received in Bank": "المبلغ المستلم في البنك",
+  "Amount Received in Bank": "المبلغ المستلم",
   "Open a shift before giving cash exchange so the drawer remains reconciled.": "افتح وردية قبل إعطاء تبادل نقدي ليبقى الدرج متوازناً.",
   "Insufficient cash in drawer. Available: {{available}} SDG, Required: {{required}} SDG (minimum threshold: {{threshold}} SDG)": "نقد غير كافٍ في الدرج. المتاح: {{available}} ج.س، المطلوب: {{required}} ج.س (الحد الأدنى: {{threshold}} ج.س)",
   "Warning: Insufficient cash in drawer. Available: {{available}} SDG, Required: {{required}} SDG (minimum threshold: {{threshold}} SDG)": "تحذير: نقد غير كافٍ في الدرج. المتاح: {{available}} ج.س، المطلوب: {{required}} ج.س (الحد الأدنى: {{threshold}} ج.س)",
