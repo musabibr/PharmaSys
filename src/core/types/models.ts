@@ -402,6 +402,8 @@ export interface CashExchange {
   username?: string;
   transaction_number?: string | null;
   linked_transaction_is_voided?: number | null;
+  transaction_customer_name?: string | null;
+  transaction_customer_phone?: string | null;
 }
 
 export interface CreateCashExchangeInput {
@@ -424,6 +426,8 @@ export interface CashExchangeFilters {
   user_id?: number;
   shift_id?: number;
   linked_transaction_id?: number;
+  bank_name?: string;
+  customer_name?: string;
   search?: string;
   page?: number;
   limit?: number;
@@ -966,11 +970,13 @@ export interface ShiftReport {
   transactions: Transaction[];
   expenses: Expense[];
   cash_drops: CashDrop[];
+  cash_exchanges: CashExchange[];
   summary: {
     total_sales: number;
     total_returns: number;
     total_expenses: number;
     total_cash_drops: number;
+    total_cash_exchanges: number;
     transaction_count: number;
   };
 }

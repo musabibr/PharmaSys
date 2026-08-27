@@ -16,7 +16,9 @@ export class CashExchangeRepository implements ICashExchangeRepository {
     return await this.base.getOne<CashExchange>(
       `SELECT ce.*, u.username,
               t.transaction_number,
-              t.is_voided AS linked_transaction_is_voided
+              t.is_voided AS linked_transaction_is_voided,
+              t.customer_name AS transaction_customer_name,
+              t.customer_phone AS transaction_customer_phone
        FROM cash_exchanges ce
        JOIN users u ON u.id = ce.user_id
        LEFT JOIN transactions t ON t.id = ce.linked_transaction_id
@@ -49,6 +51,14 @@ export class CashExchangeRepository implements ICashExchangeRepository {
       conditions.push('ce.linked_transaction_id = ?');
       params.push(filters.linked_transaction_id);
     }
+    if (filters.bank_name) {
+      conditions.push('ce.bank_name = ?');
+      params.push(filters.bank_name);
+    }
+    if (filters.customer_name) {
+      conditions.push('ce.customer_name LIKE ?');
+      params.push(`%${filters.customer_name}%`);
+    }
     if (filters.search?.trim()) {
       const q = `%${filters.search.trim()}%`;
       conditions.push(`(
@@ -78,7 +88,9 @@ export class CashExchangeRepository implements ICashExchangeRepository {
     const data = await this.base.getAll<CashExchange>(
       `SELECT ce.*, u.username,
               t.transaction_number,
-              t.is_voided AS linked_transaction_is_voided
+              t.is_voided AS linked_transaction_is_voided,
+              t.customer_name AS transaction_customer_name,
+              t.customer_phone AS transaction_customer_phone
        FROM cash_exchanges ce
        JOIN users u ON u.id = ce.user_id
        LEFT JOIN transactions t ON t.id = ce.linked_transaction_id

@@ -300,14 +300,14 @@ export class CashExchangeService {
         valid: true, 
         availableCash, 
         requiredCash,
-        warning: `Admin override: Insufficient cash (Available: ${availableCash} SDG, Required: ${requiredCash} SDG)`
+        warning: 'insufficient_cash_admin_override'
       };
     }
 
     // Strict mode: block if insufficient cash
     if (settings.mode === 'strict' && !hasSufficientCash) {
       throw new ValidationError(
-        `Insufficient cash in drawer. Available: ${availableCash} SDG, Required: ${requiredCash} SDG (minimum threshold: ${effectiveThreshold} SDG)`,
+        'insufficient_cash_strict',
         'cash_amount'
       );
     }
@@ -318,7 +318,7 @@ export class CashExchangeService {
         valid: true, 
         availableCash, 
         requiredCash,
-        warning: `Warning: Insufficient cash in drawer. Available: ${availableCash} SDG, Required: ${requiredCash} SDG (minimum threshold: ${effectiveThreshold} SDG)`
+        warning: 'insufficient_cash_warning'
       };
     }
 
