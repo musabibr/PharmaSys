@@ -272,6 +272,17 @@ export class CashExchangeService {
     if (settings.use_realtime_calculation) {
       const expected = await this.shiftRepo.getExpectedCash(shiftId);
       availableCash = expected.expected_cash;
+      console.log('Cash exchange validation - Expected cash calculation:', {
+        shiftId,
+        opening_amount: expected.opening_amount,
+        total_cash_sales: expected.total_cash_sales,
+        total_cash_returns: expected.total_cash_returns,
+        total_cash_expenses: expected.total_cash_expenses,
+        total_cash_drops: expected.total_cash_drops,
+        total_cash_exchanges: expected.total_cash_exchanges,
+        expected_cash: expected.expected_cash,
+        exchangeAmount
+      });
     } else {
       // Use opening amount as fallback
       const shift = await this.shiftRepo.getById(shiftId);
