@@ -188,11 +188,33 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
       // In strict mode, this will throw an error
       if (validationSettings?.mode === 'strict') {
         let errorMessage = err.message || t('Cash exchange validation failed');
+        
+        // If the error is the code, translate it with the current drawer balance
         if (err.message === 'insufficient_cash_strict') {
-          errorMessage = t('Insufficient cash in drawer. Available: {{available}} SDG, Required: {{required}} SDG', {
-            available: drawerBalance,
-            required: exchangeAmount
-          });
+          // First get the current drawer balance if we don't have it
+          if (drawerBalance === 0) {
+            try {
+              const balanceValidation = await api.cashExchanges.validateCashAvailability({
+                amount: 0,
+                shiftId: currentShift.id,
+                adminOverride: false
+              });
+              setDrawerBalance(balanceValidation.availableCash);
+              errorMessage = t('Insufficient cash in drawer. Available: {{available}} SDG, Required: {{required}} SDG', {
+                available: balanceValidation.availableCash,
+                required: exchangeAmount
+              });
+            } catch (balanceErr) {
+              errorMessage = t('Insufficient cash in drawer. Required: {{required}} SDG', {
+                required: exchangeAmount
+              });
+            }
+          } else {
+            errorMessage = t('Insufficient cash in drawer. Available: {{available}} SDG, Required: {{required}} SDG', {
+              available: drawerBalance,
+              required: exchangeAmount
+            });
+          }
         }
         setCashExchangeWarning(errorMessage);
         setShowCashExchangeWarning(true);
@@ -228,10 +250,15 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
     
     // Check cash exchange validation in strict mode
     if (paymentMethod === 'bank_transfer' && parsedBankReceivedAmount > totalAmount && validationSettings?.mode === 'strict' && showCashExchangeWarning && !adminOverride) {
-      return t('Insufficient cash in drawer. Available: {{available}} SDG, Required: {{required}} SDG', {
-        available: drawerBalance,
-        required: (parsedBankReceivedAmount - totalAmount)
-      });
+      const exchangeAmount = parsedBankReceivedAmount - totalAmount;
+      let errorMessage = cashExchangeWarning;
+      if (cashExchangeWarning === 'insufficient_cash_strict') {
+        errorMessage = t('Insufficient cash in drawer. Available: {{available}} SDG, Required: {{required}} SDG', {
+          available: drawerBalance,
+          required: exchangeAmount
+        });
+      }
+      return errorMessage;
     }
     
     return null;

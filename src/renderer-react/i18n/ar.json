@@ -1243,6 +1243,7 @@
   "Cash Exchange Blocked": "التبادل النقدي محظور",
   "Cash Exchange Warning": "تحذير تبادل نقدي",
   "Insufficient cash in drawer. Available: {{available}} SDG, Required: {{required}} SDG": "النقد غير كافٍ في الدرج. المتاح: {{available}} ج.س، المطلوب: {{required}} ج.س",
+  "Insufficient cash in drawer. Required: {{required}} SDG": "النقد غير كافٍ في الدرج. المطلوب: {{required}} ج.س",
   "Admin override - proceed anyway": "تجاوز المشرف - المتابعة على أي حال",
   "Open transaction": "فتح المعاملة",
   "Admin override - proceed anyway": "تجاوز المشرف - المتابعة على أي حال",
