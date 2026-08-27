@@ -246,14 +246,9 @@ export class CashExchangeService {
   }> {
     const settings = await this.getValidationSettings();
 
-    // If validation is disabled, always valid
-    if (!settings.enabled) {
-      return { valid: true, availableCash: 0, requiredCash: exchangeAmount };
-    }
-
     // If no shift, cannot validate - block in strict mode
     if (!shiftId) {
-      if (settings.mode === 'strict' && !adminOverride) {
+      if (settings.enabled && settings.mode === 'strict' && !adminOverride) {
         throw new ValidationError(
           'Open a shift before giving cash exchange so the drawer remains reconciled.',
           'shift_id'
@@ -267,7 +262,7 @@ export class CashExchangeService {
       };
     }
 
-    // Get current expected cash from shift
+    // Get current expected cash from shift (always calculate, even if validation disabled)
     let availableCash = 0;
     if (settings.use_realtime_calculation) {
       const expected = await this.shiftRepo.getExpectedCash(shiftId);
@@ -291,9 +286,9 @@ export class CashExchangeService {
       }
     }
 
-    // Add cash reserve if using shift_with_reserve mode
-    if (settings.cash_calculation_mode === 'shift_with_reserve') {
-      availableCash += settings.cash_reserve_amount;
+    // If validation is disabled, return the calculated available cash without checking
+    if (!settings.enabled) {
+      return { valid: true, availableCash, requiredCash: exchangeAmount };
     }
 
     // Add cash reserve if using shift_with_reserve mode
@@ -304,6 +299,14 @@ export class CashExchangeService {
     const requiredCash = exchangeAmount;
     const effectiveThreshold = Math.max(0, settings.min_cash_threshold);
     const hasSufficientCash = availableCash >= (requiredCash + effectiveThreshold);
+
+    console.log('Cash exchange validation - Final calculation:', {
+      availableCash,
+      requiredCash,
+      effectiveThreshold,
+      hasSufficientCash,
+      mode: settings.mode
+    });
 
     // Admin override check
     if (adminOverride && settings.allow_admin_override && userRole === 'admin') {
