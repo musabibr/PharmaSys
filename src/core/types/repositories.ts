@@ -12,6 +12,7 @@ import type {
   Transaction, TransactionItem, TransactionFilters,
   Shift, ShiftFilters, ShiftExpectedCash, ShiftReport,
   Expense, ExpenseCategory, CashDrop, ExpenseFilters,
+  CashExchange, CashExchangeFilters, CreateCashExchangeInput,
   HeldSale, InventoryAdjustment, AdjustmentFilters, AdjustmentType,
   AuditLog, AuditLogFilters, Setting,
   CashFlowReport, ProfitLossReport,
@@ -267,6 +268,18 @@ export interface IExpenseRepository {
   getCashDropById(id: number): Promise<CashDrop | undefined>;
   createCashDrop(data: CreateCashDropInput, userId: number, shiftId: number): Promise<RunResult>;
   getCashDrops(shiftId: number): Promise<CashDrop[]>;
+}
+
+// ─── Cash Exchange ───
+
+export interface ICashExchangeRepository {
+  getById(id: number): Promise<CashExchange | undefined>;
+  getAll(filters: CashExchangeFilters): Promise<PaginatedResult<CashExchange>>;
+  create(data: CreateCashExchangeInput & {
+    user_id: number;
+    shift_id: number | null;
+    linked_transaction_id: number | null;
+  }): Promise<number>;
 }
 
 // ─── Held Sale ───

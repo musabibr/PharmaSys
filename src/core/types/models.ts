@@ -178,6 +178,8 @@ export interface Transaction {
   returned_amount?: number;
   // Populated by getById for sale transactions
   returns?: Transaction[];
+  /** Separately-accounted bank-to-cash exchange, if this sale created one. */
+  cash_exchange?: CashExchange;
 }
 
 export interface TransactionItem {
@@ -255,8 +257,10 @@ export interface Shift {
   // Computed from transactions
   total_cash_sales?: number;
   total_cash_returns?: number;
+  total_cash_exchanges?: number;
   total_bank_sales?: number;
   total_bank_returns?: number;
+  total_bank_exchanges?: number;
   total_sales?: number;
   total_returns?: number;
   total_expenses?: number;
@@ -373,6 +377,58 @@ export interface CashDrop {
   username?: string;
 }
 
+// ─── Cash Exchange ───
+
+/**
+ * A bank-to-cash exchange that is separate from sales. It changes bank and
+ * drawer balances only; it must never alter invoice totals, revenue, stock,
+ * returns, or profit.
+ */
+export interface CashExchange {
+  id: number;
+  /** Null for a standalone exchange. */
+  linked_transaction_id: number | null;
+  shift_id: number | null;
+  user_id: number;
+  bank_name: string;
+  reference_number: string;
+  bank_amount: number;
+  cash_amount: number;
+  customer_name: string | null;
+  customer_phone: string | null;
+  notes: string | null;
+  created_at: string;
+  // Joined fields
+  username?: string;
+  transaction_number?: string | null;
+  linked_transaction_is_voided?: number | null;
+}
+
+export interface CreateCashExchangeInput {
+  bank_name: string;
+  reference_number: string;
+  bank_amount: number;
+  cash_amount: number;
+  customer_name?: string | null;
+  customer_phone?: string | null;
+  notes?: string | null;
+  /** Assigned only by trusted server code for exchanges created from a sale. */
+  linked_transaction_id?: number | null;
+  /** Admin override flag to bypass cash availability validation */
+  admin_override?: boolean;
+}
+
+export interface CashExchangeFilters {
+  start_date?: string;
+  end_date?: string;
+  user_id?: number;
+  shift_id?: number;
+  linked_transaction_id?: number;
+  search?: string;
+  page?: number;
+  limit?: number;
+}
+
 // ─── Held Sale ───
 
 export interface HeldSale {
@@ -434,6 +490,26 @@ export interface Setting {
   key: string;
   value: string | null;
   updated_at: string;
+}
+
+/**
+ * Cash exchange validation settings to control drawer balance checks
+ */
+export interface CashExchangeValidationSettings {
+  /** Whether to validate cash availability in drawer before allowing exchanges */
+  enabled: boolean;
+  /** 'warning' shows a warning but allows proceed, 'strict' blocks entirely */
+  mode: 'warning' | 'strict';
+  /** Minimum cash threshold (SDG) - allow exchanges if drawer cash >= this amount */
+  min_cash_threshold: number;
+  /** Whether admins can override strict validation */
+  allow_admin_override: boolean;
+  /** Whether to use real-time expected cash calculation vs opening amount */
+  use_realtime_calculation: boolean;
+  /** Cash calculation template: 'shift_only' or 'shift_with_reserve' */
+  cash_calculation_mode: 'shift_only' | 'shift_with_reserve';
+  /** Cash reserve amount (SDG) - added to shift cash when using 'shift_with_reserve' */
+  cash_reserve_amount: number;
 }
 
 // ─── Input Types (for create/update operations) ───
@@ -541,8 +617,12 @@ export interface CreateTransactionInput {
   payment_method: PaymentMethod;
   bank_name?: string;
   reference_number?: string;
+  /** Gross amount received in the bank for a pure bank-transfer sale. */
+  bank_received_amount?: number;
   cash_tendered?: number;
   payment?: string | Record<string, number>; // JSON string or object for mixed payments
+  /** Excess bank payment, persisted as an independent linked exchange record. */
+  cash_exchange?: CreateCashExchangeInput;
   customer_name?: string;
   customer_phone?: string;
   notes?: string;
@@ -870,10 +950,12 @@ export interface ShiftExpectedCash {
   total_cash_returns: number;
   total_cash_expenses: number;
   total_cash_drops: number;
+  total_cash_exchanges: number;
   expected_cash: number;
   // Bank summary
   total_bank_sales: number;
   total_bank_returns: number;
+  total_bank_exchanges: number;
   // Combined totals
   total_sales: number;
   total_returns: number;
