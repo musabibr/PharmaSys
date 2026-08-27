@@ -19,7 +19,7 @@ export function registerCashExchangeHandlers(router: IpcRouter, services: Servic
       appliedFilters.user_id = user!.id;
     }
     return await services.cashExchange.getAll(appliedFilters);
-  }, { permission: 'finance.cash_exchanges.view' });
+  }, { anyPermission: ['finance.cash_exchanges.view', 'finance.cash_exchanges.view_own'] });
 
   router.handle('cashExchanges:getById', async (user, id: number) => {
     const perms = resolvePermissions(user!);
@@ -37,7 +37,7 @@ export function registerCashExchangeHandlers(router: IpcRouter, services: Servic
       }
     }
     return exchange;
-  }, { permission: 'finance.cash_exchanges.view' });
+  }, { anyPermission: ['finance.cash_exchanges.view', 'finance.cash_exchanges.view_own'] });
 
   router.handle('cashExchanges:create', async (user, data: CreateCashExchangeInput) => {
     return await services.cashExchange.create(data, user!.id, user!.role);
@@ -45,7 +45,7 @@ export function registerCashExchangeHandlers(router: IpcRouter, services: Servic
 
   router.handle('cashExchanges:getValidationSettings', async () => {
     return await services.cashExchange.getValidationSettings();
-  }, { permission: 'finance.cash_exchanges.view' });
+  }, { anyPermission: ['finance.cash_exchanges.view', 'finance.cash_exchanges.view_own', 'finance.cash_exchanges.manage'] });
 
   router.handle('cashExchanges:updateValidationSettings', async (user, settings: Partial<CashExchangeValidationSettings>) => {
     return await services.cashExchange.updateValidationSettings(settings, user!.id);
@@ -58,5 +58,5 @@ export function registerCashExchangeHandlers(router: IpcRouter, services: Servic
       user!.role,
       data.adminOverride || false
     );
-  }, { permission: 'finance.cash_exchanges.view' });
+  }, { anyPermission: ['finance.cash_exchanges.view', 'finance.cash_exchanges.view_own', 'finance.cash_exchanges.manage'] });
 }

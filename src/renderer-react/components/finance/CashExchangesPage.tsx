@@ -104,6 +104,7 @@ export function CashExchangesPage() {
   const { currentUser } = useAuthStore();
   const { currentShift } = useShiftStore();
   const canManage = usePermission('finance.cash_exchanges.manage');
+  const canViewOwn = usePermission('finance.cash_exchanges.view_own');
   const canOverrideAdmin = usePermission('finance.cash_exchanges.manage') && currentUser?.role === 'admin';
   const getBankConfig = useSettingsStore((s) => s.getBankConfig);
 
@@ -236,6 +237,7 @@ export function CashExchangesPage() {
         search: f.search || undefined,
         bank_name: f.bankName || undefined,
         customer_name: f.customerName || undefined,
+        user_id: canViewOwn && !canManage ? currentUser?.id : undefined,
       });
       setData(result);
     } catch (err: any) {
@@ -243,7 +245,7 @@ export function CashExchangesPage() {
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, [t, canViewOwn, canManage, currentUser?.id]);
 
   useEffect(() => {
     loadData(page, filters);

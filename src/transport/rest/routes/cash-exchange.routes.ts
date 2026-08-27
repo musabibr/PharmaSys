@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type { ServiceContainer } from '../../../core/services/index';
-import { requireMicroPerm } from '../../middleware/auth.middleware';
+import { requireAnyMicroPerm, requireMicroPerm } from '../../middleware/auth.middleware';
 import { handle } from '../../middleware/route-helpers';
 import { resolvePermissions, hasPermission } from '../../../core/common/permissions';
 import { PermissionError } from '../../../core/types/errors';
@@ -8,7 +8,7 @@ import { PermissionError } from '../../../core/types/errors';
 export function cashExchangeRoutes(services: ServiceContainer): Router {
   const router = Router();
 
-  router.get('/', requireMicroPerm('finance.cash_exchanges.view'), handle(async (req, res) => {
+  router.get('/', requireAnyMicroPerm(['finance.cash_exchanges.view', 'finance.cash_exchanges.view_own']), handle(async (req, res) => {
     const perms = resolvePermissions(req.user!);
     const canViewAll = hasPermission(req.user!.role, perms, 'finance.cash_exchanges.view');
     const canViewOwn = hasPermission(req.user!.role, perms, 'finance.cash_exchanges.view_own');
@@ -24,7 +24,7 @@ export function cashExchangeRoutes(services: ServiceContainer): Router {
     res.json({ data: await services.cashExchange.getAll(filters) });
   }));
 
-  router.get('/settings/validation', requireMicroPerm('finance.cash_exchanges.view'), handle(async (req, res) => {
+  router.get('/settings/validation', requireAnyMicroPerm(['finance.cash_exchanges.view', 'finance.cash_exchanges.view_own', 'finance.cash_exchanges.manage']), handle(async (req, res) => {
     res.json({ data: await services.cashExchange.getValidationSettings() });
   }));
 
@@ -32,7 +32,7 @@ export function cashExchangeRoutes(services: ServiceContainer): Router {
     res.json({ data: await services.cashExchange.updateValidationSettings(req.body, req.user!.id) });
   }));
 
-  router.post('/validate/cash-availability', requireMicroPerm('finance.cash_exchanges.view'), handle(async (req, res) => {
+  router.post('/validate/cash-availability', requireAnyMicroPerm(['finance.cash_exchanges.view', 'finance.cash_exchanges.view_own', 'finance.cash_exchanges.manage']), handle(async (req, res) => {
     res.json({ data: await services.cashExchange.validateCashAvailability(
       req.body.amount,
       req.body.shiftId,
@@ -41,7 +41,7 @@ export function cashExchangeRoutes(services: ServiceContainer): Router {
     )});
   }));
 
-  router.get('/:id', requireMicroPerm('finance.cash_exchanges.view'), handle(async (req, res) => {
+  router.get('/:id', requireAnyMicroPerm(['finance.cash_exchanges.view', 'finance.cash_exchanges.view_own']), handle(async (req, res) => {
     const perms = resolvePermissions(req.user!);
     const canViewAll = hasPermission(req.user!.role, perms, 'finance.cash_exchanges.view');
     const canViewOwn = hasPermission(req.user!.role, perms, 'finance.cash_exchanges.view_own');

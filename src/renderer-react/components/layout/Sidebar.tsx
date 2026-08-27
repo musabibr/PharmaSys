@@ -62,7 +62,7 @@ function useNavSections(): NavSection[] {
 
   const canViewTransactions = hasAnyPerm(['finance.transactions.view', 'finance.transactions.view_own']);
   const canViewExpenses     = hasPerm('finance.expenses.view');
-  const canViewCashExchanges = hasAnyPerm(['finance.cash_exchanges.view', 'finance.cash_exchanges.manage']);
+  const canViewCashExchanges = hasAnyPerm(['finance.cash_exchanges.view', 'finance.cash_exchanges.view_own', 'finance.cash_exchanges.manage']);
   const canViewShifts       = hasAnyPerm(['finance.shifts.view', 'finance.shifts.view_own']);
   const canViewPurchases    = hasAnyPerm(['purchases.view', 'purchases.manage']);
   const canSales            = hasPerm('pos.sales');
