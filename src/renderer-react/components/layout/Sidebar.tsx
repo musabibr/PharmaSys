@@ -30,6 +30,7 @@ import {
   ChevronsRight,
   Zap,
   ClipboardList,
+  ArrowLeftRight,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -61,12 +62,13 @@ function useNavSections(): NavSection[] {
 
   const canViewTransactions = hasAnyPerm(['finance.transactions.view', 'finance.transactions.view_own']);
   const canViewExpenses     = hasPerm('finance.expenses.view');
+  const canViewCashExchanges = hasAnyPerm(['finance.cash_exchanges.view', 'finance.cash_exchanges.manage']);
   const canViewShifts       = hasAnyPerm(['finance.shifts.view', 'finance.shifts.view_own']);
   const canViewPurchases    = hasAnyPerm(['purchases.view', 'purchases.manage']);
   const canSales            = hasPerm('pos.sales');
   const canCashFlow         = hasPerm('reports.cash_flow');
   const canProfitLoss       = hasPerm('reports.profit_loss');
-  const canStockLedger      = hasPerm('inventory.valuation');
+  const canStockLedger      = hasPerm('inventory.stock_ledger');
 
   return [
     {
@@ -93,10 +95,11 @@ function useNavSections(): NavSection[] {
       items: [
         { label: 'Transactions', icon: FileText, path: '/transactions', visible: canViewTransactions },
         { label: 'Expenses', icon: Wallet, path: '/expenses', visible: canViewExpenses },
+        { label: 'Cash Exchanges', icon: ArrowLeftRight, path: '/cash-exchanges', visible: canViewCashExchanges },
         { label: 'Purchases', icon: ShoppingBag, path: '/purchases', visible: canViewPurchases },
         { label: 'Shifts', icon: Clock, path: '/shifts', visible: canViewShifts },
       ],
-      visible: () => canViewTransactions || canViewExpenses || canViewShifts || canViewPurchases,
+      visible: () => canViewTransactions || canViewExpenses || canViewCashExchanges || canViewPurchases || canViewShifts,
     },
     {
       title: 'REPORTS',

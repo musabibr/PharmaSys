@@ -28,6 +28,7 @@ export type PermissionKey =
   | 'inventory.expiry_alerts'
   | 'inventory.low_stock'
   | 'inventory.view_costs'
+  | 'inventory.stock_ledger'
   // Finance
   | 'finance.transactions.view'
   | 'finance.transactions.view_own'
@@ -40,6 +41,9 @@ export type PermissionKey =
   | 'finance.expense_categories'
   | 'finance.cash_drops.view'
   | 'finance.cash_drops.manage'
+  | 'finance.cash_exchanges.view'
+  | 'finance.cash_exchanges.view_own'
+  | 'finance.cash_exchanges.manage'
   | 'finance.shifts.view'
   | 'finance.shifts.view_own'
   | 'finance.shifts.manage'
@@ -101,6 +105,7 @@ export const PERMISSION_REGISTRY: PermissionGroup[] = [
       { key: 'inventory.expiry_alerts',        label: 'Expiry Alerts',           description: 'View expiry and expired product alerts' },
       { key: 'inventory.low_stock',            label: 'Low Stock Alerts',        description: 'View low stock warnings' },
       { key: 'inventory.view_costs',           label: 'View Cost Prices',        description: 'See cost prices, margins, and cost valuations in inventory pages' },
+      { key: 'inventory.stock_ledger',         label: 'Stock Ledger',            description: 'View detailed stock movement history' },
     ],
   },
   {
@@ -118,6 +123,9 @@ export const PERMISSION_REGISTRY: PermissionGroup[] = [
       { key: 'finance.expense_categories',   label: 'Manage Expense Categories',  description: 'Create expense categories' },
       { key: 'finance.cash_drops.view',      label: 'View Cash Drops',            description: 'View cash drop history' },
       { key: 'finance.cash_drops.manage',    label: 'Create Cash Drops',          description: 'Record cash drops' },
+      { key: 'finance.cash_exchanges.view',  label: 'View All Cash Exchanges',   description: 'View all bank-to-cash exchange history' },
+      { key: 'finance.cash_exchanges.view_own', label: 'View Own Cash Exchanges',  description: 'View only own cash exchanges' },
+      { key: 'finance.cash_exchanges.manage', label: 'Create Cash Exchanges',     description: 'Record bank-to-cash exchanges' },
       { key: 'finance.shifts.view',            label: 'View All Shifts',            description: 'View all shift history and reports' },
       { key: 'finance.shifts.view_own',       label: 'View Own Shifts',            description: 'View own shift history and reports' },
       { key: 'finance.shifts.manage',         label: 'Open Shifts',                description: 'Open new shifts' },
@@ -234,6 +242,7 @@ export function resolvePermissions(user: PermissionUser): Set<PermissionKey> {
   perms.add('finance.shifts.view_own');
   perms.add('finance.shifts.manage');
   perms.add('finance.shifts.close');
+  perms.add('finance.cash_exchanges.view_own');
 
   return perms;
 }
