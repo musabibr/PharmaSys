@@ -156,6 +156,8 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
     if (!currentShift?.id || !validationSettings?.enabled) return;
 
     const exchangeAmount = (parseInt(bankReceivedAmount, 10) || 0) - totalAmount;
+    console.log('Validating cash exchange:', { exchangeAmount, drawerBalance, currentShift });
+    
     try {
       const validation = await api.cashExchanges.validateCashAvailability({
         amount: exchangeAmount,
@@ -163,6 +165,7 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
         adminOverride: adminOverride
       });
 
+      console.log('Validation result:', validation);
       setDrawerBalance(validation.availableCash);
 
       if (validation.warning) {
@@ -178,6 +181,7 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
             required: validation.requiredCash
           });
         }
+        console.log('Warning message:', warningMessage);
         setCashExchangeWarning(warningMessage);
         setShowCashExchangeWarning(true);
       } else {
@@ -185,6 +189,7 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
         setShowCashExchangeWarning(false);
       }
     } catch (err: any) {
+      console.error('Validation error:', err);
       // In strict mode, this will throw an error
       if (validationSettings?.mode === 'strict') {
         let errorMessage = err.message || t('Cash exchange validation failed');
@@ -228,7 +233,10 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
     
     // Check cash exchange validation in strict mode
     if (paymentMethod === 'bank_transfer' && parsedBankReceivedAmount > totalAmount && validationSettings?.mode === 'strict' && showCashExchangeWarning && !adminOverride) {
-      return t('Cannot proceed with cash exchange - insufficient drawer balance');
+      return t('Insufficient cash in drawer. Available: {{available}} SDG, Required: {{required}} SDG', {
+        available: drawerBalance,
+        required: (parsedBankReceivedAmount - totalAmount)
+      });
     }
     
     return null;
