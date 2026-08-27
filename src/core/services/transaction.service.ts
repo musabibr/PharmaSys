@@ -5,6 +5,7 @@ import type { ProductRepository }     from '../repositories/sql/product.reposito
 import type { BaseRepository }        from '../repositories/sql/base.repository';
 import { AuditRepository }            from '../repositories/sql/audit.repository';
 import type { SettingsRepository }    from '../repositories/sql/settings.repository';
+import type { CashExchangeService }   from './cash-exchange.service';
 import type { EventBus }              from '../events/event-bus';
 import type {
   Transaction, TransactionFilters, PaginatedResult,
@@ -42,7 +43,8 @@ export class TransactionService {
     private readonly base:        BaseRepository,
     private readonly bus:         EventBus,
     private readonly settingsRepo?: SettingsRepository,
-    private readonly auditRepo?:  AuditRepository
+    private readonly auditRepo?:  AuditRepository,
+    private readonly cashExchangeService?: CashExchangeService,
   ) {}
 
   private async _shiftsEnabled(): Promise<boolean> {
@@ -97,7 +99,20 @@ export class TransactionService {
       try {
         return await this.base.inTransaction(async () => {
           const lines = await this._deductFIFO(data.items, userId);
-          return await this._commitTransaction(data, lines, userId, shiftId, null);
+          const sale = await this._commitTransaction(data, lines, userId, shiftId, null);
+          if (data.cash_exchange) {
+            if (!this.cashExchangeService) {
+              throw new InternalError('Cash exchange service is unavailable.');
+            }
+            sale.cash_exchange = await this.cashExchangeService.createForSale(
+              data.cash_exchange,
+              userId,
+              sale.id,
+              shiftId,
+              userRole || 'cashier',
+            );
+          }
+          return sale;
         });
       } catch (err) {
         if (err instanceof ConflictError && attempt < MAX_RETRIES - 1) {
@@ -724,6 +739,39 @@ export class TransactionService {
       // Soft warn only — some transfers may not have a ref yet
     }
 
+    if (payment_method === 'bank_transfer' && data.bank_received_amount !== undefined) {
+      const bankReceived = Money.round(Validate.positiveNumber(data.bank_received_amount, 'Bank amount received'));
+      if (bankReceived < total_amount) {
+        throw new ValidationError(
+          'Bank amount received must be at least the invoice total.',
+          'bank_received_amount',
+        );
+      }
+    }
+
+    if (data.cash_exchange) {
+      if (payment_method !== 'bank_transfer') {
+        throw new ValidationError(
+          'Cash exchange is available only for bank transfer payments.',
+          'cash_exchange',
+        );
+      }
+      if (data.bank_received_amount === undefined) {
+        throw new ValidationError(
+          'Bank amount received is required when recording a cash exchange.',
+          'bank_received_amount',
+        );
+      }
+      const bankReceived = Money.round(Validate.positiveNumber(data.bank_received_amount, 'Bank amount received'));
+      const exchangeAmount = Money.round(Validate.positiveNumber(data.cash_exchange.cash_amount, 'Cash exchange amount'));
+      if (bankReceived - total_amount !== exchangeAmount) {
+        throw new ValidationError(
+          'Cash exchange must equal the amount received above the invoice total.',
+          'cash_exchange',
+        );
+      }
+    }
+
     if (payment_method === 'mixed') {
       if (!data.payment) {
         throw new ValidationError('Mixed payment requires a payment breakdown', 'payment');
@@ -940,6 +988,20 @@ export class TransactionService {
     }
 
     const total      = subtotal - discount + tax;
+
+    // The cashier confirms a bank amount before stock/FIFO is committed. If
+    // the authoritative server total changed meanwhile, reject instead of
+    // recording an exchange that no longer equals the transfer excess.
+    if (data.transaction_type === 'sale' && data.cash_exchange) {
+      const bankReceived = Money.round(Validate.positiveNumber(data.bank_received_amount, 'Bank amount received'));
+      const exchangeAmount = Money.round(Validate.positiveNumber(data.cash_exchange.cash_amount, 'Cash exchange amount'));
+      if (bankReceived - total !== exchangeAmount) {
+        throw new ValidationError(
+          `The order total changed while checking out (was ${data.total_amount}, is now ${total}) — please review and retry.`,
+          'cash_exchange',
+        );
+      }
+    }
 
     // `data.cash_tendered` for a cash sale is the raw amount the cashier typed
     // as "amount received" — it is legitimately larger than `total` whenever

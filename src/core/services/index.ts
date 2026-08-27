@@ -15,6 +15,7 @@ import { BatchService }       from './batch.service';
 import { TransactionService } from './transaction.service';
 import { ShiftService }       from './shift.service';
 import { ExpenseService }     from './expense.service';
+import { CashExchangeService } from './cash-exchange.service';
 import { HeldSaleService }    from './held-sale.service';
 import { ReportService }      from './report.service';
 import { DashboardService }   from './dashboard.service';
@@ -34,6 +35,7 @@ export class ServiceContainer {
   private _transaction?: TransactionService;
   private _shift?:      ShiftService;
   private _expense?:    ExpenseService;
+  private _cashExchange?: CashExchangeService;
   private _heldSale?:   HeldSaleService;
   private _report?:     ReportService;
   private _dashboard?:  DashboardService;
@@ -107,7 +109,8 @@ export class ServiceContainer {
       this.repos.base,
       this.bus,
       this.repos.settings,
-      this.repos.audit
+      this.repos.audit,
+      this.cashExchange
     ));
   }
 
@@ -128,6 +131,15 @@ export class ServiceContainer {
       this.repos.shift,
       this.bus,
       this.repos.settings
+    ));
+  }
+
+  get cashExchange(): CashExchangeService {
+    return (this._cashExchange ??= new CashExchangeService(
+      this.repos.cashExchange,
+      this.repos.shift,
+      this.bus,
+      this.repos.settings,
     ));
   }
 
@@ -210,6 +222,7 @@ export {
   TransactionService,
   ShiftService,
   ExpenseService,
+  CashExchangeService,
   HeldSaleService,
   ReportService,
   DashboardService,

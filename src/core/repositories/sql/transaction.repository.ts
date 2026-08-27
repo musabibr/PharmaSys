@@ -1,6 +1,6 @@
 import type { BaseRepository } from './base.repository';
 import type { ITransactionRepository, ITransactionInsertData, ITransactionItemInsertData } from '../../types/repositories';
-import type { Transaction, TransactionItem, TransactionFilters, PaginatedResult, ReturnedQuantityMap, ProductSaleRecord, ProductSaleFilters } from '../../types/models';
+import type { Transaction, TransactionItem, TransactionFilters, PaginatedResult, ReturnedQuantityMap, ProductSaleRecord, ProductSaleFilters, CashExchange } from '../../types/models';
 import { PAGINATION } from '../../common/constants';
 
 export class TransactionRepository implements ITransactionRepository {
@@ -83,6 +83,16 @@ export class TransactionRepository implements ITransactionRepository {
       txn.items = await this.getItems(id);
       if (txn.transaction_type === 'sale') {
         txn.returns = await this.getReturnsByParent(id);
+        txn.cash_exchange = await this.base.getOne<CashExchange>(
+          `SELECT ce.*, u.username,
+                  t.transaction_number,
+                  t.is_voided AS linked_transaction_is_voided
+           FROM cash_exchanges ce
+           JOIN users u ON u.id = ce.user_id
+           LEFT JOIN transactions t ON t.id = ce.linked_transaction_id
+           WHERE ce.linked_transaction_id = ?`,
+          [id],
+        );
       }
     }
     return txn;

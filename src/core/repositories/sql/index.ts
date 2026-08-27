@@ -12,6 +12,7 @@ import { BatchRepository }       from './batch.repository';
 import { TransactionRepository } from './transaction.repository';
 import { ShiftRepository }       from './shift.repository';
 import { ExpenseRepository }     from './expense.repository';
+import { CashExchangeRepository } from './cash-exchange.repository';
 import { HeldSaleRepository }    from './held-sale.repository';
 import { ReportRepository }      from './report.repository';
 import { AuditRepository }       from './audit.repository';
@@ -32,6 +33,7 @@ export interface Repositories {
   transaction: TransactionRepository;
   shift:       ShiftRepository;
   expense:     ExpenseRepository;
+  cashExchange: CashExchangeRepository;
   heldSale:    HeldSaleRepository;
   report:      ReportRepository;
   audit:       AuditRepository;
@@ -64,6 +66,7 @@ export function createRepositories(
     transaction: new TransactionRepository(base),
     shift:       new ShiftRepository(base),
     expense:     new ExpenseRepository(base),
+    cashExchange: new CashExchangeRepository(base),
     heldSale:    new HeldSaleRepository(base),
     report,
     audit,
@@ -87,6 +90,7 @@ export {
   TransactionRepository,
   ShiftRepository,
   ExpenseRepository,
+  CashExchangeRepository,
   HeldSaleRepository,
   ReportRepository,
   AuditRepository,
