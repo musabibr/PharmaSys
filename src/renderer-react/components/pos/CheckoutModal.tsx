@@ -76,6 +76,7 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
   const [error, setError] = useState('');
   const canDiscount = usePermission('pos.discounts');
   const canBankTransfer = usePermission('pos.bank_transfer');
+  const canOverrideAdmin = usePermission('finance.cash_exchanges.manage') && isAdmin;
 
   // ---- Cash exchange validation state ----
   const [validationSettings, setValidationSettings] = useState<CashExchangeValidationSettings | null>(null);
@@ -164,7 +165,19 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
       setDrawerBalance(validation.availableCash);
 
       if (validation.warning) {
-        setCashExchangeWarning(validation.warning);
+        let warningMessage = validation.warning;
+        if (validation.warning === 'insufficient_cash_admin_override') {
+          warningMessage = t('Insufficient cash in drawer. Available: {{available}} SDG, Required: {{required}} SDG', {
+            available: validation.availableCash,
+            required: validation.requiredCash
+          });
+        } else if (validation.warning === 'insufficient_cash_warning') {
+          warningMessage = t('Insufficient cash in drawer. Available: {{available}} SDG, Required: {{required}} SDG', {
+            available: validation.availableCash,
+            required: validation.requiredCash
+          });
+        }
+        setCashExchangeWarning(warningMessage);
         setShowCashExchangeWarning(true);
       } else {
         setCashExchangeWarning('');
@@ -173,7 +186,14 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
     } catch (err: any) {
       // In strict mode, this will throw an error
       if (validationSettings?.mode === 'strict') {
-        setCashExchangeWarning(err.message || t('Cash exchange validation failed'));
+        let errorMessage = err.message || t('Cash exchange validation failed');
+        if (err.message === 'insufficient_cash_strict') {
+          errorMessage = t('Insufficient cash in drawer. Available: {{available}} SDG, Required: {{required}} SDG', {
+            available: drawerBalance,
+            required: exchangeAmount
+          });
+        }
+        setCashExchangeWarning(errorMessage);
         setShowCashExchangeWarning(true);
       }
     }
@@ -565,7 +585,7 @@ export function CheckoutModal({ open, onOpenChange, onComplete }: CheckoutModalP
                       <p className="text-sm text-red-900 dark:text-red-200 mt-1">
                         {cashExchangeWarning}
                       </p>
-                      {isAdmin && validationSettings?.allow_admin_override && (
+                      {canOverrideAdmin && validationSettings?.allow_admin_override && (
                         <div className="mt-2 flex items-center gap-2">
                           <input
                             type="checkbox"

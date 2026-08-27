@@ -167,6 +167,8 @@ export interface CashExchange {
   username?: string;
   transaction_number?: string | null;
   linked_transaction_is_voided?: number | null;
+  transaction_customer_name?: string | null;
+  transaction_customer_phone?: string | null;
 }
 
 export interface CreateCashExchangeInput {

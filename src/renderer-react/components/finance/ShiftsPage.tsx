@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { api } from '@/api';
 import { useShiftStore } from '@/stores/shift.store';
 import { useAuthStore } from '@/stores/auth.store';
-import type { Shift, ShiftExpectedCash } from '@/api/types';
+import type { Shift, ShiftExpectedCash, CashExchange } from '@/api/types';
 import { formatCurrency, cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -65,6 +65,7 @@ import {
   Printer,
   Landmark,
   Pencil,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { CloseShiftDialog } from './CloseShiftDialog';
 import { CashDropDialog } from './CashDropDialog';
@@ -321,6 +322,7 @@ function ShiftReportSheet({ open, onOpenChange, shift }: ShiftReportSheetProps) 
   const { t } = useTranslation();
 
   const [expected, setExpected] = useState<ShiftExpectedCash | null>(null);
+  const [cashExchanges, setCashExchanges] = useState<CashExchange[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -333,8 +335,14 @@ function ShiftReportSheet({ open, onOpenChange, shift }: ShiftReportSheetProps) 
 
     (async () => {
       try {
-        const data = await api.shifts.getExpectedCash(shift.id);
-        if (!cancelled) setExpected(data);
+        const [expectedData, exchangesData] = await Promise.all([
+          api.shifts.getExpectedCash(shift.id),
+          api.cashExchanges.getAll({ shift_id: shift.id })
+        ]);
+        if (!cancelled) {
+          setExpected(expectedData);
+          setCashExchanges(exchangesData.data);
+        }
       } catch (err: unknown) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : t('Failed to load shift report'));
@@ -446,6 +454,11 @@ function ShiftReportSheet({ open, onOpenChange, shift }: ShiftReportSheetProps) 
                     amount={expected.total_cash_drops}
                     sign="-"
                   />
+                  <ReportRow
+                    label={t('Cash Exchanges (given to customers)')}
+                    amount={expected.total_cash_exchanges}
+                    sign="-"
+                  />
                   <Separator className="my-1.5" />
                   <ReportRow
                     label={t('Expected Cash')}
@@ -476,6 +489,40 @@ function ShiftReportSheet({ open, onOpenChange, shift }: ShiftReportSheetProps) 
                     bold
                     highlight
                   />
+                </div>
+              </div>
+            )}
+
+            {/* Cash Exchanges Detail */}
+            {!loading && cashExchanges.length > 0 && (
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5">
+                  <ArrowLeftRight className="h-3.5 w-3.5" />
+                  {t('Cash Exchanges')}
+                </h3>
+                <div className="rounded-lg border p-3 space-y-2">
+                  {cashExchanges.map((exchange) => (
+                    <div key={exchange.id} className="border-b border-border pb-2 last:border-0 last:pb-0">
+                      <div className="flex justify-between items-start mb-1">
+                        <div className="flex-1">
+                          <p className="text-sm font-medium">{exchange.bank_name}</p>
+                          <p className="text-xs text-muted-foreground">{t('Ref: {{ref}}', { ref: exchange.reference_number })}</p>
+                          {exchange.customer_name && (
+                            <p className="text-xs text-muted-foreground">{exchange.customer_name}</p>
+                          )}
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm font-semibold tabular-nums">{formatCurrency(exchange.cash_amount)}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {formatDateTime(exchange.created_at)}
+                          </p>
+                        </div>
+                      </div>
+                      {exchange.notes && (
+                        <p className="text-xs text-muted-foreground mt-1">{exchange.notes}</p>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
@@ -529,6 +576,7 @@ function ShiftReportSheet({ open, onOpenChange, shift }: ShiftReportSheetProps) 
                 { label: `- ${t('Cash Returns')}`, value: formatCurrency(expected.total_cash_returns) },
                 { label: `- ${t('Cash Expenses')}`, value: formatCurrency(expected.total_cash_expenses) },
                 { label: `- ${t('Cash Withdrawals')}`, value: formatCurrency(expected.total_cash_drops) },
+                { label: `- ${t('Cash Exchanges (given to customers)')}`, value: formatCurrency(expected.total_cash_exchanges) },
                 { label: t('Expected Cash'), value: formatCurrency(expected.expected_cash) },
               ] : [];
               const bankRows = expected && (expected.total_bank_sales > 0 || expected.total_bank_returns > 0) ? [
@@ -536,6 +584,10 @@ function ShiftReportSheet({ open, onOpenChange, shift }: ShiftReportSheetProps) 
                 { label: `- ${t('Bank Returns')}`, value: formatCurrency(expected.total_bank_returns) },
                 { label: t('Net Bank'), value: formatCurrency(expected.total_bank_sales - expected.total_bank_returns) },
               ] : [];
+              const exchangeRows = cashExchanges.length > 0 ? cashExchanges.map(e => ({
+                label: `${e.bank_name} (${e.reference_number})`,
+                value: formatCurrency(e.cash_amount)
+              })) : [];
               const closingRows = shift.status === 'closed' && shift.actual_cash !== null ? [
                 { label: t('Actual Cash'), value: formatCurrency(shift.actual_cash) },
                 { label: t('Variance'), value: shift.variance_type === 'shortage'
@@ -562,6 +614,12 @@ function ShiftReportSheet({ open, onOpenChange, shift }: ShiftReportSheetProps) 
                   <h3>${t('Bank Summary')}</h3>
                   <table>
                     ${bankRows.map(r => `<tr><td>${r.label}</td><td class="num">${r.value}</td></tr>`).join('')}
+                  </table>
+                ` : ''}
+                ${exchangeRows.length > 0 ? `
+                  <h3>${t('Cash Exchanges')}</h3>
+                  <table>
+                    ${exchangeRows.map(r => `<tr><td>${r.label}</td><td class="num">${r.value}</td></tr>`).join('')}
                   </table>
                 ` : ''}
                 ${closingRows.length > 0 ? `

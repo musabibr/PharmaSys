@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   Plus,
@@ -10,6 +11,7 @@ import {
   Search,
   Wallet,
   AlertTriangle,
+  ExternalLink,
 } from 'lucide-react';
 import { api } from '@/api';
 import type { CashExchange, PaginatedResult, CashExchangeValidationSettings, CashAvailabilityValidation } from '@/api/types';
@@ -82,6 +84,8 @@ interface Filters {
   startDate: string;
   endDate: string;
   search: string;
+  bankName: string;
+  customerName: string;
 }
 
 function defaultFilters(): Filters {
@@ -89,14 +93,18 @@ function defaultFilters(): Filters {
     startDate: firstOfMonth(),
     endDate: todayStr(),
     search: '',
+    bankName: '',
+    customerName: '',
   };
 }
 
 export function CashExchangesPage() {
   const { t, i18n } = useTranslation();
+  const navigate = useNavigate();
   const { currentUser } = useAuthStore();
   const { currentShift } = useShiftStore();
   const canManage = usePermission('finance.cash_exchanges.manage');
+  const canOverrideAdmin = usePermission('finance.cash_exchanges.manage') && currentUser?.role === 'admin';
   const getBankConfig = useSettingsStore((s) => s.getBankConfig);
 
   const [loading, setLoading] = useState(true);
@@ -128,7 +136,6 @@ export function CashExchangesPage() {
   const [cashExchangeWarning, setCashExchangeWarning] = useState<string>('');
   const [showCashExchangeWarning, setShowCashExchangeWarning] = useState(false);
   const [adminOverride, setAdminOverride] = useState(false);
-  const isAdmin = currentUser?.role === 'admin';
 
   const activeBanks = getBankConfig().filter((b) => b.enabled);
 
@@ -184,7 +191,19 @@ export function CashExchangesPage() {
       setDrawerBalance(validation.availableCash);
 
       if (validation.warning) {
-        setCashExchangeWarning(validation.warning);
+        let warningMessage = validation.warning;
+        if (validation.warning === 'insufficient_cash_admin_override') {
+          warningMessage = t('Insufficient cash in drawer. Available: {{available}} SDG, Required: {{required}} SDG', {
+            available: validation.availableCash,
+            required: validation.requiredCash
+          });
+        } else if (validation.warning === 'insufficient_cash_warning') {
+          warningMessage = t('Insufficient cash in drawer. Available: {{available}} SDG, Required: {{required}} SDG', {
+            available: validation.availableCash,
+            required: validation.requiredCash
+          });
+        }
+        setCashExchangeWarning(warningMessage);
         setShowCashExchangeWarning(true);
       } else {
         setCashExchangeWarning('');
@@ -193,7 +212,14 @@ export function CashExchangesPage() {
     } catch (err: any) {
       // In strict mode, this will throw an error
       if (validationSettings?.mode === 'strict') {
-        setCashExchangeWarning(err.message || t('Cash exchange validation failed'));
+        let errorMessage = err.message || t('Cash exchange validation failed');
+        if (err.message === 'insufficient_cash_strict') {
+          errorMessage = t('Insufficient cash in drawer. Available: {{available}} SDG, Required: {{required}} SDG', {
+            available: drawerBalance,
+            required: amount
+          });
+        }
+        setCashExchangeWarning(errorMessage);
         setShowCashExchangeWarning(true);
       }
     }
@@ -208,6 +234,8 @@ export function CashExchangesPage() {
         start_date: f.startDate || undefined,
         end_date: f.endDate || undefined,
         search: f.search || undefined,
+        bank_name: f.bankName || undefined,
+        customer_name: f.customerName || undefined,
       });
       setData(result);
     } catch (err: any) {
@@ -356,6 +384,35 @@ export function CashExchangesPage() {
             />
           </div>
 
+          <Separator orientation="vertical" className="h-8 hidden sm:block" />
+
+          <div className="flex items-center gap-2">
+            <Label className="text-xs uppercase text-muted-foreground tracking-wider">{t('Bank')}</Label>
+            <Select value={filters.bankName} onValueChange={(v) => handleFilterChange('bankName', v)}>
+              <SelectTrigger className="h-9 w-[140px]">
+                <SelectValue placeholder={t('All')} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">{t('All')}</SelectItem>
+                {activeBanks.map((b) => (
+                  <SelectItem key={b.name} value={b.name}>
+                    {b.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Label className="text-xs uppercase text-muted-foreground tracking-wider">{t('Customer')}</Label>
+            <Input
+              placeholder={t('Customer name...')}
+              value={filters.customerName}
+              onChange={(e) => handleFilterChange('customerName', e.target.value)}
+              className="h-9 w-[160px]"
+            />
+          </div>
+
           <div className="flex-1" />
 
           <Button variant="ghost" size="icon" onClick={handleResetFilters} title={t('Reset Filters')}>
@@ -412,10 +469,16 @@ export function CashExchangesPage() {
                       {formatCurrency(ex.bank_amount)}
                     </TableCell>
                     <TableCell>
-                      {ex.customer_name ? (
+                      {ex.customer_name || ex.transaction_customer_name ? (
                         <div className="flex flex-col">
-                          <span className="text-sm font-medium">{ex.customer_name}</span>
-                          {ex.customer_phone && <span className="text-xs text-muted-foreground">{ex.customer_phone}</span>}
+                          <span className="text-sm font-medium">
+                            {ex.customer_name || ex.transaction_customer_name}
+                          </span>
+                          {(ex.customer_phone || ex.transaction_customer_phone) && (
+                            <span className="text-xs text-muted-foreground">
+                              {ex.customer_phone || ex.transaction_customer_phone}
+                            </span>
+                          )}
                         </div>
                       ) : (
                         <span className="text-muted-foreground italic text-xs">{t('None')}</span>
@@ -423,9 +486,15 @@ export function CashExchangesPage() {
                     </TableCell>
                     <TableCell>
                       {ex.transaction_number ? (
-                        <span className="font-mono text-xs px-2 py-1 bg-secondary rounded-md">
+                        <button
+                          type="button"
+                          onClick={() => navigate('/transactions', { state: { transactionId: ex.linked_transaction_id } })}
+                          className="font-mono text-xs px-2 py-1 bg-secondary rounded-md hover:bg-secondary/80 transition-colors flex items-center gap-1"
+                          title={t('Open transaction')}
+                        >
                           #{ex.transaction_number}
-                        </span>
+                          <ExternalLink className="h-3 w-3" />
+                        </button>
                       ) : (
                         <span className="text-muted-foreground italic text-xs">{t('Standalone')}</span>
                       )}
@@ -556,7 +625,7 @@ export function CashExchangesPage() {
                 <p className="text-sm text-red-900 dark:text-red-200 mt-1">
                   {cashExchangeWarning}
                 </p>
-                {isAdmin && validationSettings?.allow_admin_override && (
+                {canOverrideAdmin && validationSettings?.allow_admin_override && (
                   <div className="mt-2 flex items-center gap-2">
                     <input
                       type="checkbox"
