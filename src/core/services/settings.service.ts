@@ -16,6 +16,12 @@ const ALLOWED_KEYS = new Set([
   'account_lockout_duration_minutes', 'shifts_enabled',
   'recurring_generation_mode', 'recurring_generation_hour',
   'return_window_shifts', 'return_window_days', 'void_window_hours',
+  // Cash exchange validation
+  'cash_exchange_validation_enabled', 'cash_exchange_validation_mode',
+  'cash_exchange_min_threshold', 'cash_exchange_allow_admin_override',
+  'cash_exchange_use_realtime',
+  // Cash calculation template
+  'cash_calculation_mode', 'cash_reserve_amount',
 ]);
 
 export class SettingsService {

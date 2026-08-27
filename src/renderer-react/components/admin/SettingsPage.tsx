@@ -21,6 +21,7 @@ import {
   EyeOff,
   Upload,
   CalendarClock,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { api } from '@/api';
 import { useSettingsStore } from '@/stores/settings.store';
@@ -219,6 +220,16 @@ export function SettingsPage() {
   const [generationHour, setGenerationHour] = useState('0');
   const [savingGeneration, setSavingGeneration] = useState(false);
 
+  // ── Cash Exchange Validation Settings ─────────────────────────────────────
+  const [cashExchangeEnabled, setCashExchangeEnabled] = useState(true);
+  const [cashExchangeMode, setCashExchangeMode] = useState<'warning' | 'strict'>('warning');
+  const [cashExchangeMinThreshold, setCashExchangeMinThreshold] = useState('0');
+  const [cashExchangeAllowAdminOverride, setCashExchangeAllowAdminOverride] = useState(true);
+  const [cashExchangeUseRealtime, setCashExchangeUseRealtime] = useState(true);
+  const [cashCalculationMode, setCashCalculationMode] = useState<'shift_only' | 'shift_with_reserve'>('shift_only');
+  const [cashReserveAmount, setCashReserveAmount] = useState('0');
+  const [savingCashExchange, setSavingCashExchange] = useState(false);
+
   // ── Account Security — Change Password ────────────────────────────────────
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -260,6 +271,13 @@ export function SettingsPage() {
       setBackupInterval(s['auto_backup_hours'] || '2');
       setGenerationMode(s['recurring_generation_mode'] || 'startup');
       setGenerationHour(s['recurring_generation_hour'] || '0');
+      setCashExchangeEnabled(s['cash_exchange_validation_enabled'] !== 'false');
+      setCashExchangeMode((s['cash_exchange_validation_mode'] as 'warning' | 'strict') || 'warning');
+      setCashExchangeMinThreshold(s['cash_exchange_min_threshold'] || '0');
+      setCashExchangeAllowAdminOverride(s['cash_exchange_allow_admin_override'] !== 'false');
+      setCashExchangeUseRealtime(s['cash_exchange_use_realtime'] !== 'false');
+      setCashCalculationMode((s['cash_calculation_mode'] as 'shift_only' | 'shift_with_reserve') || 'shift_only');
+      setCashReserveAmount(s['cash_reserve_amount'] || '0');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t('Failed to load settings'));
     }
@@ -575,6 +593,25 @@ export function SettingsPage() {
     }
   }
 
+  async function handleSaveCashExchangeValidation() {
+    setSavingCashExchange(true);
+    try {
+      await api.settings.set('cash_exchange_validation_enabled', cashExchangeEnabled ? 'true' : 'false');
+      await api.settings.set('cash_exchange_validation_mode', cashExchangeMode);
+      await api.settings.set('cash_exchange_min_threshold', cashExchangeMinThreshold);
+      await api.settings.set('cash_exchange_allow_admin_override', cashExchangeAllowAdminOverride ? 'true' : 'false');
+      await api.settings.set('cash_exchange_use_realtime', cashExchangeUseRealtime ? 'true' : 'false');
+      await api.settings.set('cash_calculation_mode', cashCalculationMode);
+      await api.settings.set('cash_reserve_amount', cashReserveAmount);
+      toast.success(t('Cash exchange validation settings saved'));
+      await loadSettings();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('Failed to save settings'));
+    } finally {
+      setSavingCashExchange(false);
+    }
+  }
+
   async function handleChangePassword(e: React.FormEvent) {
     e.preventDefault();
 
@@ -673,6 +710,12 @@ export function SettingsPage() {
             <TabsTrigger value="banks" className="gap-1.5">
               <Landmark className="h-4 w-4" />
               {t('Bank Accounts')}
+            </TabsTrigger>
+          )}
+          {isAdmin && (
+            <TabsTrigger value="cash-exchange" className="gap-1.5">
+              <ArrowLeftRight className="h-4 w-4" />
+              {t('Cash Exchange Validation')}
             </TabsTrigger>
           )}
           {isAdmin && (
@@ -1177,6 +1220,147 @@ export function SettingsPage() {
                   </TableBody>
                 </Table>
               )}
+            </div>
+          </TabsContent>
+        )}
+
+        {/* ================================================================ */}
+        {/* Cash Exchange Validation Tab                                     */}
+        {/* ================================================================ */}
+        {isAdmin && (
+          <TabsContent value="cash-exchange" className="flex-1 overflow-hidden">
+            <div className="h-full overflow-y-auto p-4 space-y-6">
+              <section className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <ArrowLeftRight className="h-4 w-4 text-muted-foreground" />
+                  <h2 className="text-sm font-semibold">{t('Cash Exchange Validation')}</h2>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {t('Configure cash exchange validation to prevent drawer shortages')}
+                </p>
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="cash-exchange-enabled">{t('Enable cash exchange validation')}</Label>
+                      <p className="text-xs text-muted-foreground">
+                        {t('Validate drawer cash availability before allowing exchanges')}
+                      </p>
+                    </div>
+                    <Switch
+                      id="cash-exchange-enabled"
+                      checked={cashExchangeEnabled}
+                      onCheckedChange={setCashExchangeEnabled}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="cash-exchange-mode">{t('Validation mode')}</Label>
+                    <Select value={cashExchangeMode} onValueChange={(value: 'warning' | 'strict') => setCashExchangeMode(value)}>
+                      <SelectTrigger id="cash-exchange-mode">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="warning">{t('Warning mode shows alerts but allows proceeding')}</SelectItem>
+                        <SelectItem value="strict">{t('Strict mode blocks exchanges when cash is insufficient')}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="cash-exchange-threshold">{t('Minimum cash threshold (SDG)')}</Label>
+                    <Input
+                      id="cash-exchange-threshold"
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={cashExchangeMinThreshold}
+                      onChange={(e) => setCashExchangeMinThreshold(e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {t('Minimum cash that must remain in drawer after exchange')}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="cash-exchange-admin-override">{t('Allow admin override')}</Label>
+                      <p className="text-xs text-muted-foreground">
+                        {t('Allow administrators to bypass strict validation')}
+                      </p>
+                    </div>
+                    <Switch
+                      id="cash-exchange-admin-override"
+                      checked={cashExchangeAllowAdminOverride}
+                      onCheckedChange={setCashExchangeAllowAdminOverride}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="cash-exchange-realtime">{t('Use real-time cash calculation')}</Label>
+                      <p className="text-xs text-muted-foreground">
+                        {t('Calculate available cash from current shift in real-time')}
+                      </p>
+                    </div>
+                    <Switch
+                      id="cash-exchange-realtime"
+                      checked={cashExchangeUseRealtime}
+                      onCheckedChange={setCashExchangeUseRealtime}
+                    />
+                  </div>
+
+                  <Separator />
+
+                  <div className="space-y-2">
+                    <Label htmlFor="cash-calculation-mode">{t('Cash calculation template')}</Label>
+                    <Select value={cashCalculationMode} onValueChange={(value: 'shift_only' | 'shift_with_reserve') => setCashCalculationMode(value)}>
+                      <SelectTrigger id="cash-calculation-mode">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="shift_only">{t('Shift only - use current shift cash only')}</SelectItem>
+                        <SelectItem value="shift_with_reserve">{t('Shift + Reserve - add cash reserve to shift cash')}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      {t('Choose how to calculate available cash for exchanges')}
+                    </p>
+                  </div>
+
+                  {cashCalculationMode === 'shift_with_reserve' && (
+                    <div className="space-y-1.5">
+                      <Label htmlFor="cash-reserve-amount">{t('Cash reserve amount (SDG)')}</Label>
+                      <Input
+                        id="cash-reserve-amount"
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={cashReserveAmount}
+                        onChange={(e) => setCashReserveAmount(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {t('Amount of cash reserve to add to shift balance')}
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="pt-4">
+                    <Button
+                      onClick={handleSaveCashExchangeValidation}
+                      disabled={savingCashExchange}
+                      className="gap-2"
+                    >
+                      {savingCashExchange ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Save className="h-4 w-4" />
+                      )}
+                      {t('Save')}
+                    </Button>
+                  </div>
+                </div>
+              </section>
             </div>
           </TabsContent>
         )}
