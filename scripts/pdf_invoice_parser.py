@@ -40,6 +40,7 @@ UNIT_MAP = {
     'BOTELL':   'Bottle',
     'BOTTLE':   'Bottle',
     'BOTT':     'Bottle',
+    'BOTTL':    'Bottle',
     'BOT':      'Bottle',
     'BTL':      'Bottle',
     'TUB':      'Tube',
@@ -922,6 +923,235 @@ def _extract_via_words(pdf_path: str) -> list:
     return results
 
 
+# ─── Boxed-header layout (one text object per cell) ──────────────────────────
+#
+# Some invoice generators draw every header cell as its own box and write each
+# heading twice, Arabic over English ("فنصلا مسا" / "DESCRIPTION"). pdfplumber
+# then returns the headings as separate one-cell tables and the item table with
+# no header, and neighbouring headings can sit closer than the word fallback's
+# 15pt grouping gap (the "م" column merged into the name). Every cell's text
+# starts at its cell's left edge (padding included when blank characters are
+# kept), so the headings' left edges give the column boundaries directly.
+
+_TATWEEL = 'ـ'
+_SEPARATOR_CHARS = set('_-=—–. ')
+_NUMERIC_TOKEN_RE = re.compile(r'^[\d.,]*\d[\d.,]*%?$')
+
+
+def _normalise_label(text: str) -> str:
+    """Heading text for matching: no tatweel, presentation forms → base letters."""
+    import unicodedata
+    return unicodedata.normalize('NFKC', text.replace(_TATWEEL, '')).strip()
+
+
+# Extra heading spellings seen on boxed-header invoices (checked after the
+# shared patterns): "سنوب" is بونس stored reversed, DISC is a line discount %.
+_CELL_EXTRA_PATTERNS = [
+    ('bonus',    [r'بونس', r'سنوب']),
+    ('discount', [r'^DISC', r'Discount', r'خصم', r'مصخ']),
+]
+
+
+def _identify_cell_columns(columns: list) -> dict:
+    """Map semantic names to column indexes; each column has one heading per line."""
+    mapping = {}
+    for col_name, patterns in COLUMN_PATTERNS_ORDERED + _CELL_EXTRA_PATTERNS:
+        if col_name in mapping:
+            continue
+        for idx, col in enumerate(columns):
+            if idx in mapping.values():
+                continue
+            if any(re.search(pat, label, re.IGNORECASE) for label in col['labels'] for pat in patterns):
+                mapping[col_name] = idx
+                break
+    return mapping
+
+
+def parse_amount(val: str) -> float:
+    """Parse a money/quantity string keeping its decimals (3 at most); 0 when unreadable."""
+    s = re.sub(r'[^\d,.\-]', '', val.strip())
+    if not s or not re.search(r'\d', s):
+        return 0.0
+    if re.search(r'\.\d{3},', s) or (re.search(r'\.\d{3}$', s) and ',' not in s and s.count('.') > 1):
+        s = s.replace('.', '').replace(',', '.')  # European: 7.260,50
+    else:
+        s = s.replace(',', '')
+    try:
+        return abs(round(float(s), 3))
+    except ValueError:
+        return 0.0
+
+
+def _whole_if_integral(x: float):
+    return int(x) if x == int(x) else x
+
+
+def _reconcile_price(price: float, qty: float, total: float, discount_pct: float):
+    """The unit price consistent with the line total, and whether the line still disagrees.
+
+    Narrow price columns can cut the printed price ("158,400." for 158,400.00,
+    "12,840.3" for 12,840.30); the line total is printed in full, so when price
+    × quantity misses the total and the printed price is the start of
+    total / quantity, the derived price is the right one.
+    """
+    if qty <= 0 or total <= 0:
+        return price, False
+    keep = 1 - min(max(discount_pct, 0), 100) / 100
+    if keep <= 0:
+        return price, False
+    derived = round(total / (qty * keep), 3)
+    if price <= 0:
+        return derived, False
+    if abs(price * qty * keep - total) <= 0.01 * qty:
+        return price, False
+    printed = re.sub(r'\D', '', f'{price:.3f}'.rstrip('0').rstrip('.'))
+    exact = re.sub(r'\D', '', f'{derived:.3f}'.rstrip('0').rstrip('.'))
+    if printed and exact.startswith(printed):
+        return derived, False
+    return price, True
+
+
+def _cluster_lines(words: list) -> list:
+    """Group words into text lines by vertical overlap, each line sorted left to right."""
+    lines = []
+    for w in sorted(words, key=lambda w: (w['top'], w['x0'])):
+        centre = (w['top'] + w['bottom']) / 2
+        if lines and lines[-1]['top'] - 1 <= centre <= lines[-1]['bottom'] + 1:
+            line = lines[-1]
+            line['words'].append(w)
+            line['bottom'] = max(line['bottom'], w['bottom'])
+        else:
+            lines.append({'top': w['top'], 'bottom': w['bottom'], 'words': [w]})
+    for line in lines:
+        line['words'].sort(key=lambda w: w['x0'])
+        line['text'] = ' '.join(w['text'].strip() for w in line['words'] if w['text'].strip())
+    return lines
+
+
+def _cell_header(lines: list):
+    """Column slots from the heading line(s): [{'left', 'labels'}] sorted by left edge."""
+    def heading_cells(line):
+        return [{'left': w['x0'], 'right': w['x1'], 'label': _normalise_label(w['text'])}
+                for w in line['words'] if w['text'].strip()]
+
+    for i, line in enumerate(lines):
+        cells = heading_cells(line)
+        found = _identify_cell_columns([{'labels': [c['label']]} for c in cells])
+        if 'name' not in found or len(found) < 3:
+            continue
+        band = [cells]
+        # A second heading line right below (the English labels under the Arabic ones).
+        if i + 1 < len(lines) and lines[i + 1]['top'] - line['bottom'] < 8:
+            below = heading_cells(lines[i + 1])
+            if len(_identify_cell_columns([{'labels': [c['label']]} for c in below])) >= 3:
+                band.append(below)
+        columns = []
+        for row_cells in band:
+            for c in row_cells:
+                home = next((col for col in columns
+                             if col['left'] - 2 <= c['left'] < col['right'] and col['row'] != id(row_cells)), None)
+                if home:
+                    home['labels'].append(c['label'])
+                    home['left'] = min(home['left'], c['left'])
+                    home['right'] = max(home['right'], c['right'])
+                    home['row'] = id(row_cells)
+                else:
+                    columns.append({'left': c['left'], 'right': c['right'], 'labels': [c['label']], 'row': id(row_cells)})
+        columns.sort(key=lambda col: col['left'])
+        col_map = _identify_cell_columns(columns)
+        if 'index' in col_map and 'name' in col_map and ('quantity' in col_map or 'total' in col_map):
+            bottom = lines[i + len(band) - 1]['bottom']
+            return columns, col_map, bottom
+    return None
+
+
+def _slot_of(token: dict, columns: list) -> int:
+    """Column index for a token: numbers are right-aligned (use the right edge), text left-aligned."""
+    text = token['text'].strip()
+    x = token['x1'] - 0.5 if _NUMERIC_TOKEN_RE.match(text) else token['x0'] + 0.5
+    slot = -1
+    for idx, col in enumerate(columns):
+        if col['left'] <= x:
+            slot = idx
+    return slot
+
+
+def _extract_via_cells(pdf_path: str) -> list:
+    """Boxed-header invoices: columns from the heading cells' left edges."""
+    results = []
+    row_number = 0
+    layout = None  # carried to pages that do not repeat the heading
+
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            cell_lines = _cluster_lines(page.extract_words(keep_blank_chars=True))
+            header = _cell_header(cell_lines)
+            if header:
+                layout = header[:2]
+                body_top = header[2]
+            elif layout:
+                body_top = -1
+            else:
+                continue
+            columns, col_map = layout
+
+            tokens = [w for w in page.extract_words(keep_blank_chars=False) if (w['top'] + w['bottom']) / 2 > body_top]
+            last = None  # the previous record on this page and the line it came from
+            for line in _cluster_lines(tokens):
+                compact = line['text'].replace(' ', '')
+                if not compact or all(ch in _SEPARATOR_CHARS for ch in compact):
+                    last = None  # a rule ends the record: nothing below it continues the name
+                    continue
+
+                cells = [''] * len(columns)
+                for tok in line['words']:
+                    slot = _slot_of(tok, columns)
+                    if slot >= 0:
+                        cells[slot] = f"{cells[slot]} {tok['text']}".strip()
+
+                def cell(name):
+                    return cells[col_map[name]] if name in col_map else ''
+
+                name_val = cell('name')
+                if re.match(r'^\d{1,4}$', cell('index')) and name_val and not re.match(r'^[\d,.\s]+$', name_val):
+                    row_number += 1
+                    fixed_name = fix_reversed_arabic(name_val)
+                    qty = parse_amount(cell('quantity')) if 'quantity' in col_map else 1
+                    total = parse_amount(cell('total'))
+                    discount = parse_amount(cell('discount'))
+                    price, mismatch = _reconcile_price(parse_amount(cell('price')), qty, total, discount)
+                    if total == 0 and price > 0 and qty > 0:
+                        total = round(price * qty * (1 - min(discount, 100) / 100), 3)
+                    unit_info = parse_unit_string(cell('unit'))
+                    record = {
+                        'row_number': row_number,
+                        'name': fixed_name,
+                        'generic_name': extract_generic_name(fixed_name),
+                        'code': cell('code'),
+                        'expiry_date': convert_date(cell('expiry')),
+                        'parent_unit': unit_info['parent_unit'],
+                        'child_unit': unit_info['child_unit'],
+                        'conversion_factor': unit_info['conversion_factor'],
+                        'quantity': _whole_if_integral(qty),
+                        'cost_per_parent': _whole_if_integral(price),
+                        'line_total': _whole_if_integral(total),
+                        'bonus_qty': int(parse_amount(cell('bonus'))),
+                        'discount_pct': _whole_if_integral(discount),
+                        'validation_error': mismatch,
+                    }
+                    results.append(record)
+                    last = (record, line)
+                elif last and name_val and not any(c for i, c in enumerate(cells) if i != col_map['name']) \
+                        and line['top'] - last[1]['bottom'] < 0.6 * (last[1]['bottom'] - last[1]['top']):
+                    # The name wrapped onto a second line right under its record.
+                    last[0]['name'] += ' ' + fix_reversed_arabic(name_val)
+                    last[0]['generic_name'] = extract_generic_name(last[0]['name']) or last[0]['generic_name']
+                    last = (last[0], line)
+                # Anything else below the items (totals, amount in words, page footer) is not a line item.
+
+    return results
+
+
 def extract_rows(pdf_path: str) -> list:
     """Extract product rows from a PDF invoice.
 
@@ -1136,6 +1366,13 @@ def extract_rows(pdf_path: str) -> list:
             results = _extract_via_words(pdf_path)
         except Exception as e:
             sys.stderr.write(f'Warning: _extract_via_words failed: {e}\n')
+
+    # ── Last resort: boxed-header layout (headings as separate cells) ──
+    if not results:
+        try:
+            results = _extract_via_cells(pdf_path)
+        except Exception as e:
+            sys.stderr.write(f'Warning: _extract_via_cells failed: {e}\n')
 
     return results
 
