@@ -487,6 +487,23 @@ contextBridge.exposeInMainWorld('api', {
     merge:                  async (targetId, sourceIds)    => post(`/api/v1/purchases/${targetId}/merge`, { sourceIds }),
     getAllPendingItems:     async (filters)                => get(`/api/v1/purchases/pending-items${qs(filters)}`),
     getProductsBySupplier:  async (supplierId, filters)    => get(`/api/v1/purchases/suppliers/${supplierId}/products${qs(filters)}`),
+    getProductHistory:      async (productId, filters)     => get(`/api/v1/purchases/products/${productId}/history${qs(filters)}`),
+    matchContext:           async (productIds)             => post('/api/v1/purchases/match-context', { product_ids: productIds }),
+  },
+
+  // ════════════════════════════════════════
+  //  PURCHASE ORDERS
+  // ════════════════════════════════════════
+
+  purchaseOrders: {
+    list:           async (filters)     => get(`/api/v1/purchase-orders${qs(filters)}`),
+    getById:        async (id)          => get(`/api/v1/purchase-orders/${id}`),
+    create:         async (input)       => post('/api/v1/purchase-orders', input),
+    update:         async (id, input)   => put(`/api/v1/purchase-orders/${id}`, input),
+    send:           async (id)          => post(`/api/v1/purchase-orders/${id}/send`, {}),
+    shareText:      async (id)          => get(`/api/v1/purchase-orders/${id}/share-text`),
+    close:          async (id, reason)  => post(`/api/v1/purchase-orders/${id}/close`, { reason }),
+    receivePrefill: async (id)          => get(`/api/v1/purchase-orders/${id}/receive-prefill`),
   },
 
   // ════════════════════════════════════════

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { ServiceContainer } from '../../../core/services/index';
-import { requireMicroPerm, requireAdmin } from '../../middleware/auth.middleware';
+import { requireMicroPerm, requireAnyMicroPerm, requireAdmin } from '../../middleware/auth.middleware';
+import { assertProductUnitsAllowed } from '../../../core/common/purchase-permissions';
 import { handle }          from '../../middleware/route-helpers';
 import type { ExpensePaymentMethod } from '../../../core/types/models';
 
@@ -92,6 +93,7 @@ export function purchaseRoutes(services: ServiceContainer): Router {
   }));
 
   router.post('/:id/items', requireMicroPerm('purchases.manage'), handle(async (req, res) => {
+    assertProductUnitsAllowed(req.user!, req.body?.items);
     res.status(201).json({
       data: await services.purchase.addItemsToPurchase(
         Number(req.params.id), req.body.items, req.user!.id
@@ -116,7 +118,28 @@ export function purchaseRoutes(services: ServiceContainer): Router {
   }));
 
   router.post('/', requireMicroPerm('purchases.manage'), handle(async (req, res) => {
+    assertProductUnitsAllowed(req.user!, req.body?.items);
     res.status(201).json({ data: await services.purchase.createPurchase(req.body, req.user!.id) });
+  }));
+
+  // Match step: what each matched product is today (units, stock, prices, last cost).
+  router.post('/match-context', requireAnyMicroPerm(['purchases.manage', 'purchases.edit']), handle(async (req, res) => {
+    res.json({ data: await services.purchase.getMatchContext(req.body?.product_ids) });
+  }));
+
+  // "By product": every invoice line for one product.
+  router.get('/products/:id/history', requireMicroPerm('purchases.view'), handle(async (req, res) => {
+    const q = req.query;
+    const str = (v: unknown) => (typeof v === 'string' && v !== '' ? v : undefined);
+    const data = await services.productPurchaseHistory.getHistory(Number(req.params.id), {
+      start_date: str(q.start_date),
+      end_date: str(q.end_date),
+      supplier_id: str(q.supplier_id) !== undefined ? Number(q.supplier_id) : undefined,
+      payment_status: str(q.payment_status) as 'unpaid' | 'partial' | 'paid' | undefined,
+      in_stock_only: q.in_stock_only === 'true',
+      limit: str(q.limit) !== undefined ? Number(q.limit) : undefined,
+    });
+    res.json({ data });
   }));
 
   router.put('/:id', requireMicroPerm('purchases.edit'), handle(async (req, res) => {

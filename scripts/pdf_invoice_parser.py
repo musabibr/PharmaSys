@@ -251,8 +251,10 @@ def convert_date(date_str: str) -> str:
     return ''
 
 
-def clean_price(val: str) -> int:
-    """Parse a price string to whole SDG integer. Handles European format (7.260,50)."""
+def clean_price(val: str):
+    """Parse a price string. Whole amounts come back as int; fractions keep up
+    to 3 decimals, as PharmaSys stores costs (2,682.75 stays 2682.75).
+    Handles European format (7.260,50)."""
     s = val.strip()
     if not s:
         return 0
@@ -272,10 +274,16 @@ def clean_price(val: str) -> int:
         s = s.replace(',', '')
 
     try:
-        result = round(float(s))
-        return abs(result)  # prices can't be negative
+        result = abs(round(float(s), 3))  # prices can't be negative
+        return int(result) if result == int(result) else result
     except ValueError:
         return 0
+
+
+def _amount(x: float):
+    """An amount worked out from others, kept to 3 decimals (int when whole)."""
+    x = round(x, 3)
+    return int(x) if x == int(x) else x
 
 
 def clean_int(val: str) -> int:
@@ -460,24 +468,53 @@ def identify_columns(header_cells: list) -> dict:
     """
     mapping = {}
     assigned_indices = set()
+    variants = [_header_variants(cell) for cell in header_cells]
 
     # Process in priority order
     for col_name, patterns in COLUMN_PATTERNS_ORDERED:
-        for idx, cell in enumerate(header_cells):
-            if idx in assigned_indices:
+        for idx, texts in enumerate(variants):
+            if idx in assigned_indices or not texts:
                 continue
-            cell_text = str(cell).strip() if cell else ''
-            if not cell_text:
-                continue
-            for pat in patterns:
-                if re.search(pat, cell_text, re.IGNORECASE):
-                    mapping[col_name] = idx
-                    assigned_indices.add(idx)
-                    break
-            if col_name in mapping:
+            if any(re.search(pat, text, re.IGNORECASE) for pat in patterns for text in texts):
+                mapping[col_name] = idx
+                assigned_indices.add(idx)
                 break
 
     return mapping
+
+
+def _header_variants(cell) -> list:
+    """The ways a header cell can read: as a whole, with a wrapped word joined
+    back ("S/" + "N" is "S/N", "Bon" + "us" is "Bonus"), and line by line — a
+    heading often carries a second-language subtitle ("Item #" over "#").
+    Characters the PDF's font could not show (NUL and other controls) are dropped."""
+    text = str(cell or '')
+    text = re.sub(r'[\x00-\x09\x0b-\x1f​-‏�]', '', text).strip()
+    if not text:
+        return []
+    lines = [ln.strip() for ln in text.split('\n') if ln.strip()]
+    out = [' '.join(lines), ''.join(lines)] + lines
+    seen = set()
+    return [t for t in out if not (t in seen or seen.add(t))]
+
+
+def _infer_index_column(table: list, header_row_idx: int, col_map: dict) -> dict:
+    """When no heading names the row-number column, find it from the data: a
+    column left of the name whose cells run 1, 2, 3... down the first rows."""
+    if 'index' in col_map or 'name' not in col_map:
+        return col_map
+    rows = [r for r in table[header_row_idx + 1:] if r and any(c for c in r)][:12]
+    if len(rows) < 2:
+        return col_map
+    taken = set(col_map.values())
+    for idx in range(col_map['name']):
+        if idx in taken:
+            continue
+        values = [str(r[idx] or '').strip() if idx < len(r) else '' for r in rows]
+        numbers = [int(v) for v in values if re.fullmatch(r'\d{1,4}', v)]
+        if len(numbers) >= max(2, int(len(rows) * 0.8)) and numbers == sorted(numbers) and len(set(numbers)) == len(numbers):
+            return {**col_map, 'index': idx}
+    return col_map
 
 
 def identify_columns_positional(header_cells: list, num_cols: int) -> dict:
@@ -891,9 +928,9 @@ def _extract_via_words(pdf_path: str) -> list:
                     expiry_val = get_cell('expiry')
 
                     if cost == 0 and total > 0 and qty > 0:
-                        cost = total // qty
+                        cost = _amount(total / qty)
                     if total == 0 and cost > 0 and qty > 0:
-                        total = cost * qty
+                        total = _amount(cost * qty)
 
                     results.append({
                         'row_number': row_number,
@@ -1250,6 +1287,8 @@ def extract_rows(pdf_path: str) -> list:
                 if col_map is None:
                     continue
 
+                col_map = _infer_index_column(table, header_row_idx, col_map)
+
                 # Remember for cross-page continuity
                 last_col_map = col_map
                 last_num_cols = num_cols
@@ -1310,11 +1349,11 @@ def extract_rows(pdf_path: str) -> list:
 
                         # Infer cost from total/qty if cost is missing but total exists
                         if cost == 0 and total > 0 and qty > 0:
-                            cost = total // qty
+                            cost = _amount(total / qty)
 
                         # Infer total from cost×qty if total is missing
                         if total == 0 and cost > 0 and qty > 0:
-                            total = cost * qty
+                            total = _amount(cost * qty)
 
                         # Validation: does qty × cost ≈ total?
                         validation_error = False

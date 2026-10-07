@@ -25,6 +25,7 @@ import { registerBackupHandlers }      from './handlers/backup.handler';
 import { registerPurchaseHandlers }          from './handlers/purchase.handler';
 import { registerRecurringExpenseHandlers }  from './handlers/recurring-expense.handler';
 import { registerCycleCountHandlers }        from './handlers/cycle-count.handler';
+import { registerPurchaseOrderHandlers }     from './handlers/purchase-order.handler';
 
 export function registerAllHandlers(
   ipcMain: IpcMain,
@@ -51,4 +52,5 @@ export function registerAllHandlers(
   registerPurchaseHandlers(router, services);
   registerRecurringExpenseHandlers(router, services);
   registerCycleCountHandlers(router, services);
+  registerPurchaseOrderHandlers(router, services);
 }

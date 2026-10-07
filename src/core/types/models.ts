@@ -1011,10 +1011,13 @@ export interface Purchase {
   alert_days_before: number;
   notes: string | null;
   user_id: number;
+  /** The purchase order this invoice delivers (L4). */
+  purchase_order_id?: number | null;
   created_at: string;
   updated_at: string;
   // Joined fields
   supplier_name?: string;
+  po_number?: string | null;
   username?: string;
   items?: PurchaseItem[];
   payments?: PurchasePayment[];
@@ -1134,6 +1137,36 @@ export interface CreatePurchaseItemInput {
   selling_price_child?: number;
   expiry_date: string;
   batch_number?: string;
+  /**
+   * Match step: give the matched product (product_id) the invoice's units
+   * before this line is received. `rescale_stock` says what existing stock
+   * keeps when the conversion factor changes: its unit count (default) or its
+   * pack count.
+   */
+  product_units?: {
+    parent_unit: string;
+    child_unit?: string | null;
+    conversion_factor?: number;
+    rescale_stock?: 'keep_units' | 'keep_packs';
+  };
+}
+
+/** A matched product as the purchase Match step compares it with an invoice line. */
+export interface PurchaseMatchContext {
+  product_id: number;
+  parent_unit: string;
+  child_unit: string;
+  conversion_factor: number;
+  /** Units on hand in every batch (any status). */
+  stock_base: number;
+  /** Price charged now (FIFO sellable batch), else the last batch's price; null if never priced. */
+  price: number | null;
+  price_child: number | null;
+  price_source: 'current' | 'last' | null;
+  /** Last invoice cost per pack, scaled to today's pack size. */
+  last_cost_parent: number | null;
+  last_cost_date: string | null;
+  last_cost_supplier: string | null;
 }
 
 export interface CreatePaymentPlanInput {
@@ -1181,6 +1214,8 @@ export interface CreatePurchaseInput {
     reference_number?: string;
   };
   pending_items?: Array<{ raw_data: string; notes?: string }>;
+  /** The purchase order this invoice delivers (L4). */
+  purchase_order_id?: number | null;
   force_confirm_mismatch?: boolean;
   idempotency_key?: string;
 }

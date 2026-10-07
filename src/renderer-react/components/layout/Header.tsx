@@ -51,7 +51,20 @@ const BREADCRUMB_MAP: Record<string, string> = {
   '/audit': 'Audit Log',
   '/settings': 'Settings',
   '/purchases': 'Purchases',
+  '/cash-exchanges': 'Cash Exchanges',
+  '/device-setup': 'Device Setup',
+  '/inventory/quick-entry': 'Quick Stock Entry',
+  '/inventory/price-update': 'Bulk Price Update',
 };
+
+/** The page's label: an exact route, else its section (e.g. a product's page under Inventory). */
+function breadcrumbFor(pathname: string): string {
+  if (BREADCRUMB_MAP[pathname]) return BREADCRUMB_MAP[pathname];
+  const section = Object.keys(BREADCRUMB_MAP)
+    .filter(p => p !== '/' && pathname.startsWith(`${p}/`))
+    .sort((a, b) => b.length - a.length)[0];
+  return section ? BREADCRUMB_MAP[section] : 'Dashboard';
+}
 
 interface HeaderProps {
   onChangePassword?: () => void;
@@ -81,7 +94,7 @@ export function Header({ onChangePassword }: HeaderProps) {
   const conn = useConnectionStatus();
 
   // Resolve breadcrumb label from current path
-  const breadcrumbLabel = BREADCRUMB_MAP[pathname] || 'Dashboard';
+  const breadcrumbLabel = breadcrumbFor(pathname);
 
   // User display info
   const displayName = currentUser?.full_name || currentUser?.username || '';

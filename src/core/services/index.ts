@@ -25,6 +25,8 @@ import { BackupService }      from './backup.service';
 import { PurchaseService }          from './purchase.service';
 import { RecurringExpenseService }  from './recurring-expense.service';
 import { CycleCountService }        from './cycle-count.service';
+import { PurchaseOrderService }     from './purchase-order.service';
+import { ProductPurchaseHistoryService } from './product-purchase-history.service';
 
 export class ServiceContainer {
   private _auth?:        AuthService;
@@ -45,6 +47,8 @@ export class ServiceContainer {
   private _purchase?:          PurchaseService;
   private _recurringExpense?:  RecurringExpenseService;
   private _cycleCount?:        CycleCountService;
+  private _purchaseOrder?:     PurchaseOrderService;
+  private _productPurchaseHistory?: ProductPurchaseHistoryService;
 
   constructor(
     private readonly repos: Repositories,
@@ -200,7 +204,33 @@ export class ServiceContainer {
       this.bus,
       this.repos.product,
       this.repos.category,
+      {
+        attach: (purchaseId, poId, supplierId) => this.purchaseOrder.attachInvoice(purchaseId, poId, supplierId),
+        relink: async (purchaseId, poId) => { await this.repos.purchaseOrder.linkPurchase(purchaseId, poId); },
+      },
+      {
+        // The same update the product form makes: child prices follow the new
+        // pack size, and stock keeps its unit or pack count as chosen.
+        apply: async (productId, units, userId) => {
+          await this.product.update(productId, {
+            parent_unit: units.parent_unit,
+            child_unit: units.child_unit,
+            conversion_factor: units.conversion_factor,
+            rescaleStock: units.rescale_stock,
+          }, userId);
+        },
+      },
     ));
+  }
+
+  get purchaseOrder(): PurchaseOrderService {
+    return (this._purchaseOrder ??= new PurchaseOrderService(
+      this.repos.base, this.repos.purchaseOrder, this.repos.supplier, this.repos.product, this.bus,
+    ));
+  }
+
+  get productPurchaseHistory(): ProductPurchaseHistoryService {
+    return (this._productPurchaseHistory ??= new ProductPurchaseHistoryService(this.repos.productPurchaseHistory, this.repos.product));
   }
 
   get cycleCount(): CycleCountService {

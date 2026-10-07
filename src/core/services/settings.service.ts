@@ -3,6 +3,10 @@ import type { EventBus }            from '../events/event-bus';
 import type { Setting }             from '../types/models';
 import { Validate }                 from '../common/validation';
 import { ValidationError }          from '../types/errors';
+import {
+  ROUNDING_RULES_SETTING, ROUNDING_DEFAULT_SETTING, ROUNDING_SMALL_DEFAULT_SETTING,
+  customRulesProblem, isRuleId,
+} from '../common/price-rounding';
 
 const ALLOWED_KEYS = new Set([
   'business_name', 'business_address', 'business_phone',
@@ -22,6 +26,8 @@ const ALLOWED_KEYS = new Set([
   'cash_exchange_use_realtime',
   // Cash calculation template
   'cash_calculation_mode', 'cash_reserve_amount',
+  // Selling-price rounding: the pharmacy's own rules and the ones offered first
+  ROUNDING_RULES_SETTING, ROUNDING_DEFAULT_SETTING, ROUNDING_SMALL_DEFAULT_SETTING,
 ]);
 
 export class SettingsService {
@@ -42,6 +48,13 @@ export class SettingsService {
     const k = Validate.requiredString(key, 'Setting key', 100);
     if (!ALLOWED_KEYS.has(k)) {
       throw new ValidationError(`Unknown setting key: ${k}`, 'key');
+    }
+    if (k === ROUNDING_RULES_SETTING) {
+      const problem = customRulesProblem(String(value));
+      if (problem) throw new ValidationError(problem, 'value');
+    }
+    if ((k === ROUNDING_DEFAULT_SETTING || k === ROUNDING_SMALL_DEFAULT_SETTING) && !isRuleId(value)) {
+      throw new ValidationError('Unknown rounding rule', 'value');
     }
     await this.repo.set(k, value);
     if (userId) {

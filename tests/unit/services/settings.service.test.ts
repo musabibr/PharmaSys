@@ -96,5 +96,25 @@ describe('SettingsService', () => {
       await expect(svc.set(key, 'test')).resolves.not.toThrow();
       expect(repo.set).toHaveBeenCalledWith(key, 'test');
     });
+
+    it('stores rounding rules only when every rule can be applied', async () => {
+      const { svc, repo } = createService();
+      const rule = { id: 'custom-a', name: 'Mine', block: 1000, bands: [{ upTo: 299, to: 0 }, { upTo: 999, to: 1000 }] };
+      await svc.set('price_rounding_rules', JSON.stringify([rule]), 1);
+      expect(repo.set).toHaveBeenCalledWith('price_rounding_rules', JSON.stringify([rule]));
+
+      await expect(svc.set('price_rounding_rules', 'not json', 1)).rejects.toThrow(ValidationError);
+      await expect(svc.set('price_rounding_rules', JSON.stringify([{ ...rule, bands: [{ upTo: 500, to: 0 }] }]), 1)).rejects.toThrow(/end of the block/);
+      await expect(svc.set('price_rounding_rules', JSON.stringify([{ ...rule, id: 'nearest-500' }]), 1)).rejects.toThrow(ValidationError);
+      await expect(svc.set('price_rounding_rules', JSON.stringify([rule, rule]), 1)).rejects.toThrow(ValidationError);
+    });
+
+    it('accepts a rounding rule id, or none, as the rule offered first', async () => {
+      const { svc, repo } = createService();
+      await svc.set('price_rounding_default', 'nearest-500', 1);
+      await svc.set('price_rounding_small_default', 'none', 1);
+      expect(repo.set).toHaveBeenCalledWith('price_rounding_small_default', 'none');
+      await expect(svc.set('price_rounding_default', '<b>', 1)).rejects.toThrow(ValidationError);
+    });
   });
 });

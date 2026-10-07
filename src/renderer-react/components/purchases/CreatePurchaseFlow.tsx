@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { Fragment, useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import {
@@ -8,9 +8,9 @@ import {
 } from 'lucide-react';
 import { api, throwIfError } from '@/api';
 import { loadProducts } from '@/stores/products.store';
-import type { ExpensePaymentMethod, Product, Category } from '@/api/types';
+import type { ExpensePaymentMethod, Product, Category, CreatePurchaseItemInput, PurchaseMatchContext } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings.store';
-import { formatCurrency, formatCost, parseCost, cn } from '@/lib/utils';
+import { formatCurrency, formatCost, formatDate, formatQuantity, parseCost, cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -35,6 +35,17 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { SupplierSelect } from './SupplierSelect';
 import { ProductForm } from '@/components/inventory/ProductForm';
+import { usePermission } from '@/hooks/usePermission';
+import { RoundingRulesDialog, usePriceRounding } from './RoundingRules';
+import {
+  MatchToolbar, PriceCells, ReceivedCell, UnitCells, UnitsChangeRow,
+  contextFromProduct, nowFromContext, type MatchSummary,
+} from './MatchColumns';
+import {
+  evaluatePick, guessCountsIn, invoiceHasUnits, lineBasis, normalizeUnits, pickForExisting, pickForNew,
+  suggestRescale, suggestSellChoice,
+  type InvoiceLine, type MatchPick, type PickResult, type PriceRules, type ProductNow, type Units,
+} from '../../../core/common/purchase-match';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -107,6 +118,8 @@ interface MatchedItem extends ImportItem {
   matchedProductId: number | null;
   matchedProductName: string;
   categoryName: string;
+  /** Units, reading of the invoice and prices decided in the Match step. */
+  pick?: MatchPick;
 }
 
 interface CreatePurchaseFlowProps {
@@ -117,6 +130,11 @@ interface CreatePurchaseFlowProps {
   initialSupplierId?: number;
   /** Pre-fill a manual item with this product (forces manualMode='items' and adds one row) */
   initialProductId?: number;
+  /** Cost and price for the pre-filled row (e.g. from the last purchase of the product). */
+  initialCost?: number;
+  initialSellPrice?: number;
+  /** Receive against a sent purchase order: its supplier, and the boxes still to come as rows. */
+  purchaseOrder?: { id: number; po_number: string; supplier_id: number; supplier_name?: string; items: Array<{ product_id: number; quantity: number; cost_parent: number | null }> };
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -165,6 +183,35 @@ function displayToIso(display: string): string {
   const [, d, m, y] = match;
   const fullYear = y.length === 2 ? `20${y}` : y;
   return `${fullYear}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+}
+
+/** An invoice line as written, for the Match step's decisions. */
+function lineOf(m: ImportItem): InvoiceLine {
+  return { parentUnit: m.parentUnit, childUnit: m.childUnit, convFactor: m.convFactor, quantity: m.quantity, cost: m.costPerParent };
+}
+
+/**
+ * A matched line's decision and the product it meets. A line without one yet
+ * (or decided for another product, or before its invoice values changed)
+ * gets the starting decision; an existing product not looked up yet has none.
+ */
+function decideLine(
+  m: MatchedItem,
+  ctx: Record<number, PurchaseMatchContext>,
+  rules: PriceRules,
+  importMarkupPct: number,
+): { pick: MatchPick; now: ProductNow | null } | null {
+  const line = lineOf(m);
+  const basis = lineBasis(line);
+  if (m.matchType === 'existing') {
+    const c = m.matchedProductId ? ctx[m.matchedProductId] : undefined;
+    if (!c || !m.matchedProductId) return null;
+    const now = nowFromContext(c);
+    const kept = m.pick && m.pick.productId === m.matchedProductId && m.pick.basis === basis;
+    return { pick: kept ? m.pick! : pickForExisting(m.matchedProductId, line, now, rules), now };
+  }
+  const kept = m.pick && m.pick.productId === null && m.pick.basis === basis;
+  return { pick: kept ? m.pick! : pickForNew(line, { sellPrice: m.sellPrice, sellPriceChild: m.sellPriceChild, importMarkupPct }), now: null };
 }
 
 function getItemErrors(item: ImportItem, t: (k: string) => string): string[] {
@@ -229,10 +276,12 @@ function Stepper({ currentStep, hasItems }: { currentStep: Step; hasItems: boole
 
 // ─── Component ─────────────────────────────────────────────────────────────
 
-export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId, initialProductId }: CreatePurchaseFlowProps) {
+export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId, initialProductId, initialCost, initialSellPrice, purchaseOrder }: CreatePurchaseFlowProps) {
   const { t } = useTranslation();
   const getSetting = useSettingsStore((s) => s.getSetting);
   const defaultMarkup = Number(getSetting('default_markup_percent', '20')) || 20;
+  const canChangeUnits = usePermission('inventory.products.manage');
+  const rounding = usePriceRounding();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const jsonInputRef = useRef<HTMLInputElement>(null);
 
@@ -264,6 +313,12 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
   const [editingItem, setEditingItem] = useState<ImportItem | null>(null);
   const [editedKeys, setEditedKeys] = useState<Set<string>>(new Set());
   const [parkedKeys, setParkedKeys] = useState<Set<string>>(new Set());
+  /** Matched products as they are today (units, stock, price, last cost), by id. */
+  const [matchCtx, setMatchCtx] = useState<Record<number, PurchaseMatchContext>>({});
+  const ctxRequested = useRef(new Set<number>());
+  /** Markup for prices worked out from the invoice cost. */
+  const [matchMarkup, setMatchMarkup] = useState(defaultMarkup);
+  const [rulesOpen, setRulesOpen] = useState(false);
 
   // Step 4: Purchase details
   const [supplierId, setSupplierId] = useState<number | null>(null);
@@ -320,6 +375,7 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
   const draftDecisionPending = useRef(false);
 
   const saveDraft = useCallback(() => {
+    if (purchaseOrder) return;
     try {
       const key = startManual ? DRAFT_KEY_MANUAL : DRAFT_KEY;
       const draft = {
@@ -328,29 +384,32 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
         supplierId, invoiceRef, purchaseDate, totalAmount, totalOverride,
         alertDays, notes, paymentType, paymentMethod, bankReference,
         installments, initialPayment, deferInstallments, initialPayMethod, initialPayRef,
-        manualItems, manualMode, savedAt: new Date().toISOString(),
+        manualItems, manualMode, matchMarkup, savedAt: new Date().toISOString(),
       };
       localStorage.setItem(key, JSON.stringify(draft));
     } catch {
       // localStorage unavailable — silently ignore
     }
   }, [
-    startManual, step, importItems, pdfFileName, matchedItems, parkedKeys, editedKeys,
+    purchaseOrder, startManual, step, importItems, pdfFileName, matchedItems, parkedKeys, editedKeys,
     supplierId, invoiceRef, purchaseDate, totalAmount, totalOverride,
     alertDays, notes, paymentType, paymentMethod, bankReference,
     installments, initialPayment, deferInstallments, initialPayMethod, initialPayRef,
-    manualItems, manualMode,
+    manualItems, manualMode, matchMarkup,
   ]);
 
   const clearDraft = useCallback(() => {
+    // An order receipt never wrote a draft, so it must not wipe the one the user parked.
+    if (purchaseOrder) return;
     try {
       localStorage.removeItem(DRAFT_KEY);
       localStorage.removeItem(DRAFT_KEY_MANUAL);
     } catch { /* ignore */ }
-  }, []);
+  }, [purchaseOrder]);
 
   // Check for existing draft on mount — only prompt if draft has meaningful content
   useEffect(() => {
+    if (purchaseOrder) return;
     try {
       const key = startManual ? DRAFT_KEY_MANUAL : DRAFT_KEY;
       const raw = localStorage.getItem(key);
@@ -401,6 +460,7 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
       if (d.initialPayRef !== undefined) setInitialPayRef(d.initialPayRef);
       if (d.manualItems) setManualItems(d.manualItems);
       if (d.manualMode) setManualMode(d.manualMode);
+      if (Number(d.matchMarkup) >= 0) setMatchMarkup(Number(d.matchMarkup));
       // Load products/categories needed for match/details steps
       loadProducts().then(p => setAllProducts(p)).catch(() => {});
       api.categories.getAll().then(c => setAllCategories(c)).catch(() => {});
@@ -450,10 +510,10 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
       setMatchedItems([]);
       // Pre-fill mode: when a productId was passed via "Re-order", start in items mode
       // with one row already populated so the user only fills qty/cost/expiry.
-      const reorderMode = initialProductId != null;
+      const reorderMode = initialProductId != null || !!purchaseOrder;
       setManualMode(reorderMode ? 'items' : 'total');
       setManualItems([]);
-      setSupplierId(initialSupplierId ?? null);
+      setSupplierId(purchaseOrder?.supplier_id ?? initialSupplierId ?? null);
       setInvoiceRef('');
       const todayIso = new Date().toISOString().slice(0, 10);
       setPurchaseDate(todayIso);
@@ -474,7 +534,30 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
       loadProducts().then(p => {
         setAllProducts(p);
         // Pre-fill a single ManualItem from initialProductId once products are loaded
-        if (initialProductId != null) {
+        if (purchaseOrder) {
+          const byId = new Map(p.map(x => [x.id, x]));
+          setManualItems(purchaseOrder.items.flatMap(line => {
+            const product = byId.get(line.product_id);
+            if (!product) return [];
+            const row: ManualItem = {
+              _key: crypto.randomUUID(),
+              productId: product.id,
+              productName: product.name,
+              quantity: line.quantity,
+              costPerParent: line.cost_parent && line.cost_parent > 0 ? line.cost_parent : 0,
+              sellPrice: product.selling_price ?? 0,
+              sellPriceChild: product.selling_price_child ?? 0,
+              expiryDate: '',
+              batchNumber: '',
+              barcode: product.barcode ?? '',
+              parentUnit: product.parent_unit ?? 'Box',
+              childUnit: product.child_unit ?? '',
+              convFactor: product.conversion_factor ?? 1,
+              categoryName: '',
+            };
+            return [row];
+          }));
+        } else if (initialProductId != null) {
           const product = p.find(x => x.id === initialProductId);
           if (product) {
             const seeded: ManualItem = {
@@ -482,8 +565,8 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
               productId: product.id,
               productName: product.name,
               quantity: 0,
-              costPerParent: 0,
-              sellPrice: 0,
+              costPerParent: initialCost && initialCost > 0 ? initialCost : 0,
+              sellPrice: initialSellPrice && initialSellPrice > 0 ? initialSellPrice : 0,
               sellPriceChild: 0,
               expiryDate: '',
               batchNumber: '',
@@ -499,7 +582,8 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
       }).catch(() => {});
       api.categories.getAll().then(c => setAllCategories(Array.isArray(c) ? c : [])).catch(() => {});
     }
-  }, [startManual, initialSupplierId, initialProductId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- the pre-fill cost/price only seed the row
+  }, [startManual, initialSupplierId, initialProductId, purchaseOrder]);
 
   // ─── Step 1: Import handlers ──────────────────────────────────────────────
 
@@ -840,9 +924,26 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
       ]);
       setAllProducts(products);
       setAllCategories(categories);
+      if (matchedItems.length === 0) setMatchMarkup(defaultMarkup);
+
+      // Coming back from Review keeps the matches made by hand (and their decisions
+      // while the line is unchanged); new or renamed lines are matched afresh.
+      const previous = new Map(matchedItems.map(m => [m._key, m]));
 
       // Auto-match each item
       const matched: MatchedItem[] = importItems.map(item => {
+        const before = previous.get(item._key);
+        if (before && before.name === item.name
+          && (before.matchType === 'new' || products.some(p => p.id === before.matchedProductId))) {
+          return {
+            ...item,
+            matchType: before.matchType,
+            matchedProductId: before.matchedProductId,
+            matchedProductName: before.matchedProductName,
+            categoryName: before.matchType === 'new' ? (item.categoryName || before.categoryName) : before.categoryName,
+            pick: before.pick,
+          };
+        }
         const found = products.find(p => fuzzyMatch(item.name, p.name));
         if (found) {
           return {
@@ -887,6 +988,7 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
             matchedProductId: found.id,
             matchedProductName: found.name,
             categoryName: found.category_name || '',
+            pick: undefined,
           };
         }
         return item;
@@ -904,6 +1006,7 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
         matchedProductId: type === 'existing' ? (productId ?? null) : null,
         matchedProductName: type === 'existing' ? (productName ?? '') : '',
         categoryName: type === 'existing' ? (catName ?? '') : item.categoryName,
+        pick: undefined,
       } : item
     ));
   }
@@ -929,6 +1032,140 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
       return next;
     });
   }
+
+  // ─── Step 3: Match — units, reading of the invoice, selling prices ─────────
+
+  const priceRules = useMemo<PriceRules>(
+    () => ({ markupPct: matchMarkup, packRule: rounding.packRule, childRule: rounding.childRule }),
+    [matchMarkup, rounding.packRule, rounding.childRule],
+  );
+
+  /** Matched products as they are today; the product list stands in when the lookup fails. */
+  const loadMatchContext = useCallback(async (ids: number[]): Promise<Record<number, PurchaseMatchContext>> => {
+    const out: Record<number, PurchaseMatchContext> = {};
+    if (ids.length === 0) return out;
+    try {
+      for (const row of await api.purchases.matchContext(ids)) out[row.product_id] = row;
+    } catch {
+      const products = allProducts.length > 0 ? allProducts : await loadProducts().catch(() => [] as Product[]);
+      for (const id of ids) {
+        const p = products.find(x => x.id === id);
+        if (p) out[id] = contextFromProduct(p);
+      }
+    }
+    return out;
+  }, [allProducts]);
+
+  useEffect(() => {
+    const missing = [...new Set(matchedItems
+      .filter(m => m.matchType === 'existing' && m.matchedProductId
+        && !matchCtx[m.matchedProductId] && !ctxRequested.current.has(m.matchedProductId))
+      .map(m => m.matchedProductId as number))];
+    if (missing.length === 0) return;
+    missing.forEach(id => ctxRequested.current.add(id));
+    void loadMatchContext(missing).then(found => {
+      if (Object.keys(found).length > 0) setMatchCtx(prev => ({ ...prev, ...found }));
+    });
+  }, [matchedItems, matchCtx, loadMatchContext]);
+
+  // Lines without a decision get the starting one as soon as their product is known.
+  useEffect(() => {
+    let changed = false;
+    const next = matchedItems.map(m => {
+      const d = decideLine(m, matchCtx, priceRules, defaultMarkup);
+      if (!d || d.pick === m.pick) return m;
+      changed = true;
+      return { ...m, pick: d.pick };
+    });
+    if (changed) setMatchedItems(next);
+  }, [matchedItems, matchCtx, priceRules, defaultMarkup]);
+
+  const evaluations = useMemo(() => {
+    const out = new Map<string, { pick: MatchPick; now: ProductNow | null; result: PickResult }>();
+    for (const m of matchedItems) {
+      const d = decideLine(m, matchCtx, priceRules, defaultMarkup);
+      if (d) out.set(m._key, { ...d, result: evaluatePick(lineOf(m), d.pick, d.now, priceRules) });
+    }
+    return out;
+  }, [matchedItems, matchCtx, priceRules, defaultMarkup]);
+
+  function updatePick(key: string, patch: (pick: MatchPick, item: MatchedItem) => Partial<MatchPick>) {
+    setMatchedItems(prev => prev.map(m => {
+      if (m._key !== key) return m;
+      const d = decideLine(m, matchCtx, priceRules, defaultMarkup);
+      return d ? { ...m, pick: { ...d.pick, ...patch(d.pick, m) } } : m;
+    }));
+  }
+
+  /** New units for a line: what stock keeps and how the invoice is read follow, unless set by hand. */
+  function unitsPatch(pick: MatchPick, item: MatchedItem, patch: Partial<Units>): Partial<MatchPick> {
+    const merged: Units = {
+      parentUnit: patch.parentUnit ?? pick.parentUnit,
+      childUnit: patch.childUnit ?? pick.childUnit,
+      convFactor: patch.convFactor ?? pick.convFactor,
+    };
+    const out: Partial<MatchPick> = { ...patch };
+    const c = item.matchType === 'existing' && item.matchedProductId ? matchCtx[item.matchedProductId] : undefined;
+    if (c && !pick.rescaleByUser) out.rescale = suggestRescale(nowFromContext(c).units, merged);
+    if (pick.countsInReason !== 'user') {
+      const guess = guessCountsIn({ unit: item.parentUnit, cost: item.costPerParent, childUnit: item.childUnit, convFactor: item.convFactor }, merged, c?.last_cost_parent ?? null);
+      out.countsIn = guess.countsIn;
+      out.countsInReason = guess.reason;
+    }
+    return out;
+  }
+
+  function applyUnitsToAll(which: 'product' | 'invoice') {
+    let skipped = 0;
+    setMatchedItems(matchedItems.map(m => {
+      if (m.matchType !== 'existing' || !m.matchedProductId) return m;
+      const c = matchCtx[m.matchedProductId];
+      const d = decideLine(m, matchCtx, priceRules, defaultMarkup);
+      if (!c || !d) return m;
+      if (which === 'invoice' && !invoiceHasUnits(m)) { skipped++; return m; }
+      const target = normalizeUnits(which === 'product'
+        ? nowFromContext(c).units
+        : { parentUnit: m.parentUnit, childUnit: m.childUnit, convFactor: m.convFactor });
+      return { ...m, pick: { ...d.pick, ...unitsPatch(d.pick, m, target) } };
+    }));
+    if (skipped > 0) toast.info(t("Kept the product's units where the invoice gives none: {{count}}", { count: skipped }));
+  }
+
+  function applyPricesToAll(which: 'smart' | 'product' | 'invoice') {
+    setMatchedItems(matchedItems.map(m => {
+      const e = evaluations.get(m._key);
+      if (!e) return m;
+      const today = e.result.today;
+      let source: MatchPick['priceSource'] = e.pick.priceSource;
+      if (which === 'invoice') source = 'invoice';
+      else if (m.matchType !== 'existing') return m;
+      else if (which === 'product') { if (today?.base) source = 'product'; }
+      else source = suggestSellChoice({ currentPrice: today?.base ?? null, cost: e.result.costPerParent, defaultMarkupPct: matchMarkup }).choice === 'product' ? 'product' : 'invoice';
+      return {
+        ...m,
+        pick: { ...e.pick, priceSource: source, lineMarkup: null, childSource: source === 'product' && today?.child ? 'product' : 'auto' },
+      };
+    }));
+  }
+
+  const matchSummary = useMemo<MatchSummary>(() => {
+    const s: MatchSummary = { unitsChange: 0, raised: 0, kept: 0, lowered: 0, underCost: 0, converted: 0 };
+    for (const m of matchedItems) {
+      if (parkedKeys.has(m._key)) continue;
+      const e = evaluations.get(m._key);
+      if (!e) continue;
+      const r = e.result;
+      if (r.unitsChange) s.unitsChange++;
+      if (r.belowCost) s.underCost++;
+      if (r.reading.num !== r.reading.den) s.converted++;
+      if (m.matchType === 'existing' && r.today?.base) {
+        if (r.sellPrice > r.today.base) s.raised++;
+        else if (r.sellPrice < r.today.base) s.lowered++;
+        else s.kept++;
+      }
+    }
+    return s;
+  }, [matchedItems, evaluations, parkedKeys]);
 
   const existingCount = matchedItems.filter(m => m.matchType === 'existing').length;
   const newCount = matchedItems.filter(m => m.matchType === 'new').length;
@@ -1053,38 +1290,47 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
           pendingItemsPayload = parkedItems.map(item => ({ raw_data: JSON.stringify(item) }));
         }
 
-        purchaseItems = readyItems.map(item => {
+        // Matched products not looked up yet (e.g. a draft resumed straight into this step).
+        const missing = [...new Set(readyItems
+          .filter(i => i.matchType === 'existing' && i.matchedProductId && !matchCtx[i.matchedProductId])
+          .map(i => i.matchedProductId as number))];
+        const ctx = missing.length > 0 ? { ...matchCtx, ...(await loadMatchContext(missing)) } : matchCtx;
+
+        purchaseItems = readyItems.map((item): CreatePurchaseItemInput => {
+          // Quantity, cost and prices in the units decided for the line.
+          const d = decideLine(item, ctx, priceRules, defaultMarkup);
+          const r = d ? evaluatePick(lineOf(item), d.pick, d.now, priceRules) : null;
+          const received = r
+            ? { quantity: r.quantity, cost_per_parent: r.costPerParent, selling_price_parent: r.sellPrice, selling_price_child: r.hasChild ? (r.sellPriceChild || undefined) : undefined }
+            : { quantity: item.quantity, cost_per_parent: item.costPerParent, selling_price_parent: item.sellPrice, selling_price_child: item.sellPriceChild || undefined };
           if (item.matchType === 'existing' && item.matchedProductId) {
             return {
               product_id: item.matchedProductId,
               barcode: item.barcode || undefined,
-              quantity: item.quantity,
-              cost_per_parent: item.costPerParent,
-              selling_price_parent: item.sellPrice,
-              selling_price_child: item.sellPriceChild || undefined,
+              ...received,
               expiry_date: normalizeExpiry(item.expiryDate),
               batch_number: item.batchNumber || undefined,
-            };
-          } else {
-            return {
-              new_product: {
-                name: item.name,
-                generic_name: item.genericName || undefined,
-                usage_instructions: item.usageInstructions || undefined,
-                category_name: item.categoryName || undefined,
-                barcode: item.barcode || undefined,
-                parent_unit: item.parentUnit || 'Unit',
-                child_unit: item.childUnit || undefined,
-                conversion_factor: item.convFactor || 1,
-              },
-              quantity: item.quantity,
-              cost_per_parent: item.costPerParent,
-              selling_price_parent: item.sellPrice,
-              selling_price_child: item.sellPriceChild || undefined,
-              expiry_date: normalizeExpiry(item.expiryDate),
-              batch_number: item.batchNumber || undefined,
+              product_units: r && d && r.unitsChange
+                ? { parent_unit: r.units.parentUnit, child_unit: r.units.childUnit || null, conversion_factor: r.units.convFactor, rescale_stock: d.pick.rescale }
+                : undefined,
             };
           }
+          const units = r ? r.units : { parentUnit: item.parentUnit, childUnit: item.childUnit, convFactor: item.convFactor };
+          return {
+            new_product: {
+              name: item.name,
+              generic_name: item.genericName || undefined,
+              usage_instructions: item.usageInstructions || undefined,
+              category_name: item.categoryName || undefined,
+              barcode: item.barcode || undefined,
+              parent_unit: units.parentUnit || 'Unit',
+              child_unit: units.childUnit || undefined,
+              conversion_factor: units.convFactor || 1,
+            },
+            ...received,
+            expiry_date: normalizeExpiry(item.expiryDate),
+            batch_number: item.batchNumber || undefined,
+          };
         });
       } else if (hasManualItems) {
         purchaseItems = manualItems.map(item => {
@@ -1158,6 +1404,7 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
             }
           : undefined,
         pending_items: pendingItemsPayload,
+        purchase_order_id: purchaseOrder?.id,
         idempotency_key: idempotencyKey,
         force_confirm_mismatch: forceConfirmMismatch,
       }));
@@ -1179,7 +1426,7 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
     paymentType, paymentMethod, bankReference, installments, installmentDiff,
     initialPayment, initialPayMethod, initialPayRef, deferInstallments,
     hasItems, hasManualItems, matchedItems, manualItems, manualMode, onComplete, t, totalAmount, parkedKeys, clearDraft,
-    idempotencyKey, forceConfirmMismatch,
+    idempotencyKey, forceConfirmMismatch, purchaseOrder, matchCtx, loadMatchContext, priceRules, defaultMarkup,
   ]);
 
   // ─── Render ─────────────────────────────────────────────────────────────
@@ -1631,6 +1878,22 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
                   {t('The system checked each product against the database.')}
                 </p>
 
+                <MatchToolbar
+                  markup={matchMarkup}
+                  onMarkup={setMatchMarkup}
+                  rules={rounding.rules}
+                  packId={rounding.packId}
+                  childId={rounding.childId}
+                  onPackId={rounding.setPackId}
+                  onChildId={rounding.setChildId}
+                  onOpenRules={() => setRulesOpen(true)}
+                  canChangeUnits={canChangeUnits}
+                  hasExisting={existingCount > 0}
+                  onUnits={applyUnitsToAll}
+                  onPrices={applyPricesToAll}
+                  summary={matchSummary}
+                />
+
                 {/* Bulk category for selected items */}
                 {newCount > 0 && (
                   <div className="flex items-center gap-2 rounded-lg border bg-muted/50 px-3 py-2 flex-wrap">
@@ -1704,62 +1967,75 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
                   <Table className="sticky-col">
                     <TableHeader>
                       <TableRow className="bg-muted/50">
-                        <TableHead className="w-8">
-                          <input
-                            type="checkbox"
-                            className="h-3.5 w-3.5 rounded border-input accent-primary"
-                            checked={matchedItems.filter(m => m.matchType === 'new').length > 0 && matchedItems.filter(m => m.matchType === 'new').every(m => selectedMatchKeys.has(m._key))}
-                            onChange={(e) => {
-                              const newItems = matchedItems.filter(m => m.matchType === 'new');
-                              if (e.target.checked) {
-                                setSelectedMatchKeys(prev => {
-                                  const next = new Set(prev);
-                                  newItems.forEach(m => next.add(m._key));
-                                  return next;
-                                });
-                              } else {
-                                setSelectedMatchKeys(new Set());
-                              }
-                            }}
-                          />
+                        <TableHead className="min-w-[13rem]">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              className="h-3.5 w-3.5 rounded border-input accent-primary"
+                              aria-label={t('Select all new products')}
+                              checked={matchedItems.filter(m => m.matchType === 'new').length > 0 && matchedItems.filter(m => m.matchType === 'new').every(m => selectedMatchKeys.has(m._key))}
+                              onChange={(e) => {
+                                const newItems = matchedItems.filter(m => m.matchType === 'new');
+                                if (e.target.checked) {
+                                  setSelectedMatchKeys(prev => {
+                                    const next = new Set(prev);
+                                    newItems.forEach(m => next.add(m._key));
+                                    return next;
+                                  });
+                                } else {
+                                  setSelectedMatchKeys(new Set());
+                                }
+                              }}
+                            />
+                            <span className="w-5">#</span>
+                            <span>{t('Invoice Name')}</span>
+                          </div>
                         </TableHead>
-                        <TableHead className="w-10">#</TableHead>
-                        <TableHead>{t('Invoice Name')}</TableHead>
                         <TableHead>{t('Status')}</TableHead>
-                        <TableHead>{t('Matched Product')}</TableHead>
-                        <TableHead className="">{t('Category')}</TableHead>
-                        <TableHead className="w-16">{t('Actions')}</TableHead>
+                        <TableHead className="min-w-[10rem]">{t('Matched Product')}</TableHead>
+                        <TableHead className="min-w-[9rem]">{t('Category')}</TableHead>
+                        <TableHead>{t('Base unit')}</TableHead>
+                        <TableHead>{t('Small unit')}</TableHead>
+                        <TableHead>{t('Conv.')}</TableHead>
+                        <TableHead>{t('Quantity')}</TableHead>
+                        <TableHead>{t('Sell (base)')}</TableHead>
+                        <TableHead>{t('Sell (small)')}</TableHead>
+                        <TableHead>{t('Markup')}</TableHead>
+                        <TableHead className="w-12">{t('Actions')}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {matchPageItems.map((item, pageIdx) => {
                         const globalIdx = matchPage * PAGE_SIZE + pageIdx;
+                        const e = evaluations.get(item._key);
+                        const c = item.matchType === 'existing' && item.matchedProductId ? matchCtx[item.matchedProductId] : undefined;
+                        const parked = parkedKeys.has(item._key);
                         return (
-                          <TableRow key={item._key}>
-                            <TableCell>
-                              {item.matchType === 'new' ? (
-                                <input
-                                  type="checkbox"
-                                  className="h-3.5 w-3.5 rounded border-input accent-primary"
-                                  checked={selectedMatchKeys.has(item._key)}
-                                  onChange={() => toggleMatchSelection(item._key)}
-                                />
-                              ) : (
-                                <span className="block h-3.5 w-3.5" />
-                              )}
-                            </TableCell>
-                            <TableCell className="text-muted-foreground text-xs">
-                              {globalIdx + 1}
-                            </TableCell>
-                            <TableCell>
-                              <div>
-                                <span className="font-medium text-sm">{item.name}</span>
-                                {item.genericName && (
-                                  <span className="text-xs text-muted-foreground block">{item.genericName}</span>
+                          <Fragment key={item._key}>
+                          <TableRow className={cn(parked && 'opacity-50')}>
+                            <TableCell className="align-top">
+                              <div className="flex items-start gap-2">
+                                {item.matchType === 'new' ? (
+                                  <input
+                                    type="checkbox"
+                                    className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded border-input accent-primary"
+                                    checked={selectedMatchKeys.has(item._key)}
+                                    onChange={() => toggleMatchSelection(item._key)}
+                                  />
+                                ) : (
+                                  <span className="block h-3.5 w-3.5 shrink-0" />
                                 )}
+                                <span className="w-5 shrink-0 text-xs text-muted-foreground">{globalIdx + 1}</span>
+                                <div className="min-w-0">
+                                  <span className="block text-sm font-medium" dir="auto">{item.name}</span>
+                                  {item.genericName && (
+                                    <span className="block text-xs text-muted-foreground">{item.genericName}</span>
+                                  )}
+                                  {parked && <Badge variant="outline" className="mt-0.5 text-[10px]">{t('Parked')}</Badge>}
+                                </div>
                               </div>
                             </TableCell>
-                            <TableCell>
+                            <TableCell className="align-top">
                               {item.matchType === 'existing' ? (
                                 <Badge variant="default" className="text-xs">
                                   {t('Existing')}
@@ -1770,14 +2046,26 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
                                 </Badge>
                               )}
                             </TableCell>
-                            <TableCell>
+                            <TableCell className="align-top">
                               {item.matchType === 'existing' ? (
-                                <span className="text-sm">{item.matchedProductName}</span>
+                                <>
+                                  <span className="text-sm" dir="auto">{item.matchedProductName}</span>
+                                  {c && (
+                                    <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                                      {t('In stock')}: <bdi>{formatQuantity(c.stock_base, c.parent_unit, c.child_unit ?? '', c.conversion_factor)}</bdi>
+                                    </span>
+                                  )}
+                                  {c && c.last_cost_parent !== null && (
+                                    <span className="block text-[11px] text-muted-foreground" title={c.last_cost_supplier ?? undefined}>
+                                      {t('Last cost')}: <bdi>{formatCost(c.last_cost_parent)}</bdi>{c.last_cost_date ? <> · <bdi className="whitespace-nowrap">{formatDate(c.last_cost_date)}</bdi></> : null}
+                                    </span>
+                                  )}
+                                </>
                               ) : (
                                 <span className="text-xs text-muted-foreground">—</span>
                               )}
                             </TableCell>
-                            <TableCell className="">
+                            <TableCell className="align-top">
                               {item.matchType === 'existing' ? (
                                 <span className="text-sm text-muted-foreground">{item.categoryName || '—'}</span>
                               ) : (
@@ -1792,7 +2080,38 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
                                 />
                               )}
                             </TableCell>
-                            <TableCell>
+                            {e ? (
+                              <>
+                                <UnitCells
+                                  pick={e.pick}
+                                  invoice={{ parentUnit: item.parentUnit, childUnit: item.childUnit, convFactor: item.convFactor }}
+                                  now={e.now}
+                                  canChange={canChangeUnits}
+                                  onUnits={patch => updatePick(item._key, (pick, it) => unitsPatch(pick, it, patch))}
+                                />
+                                <ReceivedCell
+                                  pick={e.pick}
+                                  result={e.result}
+                                  invoice={{ parentUnit: item.parentUnit, childUnit: item.childUnit, convFactor: item.convFactor }}
+                                  invoiceQty={item.quantity}
+                                  invoiceCost={item.costPerParent}
+                                  onCountsIn={countsIn => updatePick(item._key, () => ({ countsIn, countsInReason: 'user' }))}
+                                />
+                                <PriceCells
+                                  pick={e.pick}
+                                  result={e.result}
+                                  isExisting={item.matchType === 'existing'}
+                                  todayIsLast={c?.price_source === 'last'}
+                                  defaultMarkup={matchMarkup}
+                                  onPick={patch => updatePick(item._key, () => patch)}
+                                />
+                              </>
+                            ) : (
+                              <TableCell colSpan={7} className="align-top text-xs text-muted-foreground">
+                                <Loader2 className="me-1 inline h-3.5 w-3.5 animate-spin" />{t('Loading product details...')}
+                              </TableCell>
+                            )}
+                            <TableCell className="align-top">
                               <Button
                                 variant="ghost" size="icon"
                                 className="h-7 w-7"
@@ -1806,6 +2125,17 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
                               </Button>
                             </TableCell>
                           </TableRow>
+                          {e && e.now && e.result.unitsChange && (
+                            <UnitsChangeRow
+                              colSpan={12}
+                              productName={item.matchedProductName}
+                              pick={e.pick}
+                              result={e.result}
+                              now={e.now}
+                              onRescale={mode => updatePick(item._key, () => ({ rescale: mode, rescaleByUser: true }))}
+                            />
+                          )}
+                          </Fragment>
                         );
                       })}
                     </TableBody>
@@ -1925,6 +2255,11 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
               <CardTitle>{t('Purchase Details')}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              {purchaseOrder && (
+                <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+                  {t('Receiving against order {{number}}. Adjust quantities and costs to match the invoice; lines you remove stay open on the order.', { number: purchaseOrder.po_number })}
+                </div>
+              )}
               {/* Purchase Date + Invoice Number (identification first) */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
@@ -1956,7 +2291,9 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
               {/* Supplier */}
               <div className="space-y-1.5">
                 <Label>{t('Supplier')}</Label>
-                <SupplierSelect value={supplierId} onChange={(id) => setSupplierId(id)} />
+                {purchaseOrder
+                  ? <Input value={purchaseOrder.supplier_name ?? ''} disabled />
+                  : <SupplierSelect value={supplierId} onChange={(id) => setSupplierId(id)} />}
               </div>
             </CardContent>
           </Card>
@@ -1976,6 +2313,11 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
                     <p className="text-xs text-muted-foreground">
                       {existingCount} {t('existing products')} + {newCount} {t('new products')}
                     </p>
+                    {matchSummary.unitsChange > 0 && (
+                      <p className="text-xs text-amber-700 dark:text-amber-400">
+                        {t('Products whose units change: {{count}}', { count: matchSummary.unitsChange })}
+                      </p>
+                    )}
                   </div>
                 </div>
               </CardContent>
@@ -2632,6 +2974,8 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
           </Button>
         </div>
       )}
+
+      <RoundingRulesDialog open={rulesOpen} onOpenChange={setRulesOpen} startFrom={rounding.packRule} />
 
       <ProductForm
         open={showProductForm}

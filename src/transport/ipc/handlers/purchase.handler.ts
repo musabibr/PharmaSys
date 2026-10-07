@@ -6,6 +6,8 @@ import type {
   ExpensePaymentMethod, PaymentAdjustmentStrategy,
   SupplierProductFilters,
 } from '../../../core/types/models';
+import type { ProductPurchaseHistoryFilters } from '../../../core/repositories/sql/product-purchase-history.repository';
+import { assertProductUnitsAllowed } from '../../../core/common/purchase-permissions';
 
 export function registerPurchaseHandlers(router: IpcRouter, services: ServiceContainer): void {
   // ─── Suppliers ─────────────────────────────────────────────────────────────
@@ -50,8 +52,19 @@ export function registerPurchaseHandlers(router: IpcRouter, services: ServiceCon
   }, { permission: 'purchases.view' });
 
   router.handle('purchases:create', async (user, data: CreatePurchaseInput) => {
+    assertProductUnitsAllowed(user!, data?.items);
     return await services.purchase.createPurchase(data, user!.id);
   }, { permission: 'purchases.manage' });
+
+  // Match step: what each matched product is today (units, stock, prices, last cost).
+  router.handle('purchases:matchContext', async (_user, productIds: number[]) => {
+    return await services.purchase.getMatchContext(productIds);
+  }, { anyPermission: ['purchases.manage', 'purchases.edit'] });
+
+  // "By product": every invoice line for one product.
+  router.handle('purchases:getProductHistory', async (_user, productId: number, filters?: ProductPurchaseHistoryFilters) => {
+    return await services.productPurchaseHistory.getHistory(productId, filters ?? {});
+  }, { permission: 'purchases.view' });
 
   router.handle('purchases:update', async (user, id: number, data: UpdatePurchaseInput) => {
     return await services.purchase.updatePurchase(id, data, user!.id);
@@ -63,6 +76,7 @@ export function registerPurchaseHandlers(router: IpcRouter, services: ServiceCon
   }, { permission: 'purchases.delete' });
 
   router.handle('purchases:addItems', async (user, purchaseId: number, data: { items: CreatePurchaseItemInput[] }) => {
+    assertProductUnitsAllowed(user!, data?.items);
     return await services.purchase.addItemsToPurchase(purchaseId, data.items, user!.id);
   }, { permission: 'purchases.manage' });
 

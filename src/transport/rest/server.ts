@@ -26,6 +26,7 @@ import {
 import { purchaseRoutes }           from './routes/purchase.routes';
 import { recurringExpenseRoutes }  from './routes/recurring-expense.routes';
 import { createCycleCountRoutes }   from './routes/cycle-count.routes';
+import { purchaseOrderRoutes }      from './routes/purchase-order.routes';
 
 export function createApp(services: ServiceContainer): Application {
   const app = express();
@@ -108,6 +109,7 @@ export function createApp(services: ServiceContainer): Application {
   api.use('/purchases',             purchaseRoutes(services));
   api.use('/recurring-expenses',   recurringExpenseRoutes(services));
   api.use('/cycle-counts',         createCycleCountRoutes(services));
+  api.use('/purchase-orders',      purchaseOrderRoutes(services));
   api.use('/app',          appInfoRoutes(services));
 
   app.use('/api/v1', generalLimiter, api);

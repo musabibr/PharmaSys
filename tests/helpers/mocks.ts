@@ -168,6 +168,7 @@ export function createMockBatchRepo() {
     restoreDeletedBatch: jest.fn().mockResolvedValue(1),
     recalculateChildPricesForProduct: jest.fn().mockResolvedValue(0),
     rescaleQuantitiesForProduct: jest.fn().mockResolvedValue(undefined),
+    rescalePackValuesForProduct: jest.fn().mockResolvedValue(undefined),
     // Execute the callback so transactional service logic runs under test.
     inTransaction: jest.fn(async (fn: () => Promise<unknown>) => await fn()),
   };

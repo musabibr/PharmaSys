@@ -473,8 +473,8 @@ export function TransactionsPage() {
               </Label>
             </div>
 
-            {/* Search */}
-            <div className="flex-1 space-y-1.5">
+            {/* Search — wraps to its own line rather than shrinking to nothing */}
+            <div className="min-w-[14rem] flex-1 space-y-1.5">
               <Label className="text-xs">{t('Search')}</Label>
               <div className="relative">
                 <Search className="absolute start-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

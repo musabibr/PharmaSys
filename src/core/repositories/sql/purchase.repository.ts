@@ -10,6 +10,23 @@ import type {
 import { PAGINATION } from '../../common/constants';
 import { TODAY_SQL } from '../../common/expiry';
 
+/** Raw row behind PurchaseMatchContext. */
+export interface PurchaseMatchContextRow {
+  product_id: number;
+  parent_unit: string | null;
+  child_unit: string | null;
+  conversion_factor: number;
+  stock_base: number;
+  current_price: number | null;
+  current_price_child: number | null;
+  last_price: number | null;
+  last_price_child: number | null;
+  last_batch_cost: number | null;
+  last_cost_per_base: number | null;
+  last_cost_date: string | null;
+  last_cost_supplier: string | null;
+}
+
 export class PurchaseRepository implements IPurchaseRepository {
   constructor(private readonly base: BaseRepository) {}
 
@@ -67,7 +84,8 @@ export class PurchaseRepository implements IPurchaseRepository {
               s.name as supplier_name,
               u.username,
               (SELECT COUNT(*) FROM purchase_items pi WHERE pi.purchase_id = p.id) AS items_count,
-              (SELECT COUNT(*) FROM purchase_pending_items ppi WHERE ppi.purchase_id = p.id) AS pending_items_count
+              (SELECT COUNT(*) FROM purchase_pending_items ppi WHERE ppi.purchase_id = p.id) AS pending_items_count,
+              (SELECT po.po_number FROM purchase_orders po WHERE po.id = p.purchase_order_id) AS po_number
        FROM purchases p
        LEFT JOIN suppliers s ON p.supplier_id = s.id
        JOIN users u ON p.user_id = u.id
@@ -98,6 +116,36 @@ export class PurchaseRepository implements IPurchaseRepository {
       purchase.payments = await this.getPayments(purchase.id);
     }
     return purchase;
+  }
+
+/**
+   * What the Match step compares an invoice line with: the product's units,
+   * stock, selling prices and last invoice cost.
+   */
+  async getMatchContext(productIds: readonly number[]): Promise<PurchaseMatchContextRow[]> {
+    if (productIds.length === 0) return [];
+    const marks = productIds.map(() => '?').join(',');
+    const price = (col: 'parent' | 'child') => col === 'parent'
+      ? 'CASE WHEN b.selling_price_parent_override > 0 THEN b.selling_price_parent_override ELSE b.selling_price_parent END'
+      : 'CASE WHEN b.selling_price_child_override > 0 THEN b.selling_price_child_override ELSE b.selling_price_child END';
+    const sellable = `b.product_id = p.id AND b.status = 'active' AND b.quantity_base > 0 AND b.expiry_date >= ${TODAY_SQL}`;
+    const lastLine = 'FROM purchase_items pi JOIN purchases pu ON pu.id = pi.purchase_id WHERE pi.product_id = p.id ORDER BY pu.purchase_date DESC, pi.id DESC LIMIT 1';
+    return await this.base.getAll<PurchaseMatchContextRow>(
+      `SELECT p.id AS product_id, p.parent_unit, p.child_unit,
+              COALESCE(NULLIF(p.conversion_factor, 0), 1) AS conversion_factor,
+              COALESCE((SELECT SUM(b.quantity_base) FROM batches b WHERE b.product_id = p.id AND b.quantity_base > 0), 0) AS stock_base,
+              (SELECT ${price('parent')} FROM batches b WHERE ${sellable} ORDER BY b.expiry_date ASC, b.id ASC LIMIT 1) AS current_price,
+              (SELECT ${price('child')} FROM batches b WHERE ${sellable} ORDER BY b.expiry_date ASC, b.id ASC LIMIT 1) AS current_price_child,
+              (SELECT ${price('parent')} FROM batches b WHERE b.product_id = p.id ORDER BY b.created_at DESC, b.id DESC LIMIT 1) AS last_price,
+              (SELECT ${price('child')} FROM batches b WHERE b.product_id = p.id ORDER BY b.created_at DESC, b.id DESC LIMIT 1) AS last_price_child,
+              (SELECT b.cost_per_parent FROM batches b WHERE b.product_id = p.id ORDER BY b.created_at DESC, b.id DESC LIMIT 1) AS last_batch_cost,
+              (SELECT pi.cost_per_parent * 1.0 / COALESCE(NULLIF(pi.conversion_factor_snapshot, 0), 1) ${lastLine}) AS last_cost_per_base,
+              (SELECT pu.purchase_date ${lastLine}) AS last_cost_date,
+              (SELECT (SELECT s.name FROM suppliers s WHERE s.id = pu.supplier_id) ${lastLine}) AS last_cost_supplier
+       FROM products p
+       WHERE p.id IN (${marks})`,
+      [...productIds]
+    );
   }
 
   async getItems(purchaseId: number): Promise<PurchaseItem[]> {

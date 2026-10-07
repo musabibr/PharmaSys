@@ -8,6 +8,80 @@ export type PaymentMethod = 'cash' | 'bank_transfer' | 'mixed';
 export type ShiftStatus = 'open' | 'closed';
 export type AdjustmentType = 'damage' | 'expiry' | 'correction';
 
+// ─── Product purchase lookup ───
+export interface ProductPurchaseHistoryFilters {
+  start_date?: string;
+  end_date?: string;
+  supplier_id?: number;
+  payment_status?: 'unpaid' | 'partial' | 'paid';
+  in_stock_only?: boolean;
+  limit?: number;
+}
+
+export interface ProductPurchaseLine {
+  purchase_item_id: number;
+  purchase_id: number;
+  purchase_number: string;
+  invoice_reference: string | null;
+  purchase_date: string;
+  supplier_id: number | null;
+  supplier_name: string | null;
+  payment_status: 'unpaid' | 'partial' | 'paid';
+  entered_by: string | null;
+  quantity_received: number;
+  bonus_qty: number;
+  conversion_factor: number;
+  cost_per_parent: number;
+  discount_pct: number;
+  line_total: number;
+  allocated_adjustment: number;
+  effective_cost_per_parent: number;
+  selling_price_parent: number;
+  batch_id: number | null;
+  batch_number: string | null;
+  expiry_date: string | null;
+  shelf_life_days: number | null;
+  batch_remaining_base: number | null;
+  batch_status: string | null;
+  source_name: string | null;
+  previous_cost: number | null;
+  change_pct: number | null;
+}
+
+export interface SupplierCostComparison {
+  supplier_id: number | null;
+  supplier_name: string | null;
+  lines: number;
+  received: number;
+  spend: number;
+  last_cost: number;
+  last_effective_cost: number;
+  last_date: string;
+  age_days: number;
+  avg_effective_cost: number;
+  lowest_effective_cost: number;
+  gap_to_cheapest_pct: number;
+  is_cheapest: boolean;
+}
+
+export interface ProductPurchaseHistory {
+  product: {
+    id: number; name: string; generic_name: string | null; barcode: string | null;
+    parent_unit: string | null; child_unit: string | null; conversion_factor: number;
+    on_hand_base: number; selling_price: number; is_active: number;
+  };
+  summary: {
+    invoices: number; suppliers: number; lines: number; quantity: number; bonus: number; received: number;
+    spend: number; stock_cost: number; first_date: string | null; last_date: string | null;
+    last_cost: number | null; last_effective_cost: number | null; avg_effective_cost: number | null;
+    lowest_effective_cost: number | null; lowest_cost_date: string | null;
+    change_since_first_pct: number | null; margin_at_current_price_pct: number | null;
+  };
+  suppliers: SupplierCostComparison[];
+  lines: ProductPurchaseLine[];
+  parked: Array<{ pending_item_id: number; purchase_id: number; purchase_number: string; purchase_date: string; supplier_name: string | null; raw_data: string }>;
+}
+
 // ─── Bulk price update ───
 export interface BulkPriceUpdateOptions {
   /** D3: named 'markup_over_cost' — the formula is a markup on cost, not a margin. */
@@ -571,6 +645,9 @@ export interface Purchase {
   user_id: number;
   created_at: string;
   updated_at: string;
+  /** The purchase order this invoice delivers. */
+  purchase_order_id?: number | null;
+  po_number?: string | null;
   supplier_name?: string;
   username?: string;
   items?: PurchaseItem[];
@@ -622,6 +699,8 @@ export interface PurchasePayment {
 
 export interface CreatePurchaseItemInput {
   product_id?: number;
+  /** Given to an existing product that has no barcode yet. */
+  barcode?: string;
   new_product?: {
     name: string;
     generic_name?: string;
@@ -639,6 +718,35 @@ export interface CreatePurchaseItemInput {
   selling_price_child?: number;
   expiry_date: string;
   batch_number?: string;
+  /**
+   * Received in the invoice's units: the matched product takes these units
+   * first (needs inventory.products.manage). `rescale_stock` says what its
+   * stock keeps when the pack size changes: the unit count or the pack count.
+   */
+  product_units?: {
+    parent_unit: string;
+    child_unit?: string | null;
+    conversion_factor?: number;
+    rescale_stock?: 'keep_units' | 'keep_packs';
+  };
+}
+
+/** A matched product as the purchase Match step compares it with an invoice line. */
+export interface PurchaseMatchContext {
+  product_id: number;
+  parent_unit: string;
+  child_unit: string;
+  conversion_factor: number;
+  /** Units on hand in every batch (any status). */
+  stock_base: number;
+  /** Price charged now (FIFO sellable batch), else the last batch's price; null if never priced. */
+  price: number | null;
+  price_child: number | null;
+  price_source: 'current' | 'last' | null;
+  /** Last invoice cost per pack, scaled to today's pack size. */
+  last_cost_parent: number | null;
+  last_cost_date: string | null;
+  last_cost_supplier: string | null;
 }
 
 export interface PurchasePendingItem {
@@ -676,8 +784,87 @@ export interface CreatePurchaseInput {
     reference_number?: string;
   };
   pending_items?: Array<{ raw_data: string; notes?: string }>;
+  /** Receive against this sent purchase order; the supplier must match. */
+  purchase_order_id?: number | null;
   force_confirm_mismatch?: boolean;
   idempotency_key?: string;
+}
+
+// ─── Purchase orders ───
+export type PurchaseOrderStatus = 'draft' | 'sent' | 'closed' | 'cancelled';
+export type PurchaseOrderDisplayStatus = 'draft' | 'sent' | 'partially_received' | 'received' | 'closed' | 'cancelled';
+
+export interface PurchaseOrder {
+  id: number;
+  po_number: string;
+  supplier_id: number;
+  status: PurchaseOrderStatus;
+  display_status: PurchaseOrderDisplayStatus;
+  order_date: string;
+  expected_date: string | null;
+  notes: string | null;
+  user_id: number;
+  created_at: string;
+  updated_at: string;
+  sent_at: string | null;
+  closed_at: string | null;
+  close_reason: string | null;
+  supplier_name?: string;
+  supplier_phone?: string | null;
+  username?: string | null;
+  lines?: number;
+  ordered_units?: number;
+  received_units?: number;
+  expected_value?: number;
+  invoices?: number;
+}
+
+export interface PurchaseOrderItem {
+  id: number;
+  po_id: number;
+  product_id: number;
+  quantity: number;
+  expected_cost_parent: number | null;
+  notes: string | null;
+  product_name?: string;
+  parent_unit?: string | null;
+  child_unit?: string | null;
+  conversion_factor?: number;
+  received_quantity?: number;
+  invoiced_cost_parent?: number | null;
+  sellable_base?: number;
+}
+
+export interface PurchaseOrderDetail extends PurchaseOrder {
+  receipt_status: 'none' | 'partial' | 'complete';
+  items: PurchaseOrderItem[];
+  purchases: Array<{ id: number; purchase_number: string; invoice_reference: string | null; purchase_date: string; total_amount: number }>;
+  discrepancies: Array<{
+    product_id: number; product_name: string; ordered: number; received: number;
+    expected_cost_parent: number | null; invoiced_cost_parent: number | null; kind: 'short' | 'over' | 'cost';
+  }>;
+}
+
+export interface PurchaseOrderInput {
+  supplier_id: number;
+  order_date?: string | null;
+  expected_date?: string | null;
+  notes?: string | null;
+  items: Array<{ product_id: number; quantity: number; expected_cost_parent?: number | null; notes?: string | null }>;
+}
+
+export interface PurchaseOrderFilters {
+  supplier_id?: number;
+  status?: PurchaseOrderStatus;
+  search?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface PurchaseOrderReceivePrefill {
+  purchase_order_id: number;
+  supplier_id: number;
+  items: Array<{ product_id: number; quantity: number; cost_parent: number | null }>;
 }
 
 export interface PurchaseReport {
@@ -1044,6 +1231,10 @@ export interface PharmaSysApi {
   };
 
   purchases: {
+    /** Every invoice line for a product, with summary and supplier comparison. */
+    getProductHistory(productId: number, filters?: ProductPurchaseHistoryFilters): Promise<ProductPurchaseHistory>;
+    /** Units, stock, price and last cost of matched products, for the Match step. */
+    matchContext(productIds: number[]): Promise<PurchaseMatchContext[]>;
     getAll(filters?: unknown): Promise<PaginatedResult<Purchase>>;
     getById(id: number): Promise<Purchase>;
     getItems(purchaseId: number): Promise<PurchaseItem[]>;
@@ -1079,6 +1270,22 @@ export interface PharmaSysApi {
     getAllPendingItems(filters?: { search?: string; supplier_id?: number; page?: number; limit?: number }): Promise<PaginatedResult<EnrichedPendingItem>>;
     getProductsBySupplier(supplierId: number, filters?: SupplierProductFilters): Promise<PaginatedResult<SupplierProductRecord>>;
     getSuppliersByProduct(productId: number, page?: number, limit?: number): Promise<PaginatedResult<ProductSupplierRecord>>;
+  };
+
+  purchaseOrders: {
+    list(filters?: PurchaseOrderFilters): Promise<PaginatedResult<PurchaseOrder>>;
+    getById(id: number): Promise<PurchaseOrderDetail>;
+    /** Needs purchases.manage. Missing expected costs are filled from the last invoice. */
+    create(input: PurchaseOrderInput): Promise<PurchaseOrderDetail>;
+    /** Needs purchases.manage. Drafts only. */
+    update(id: number, input: PurchaseOrderInput): Promise<PurchaseOrderDetail>;
+    /** Needs purchases.manage. Marks the draft sent and returns a message to share. */
+    send(id: number): Promise<PurchaseOrderDetail & { share_text: string }>;
+    shareText(id: number): Promise<string>;
+    /** Needs purchases.manage. Closed when partly received, cancelled otherwise. */
+    close(id: number, reason: string): Promise<PurchaseOrderDetail>;
+    /** Needs purchases.manage. Quantities still to come, for a new invoice. */
+    receivePrefill(id: number): Promise<PurchaseOrderReceivePrefill>;
   };
 
   cycleCounts: {

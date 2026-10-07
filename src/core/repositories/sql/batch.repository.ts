@@ -458,6 +458,26 @@ export class BatchRepository implements IBatchRepository {
   }
 
   /**
+   * Pack cost and pack price of every batch of a product follow a new pack
+   * size, when the stock keeps its count of smallest units: each unit keeps
+   * what it cost and what it sells for (a box of 3 strips at 6,000 becomes a
+   * box of 10 at 20,000). Costs keep 3 decimals; prices stay whole SDG.
+   */
+  async rescalePackValuesForProduct(productId: number, oldCf: number, newCf: number): Promise<void> {
+    if (oldCf === newCf || !(oldCf > 0) || !(newCf > 0)) return;
+    await this.base.runImmediate(
+      `UPDATE batches SET
+         cost_per_parent = ROUND(cost_per_parent * ? / ?, 3),
+         selling_price_parent = CASE WHEN selling_price_parent IS NULL THEN NULL
+                                     ELSE CAST(ROUND(selling_price_parent * 1.0 * ? / ?) AS INTEGER) END,
+         version = version + 1,
+         updated_at = datetime('now', 'localtime')
+       WHERE product_id = ?`,
+      [newCf, oldCf, newCf, oldCf, productId]
+    );
+  }
+
+  /**
    * Rescale all batch quantities for a product when its conversion factor
    * changes AND the user chose to preserve the pack (box) count.
    * quantity_base × newCf / oldCf, ROUNDED (not floored) to avoid losing the

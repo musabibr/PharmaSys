@@ -22,6 +22,8 @@ import { SupplierRepository }           from './supplier.repository';
 import { PurchaseRepository }           from './purchase.repository';
 import { RecurringExpenseRepository }   from './recurring-expense.repository';
 import { CycleCountRepository }         from './cycle-count.repository';
+import { PurchaseOrderRepository }      from './purchase-order.repository';
+import { ProductPurchaseHistoryRepository } from './product-purchase-history.repository';
 
 export interface Repositories {
   base:        BaseRepository;
@@ -43,6 +45,8 @@ export interface Repositories {
   purchase:           PurchaseRepository;
   recurringExpense:   RecurringExpenseRepository;
   cycleCount:         CycleCountRepository;
+  purchaseOrder:      PurchaseOrderRepository;
+  productPurchaseHistory: ProductPurchaseHistoryRepository;
 }
 
 export function createRepositories(
@@ -76,6 +80,8 @@ export function createRepositories(
     purchase:         new PurchaseRepository(base),
     recurringExpense: new RecurringExpenseRepository(base),
     cycleCount:       new CycleCountRepository(base),
+    purchaseOrder:    new PurchaseOrderRepository(base),
+    productPurchaseHistory: new ProductPurchaseHistoryRepository(base),
   };
 }
 
@@ -100,4 +106,6 @@ export {
   PurchaseRepository,
   RecurringExpenseRepository,
   CycleCountRepository,
+  PurchaseOrderRepository,
+  ProductPurchaseHistoryRepository,
 };

@@ -9,7 +9,7 @@
  *  - Optionally start the embedded REST server
  */
 
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, screen } from 'electron';
 import * as path   from 'path';
 import * as fs     from 'fs';
 import { execFile } from 'child_process';
@@ -318,9 +318,12 @@ function createWindow(): void {
     ? [`--server-url=http://${deviceConfig.serverHost}:${deviceConfig.serverPort}`]
     : [];
 
+  // Fit the screen's usable area: on a 1366×768 laptop a fixed 800px minimum
+  // height put the bottom of the window (POS totals, pagination) below the taskbar.
+  const work = screen.getPrimaryDisplay().workAreaSize;
   const opts: Electron.BrowserWindowConstructorOptions = {
-    width: 1400, height: 900,
-    minWidth: 1200, minHeight: 800,
+    width: Math.min(1400, work.width), height: Math.min(900, work.height),
+    minWidth: Math.min(1200, work.width), minHeight: Math.min(800, work.height),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,

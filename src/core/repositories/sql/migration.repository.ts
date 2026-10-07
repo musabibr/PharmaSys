@@ -10,6 +10,7 @@ import * as crypto from 'crypto';
 import * as fs     from 'fs';
 import * as path   from 'path';
 import type { BaseRepository } from './base.repository';
+import { applyPurchaseOrderSchema } from './migrations/purchase-orders-schema';
 
 function hashPassword(password: string): string {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -696,6 +697,9 @@ export class MigrationRepository {
     await this.base.rawRun('CREATE INDEX IF NOT EXISTS idx_cycle_count_items_ccid ON cycle_count_items(cycle_count_id)');
 
     await this._migrateCashReceived();
+
+    // Purchase orders (L4): orders to suppliers, received by invoices.
+    await applyPurchaseOrderSchema(this.base);
 
     this.base.save();
   }

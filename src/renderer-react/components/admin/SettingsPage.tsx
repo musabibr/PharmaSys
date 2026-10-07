@@ -865,7 +865,7 @@ export function SettingsPage() {
                     />
                   </div>
 
-                  <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div className="flex items-center justify-between rounded-lg border p-3 sm:col-span-2 lg:col-span-3">
                     <div className="flex-1 me-4">
                       <Label htmlFor="shifts-toggle" className="text-sm font-medium cursor-pointer">
                         {t('Require Shifts')}
@@ -881,7 +881,7 @@ export function SettingsPage() {
                     />
                   </div>
 
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <div className="grid grid-cols-1 gap-4 sm:col-span-2 sm:grid-cols-3 lg:col-span-3">
                     <div className="space-y-1.5">
                       <Label htmlFor="return-window-shifts">{t('Return Window (Shifts)')}</Label>
                       <Input

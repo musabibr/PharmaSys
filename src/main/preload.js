@@ -615,6 +615,42 @@ contextBridge.exposeInMainWorld('api', {
 
         getSuppliersByProduct: (productId, page, limit) =>
             invoke('purchases:getSuppliersByProduct', productId, page, limit),
+
+        getProductHistory: (productId, filters) =>
+            invoke('purchases:getProductHistory', productId, filters),
+
+        matchContext: (productIds) =>
+            invoke('purchases:matchContext', productIds),
+    },
+
+    // ════════════════════════════════════════
+    //  PURCHASE ORDERS
+    // ════════════════════════════════════════
+
+    purchaseOrders: {
+        list: (filters) =>
+            invoke('purchaseOrders:list', filters),
+
+        getById: (id) =>
+            invoke('purchaseOrders:getById', id),
+
+        create: (input) =>
+            invoke('purchaseOrders:create', input),
+
+        update: (id, input) =>
+            invoke('purchaseOrders:update', id, input),
+
+        send: (id) =>
+            invoke('purchaseOrders:send', id),
+
+        shareText: (id) =>
+            invoke('purchaseOrders:shareText', id),
+
+        close: (id, reason) =>
+            invoke('purchaseOrders:close', id, reason),
+
+        receivePrefill: (id) =>
+            invoke('purchaseOrders:receivePrefill', id),
     },
 
     // ════════════════════════════════════════

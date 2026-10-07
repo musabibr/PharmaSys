@@ -12,13 +12,26 @@ import type {
   UpdatePurchaseInput, ExpensePaymentMethod,
   PaymentAdjustmentStrategy, PurchasePendingItem, EnrichedPendingItem,
   SupplierProductFilters, SupplierProductRecord,
-  ProductSupplierRecord,
+  ProductSupplierRecord, PurchaseMatchContext,
 } from '../types/models';
 import { Validate } from '../common/validation';
 import { Money } from '../common/money';
 import { normalizeExpiry, NO_EXPIRY_SENTINEL, todayLocalISO } from '../common/expiry';
 import { NotFoundError, ValidationError, BusinessRuleError, InternalError } from '../types/errors';
 import { diffValues } from '../common/audit-diff';
+
+/** How purchases reach the purchase orders they deliver, without depending on the order service. */
+export interface PurchaseOrderLinker {
+  /** Checks the order can take this invoice and links its lines. */
+  attach(purchaseId: number, purchaseOrderId: number, supplierId: number | null): Promise<void>;
+  /** Links lines added later to an invoice already matched to an order. */
+  relink(purchaseId: number, purchaseOrderId: number): Promise<void>;
+}
+
+/** Gives an existing product new units (as editing the product does), inside the purchase's transaction. */
+export interface ProductUnitUpdater {
+  apply(productId: number, units: { parent_unit: string; child_unit: string; conversion_factor: number; rescale_stock: 'keep_units' | 'keep_packs' }, userId: number): Promise<void>;
+}
 
 export class PurchaseService {
   constructor(
@@ -28,6 +41,10 @@ export class PurchaseService {
     private readonly bus:          EventBus,
     private readonly productRepo:  ProductRepository,
     private readonly categoryRepo: CategoryRepository,
+    /** Matches invoices to purchase orders (L4). */
+    private readonly orders?: PurchaseOrderLinker,
+    /** Applies the invoice's units to a matched product (Match step). */
+    private readonly productUnits?: ProductUnitUpdater,
   ) {}
 
   // ─── Supplier CRUD ───────────────────────────────────────────────────────────
@@ -189,6 +206,9 @@ export class PurchaseService {
     if (data.supplier_id !== undefined && data.supplier_id !== null) {
       const supplier = await this.supplierRepo.getById(data.supplier_id);
       if (!supplier) throw new NotFoundError('Supplier', data.supplier_id);
+    }
+    if (existing.purchase_order_id && data.supplier_id !== undefined && (data.supplier_id ?? null) !== existing.supplier_id) {
+      throw new BusinessRuleError('This invoice was received against a purchase order, so its supplier cannot change');
     }
 
     if (data.purchase_date !== undefined) {
@@ -432,6 +452,7 @@ export class PurchaseService {
     return await this.base.inTransaction(async () => {
       // 1. Create products/batches/purchase_items
       await this._processItems(purchaseId, items, userId);
+      if (purchase.purchase_order_id && this.orders) await this.orders.relink(purchaseId, purchase.purchase_order_id);
 
       // 2. Calculate additional total
       const additionalTotal = items.reduce(
@@ -587,6 +608,10 @@ export class PurchaseService {
       // 2. Process items (create products/batches/purchase_items)
       if (hasItems) {
         await this._processItems(purchaseId, data.items!, userId);
+      }
+      if (data.purchase_order_id !== undefined && data.purchase_order_id !== null) {
+        if (!this.orders) throw new ValidationError('Purchase orders are not available', 'purchase_order_id');
+        await this.orders.attach(purchaseId, Validate.id(data.purchase_order_id, 'Purchase order'), data.supplier_id ?? null);
       }
 
       // 3. Handle payment plan
@@ -941,6 +966,14 @@ export class PurchaseService {
 
       if (item.product_id) {
         // ── Existing product → create new batch ──
+        // Match step: the invoice's units, applied first so this line is
+        // received (and priced per small unit) in them.
+        if (item.product_units) {
+          if (!this.productUnits) throw new ValidationError('Changing a product\'s units is not available here', 'product_units');
+          const before = await this.productRepo.getById(item.product_id);
+          if (!before) throw new NotFoundError('Product', item.product_id);
+          await this.productUnits.apply(item.product_id, PurchaseService._productUnits(item.product_units, before.name), userId);
+        }
         const product = await this.productRepo.getById(item.product_id);
         if (!product) throw new NotFoundError('Product', item.product_id);
 
@@ -1638,6 +1671,53 @@ export class PurchaseService {
 
   // ─── Merge Purchases ─────────────────────────────────────────────────────────
 
+// ─── Match context ──────────────────────────────────────────────────────────
+
+  /**
+   * The products invoice lines were matched to, as the Match step compares
+   * them: units, stock, the price being charged now (or last, when nothing is
+   * on the shelf) and the last invoice cost, scaled to today's pack size.
+   */
+  async getMatchContext(productIds: unknown): Promise<PurchaseMatchContext[]> {
+    if (!Array.isArray(productIds)) throw new ValidationError('Product ids are required', 'product_ids');
+    if (productIds.length > 500) throw new ValidationError('At most 500 products at a time', 'product_ids');
+    const ids = [...new Set(productIds.map(id => Validate.id(id, 'Product')))];
+    const rows = await this.purchaseRepo.getMatchContext(ids);
+    return rows.map(r => {
+      const cf = Number(r.conversion_factor) || 1;
+      const current = Number(r.current_price) > 0;
+      const lastCost = r.last_cost_per_base !== null && Number(r.last_cost_per_base) > 0
+        ? Math.round(Number(r.last_cost_per_base) * cf * 1000) / 1000
+        : r.last_batch_cost !== null && Number(r.last_batch_cost) > 0 ? Number(r.last_batch_cost) : null;
+      return {
+        product_id: r.product_id,
+        parent_unit: r.parent_unit ?? '',
+        child_unit: r.child_unit ?? '',
+        conversion_factor: cf,
+        stock_base: Number(r.stock_base) || 0,
+        price: current ? Number(r.current_price) : Number(r.last_price) > 0 ? Number(r.last_price) : null,
+        price_child: current
+          ? (Number(r.current_price_child) > 0 ? Number(r.current_price_child) : null)
+          : Number(r.last_price_child) > 0 ? Number(r.last_price_child) : null,
+        price_source: current ? 'current' as const : Number(r.last_price) > 0 ? 'last' as const : null,
+        last_cost_parent: lastCost,
+        last_cost_date: r.last_cost_date ?? null,
+        last_cost_supplier: r.last_cost_supplier ?? null,
+      };
+    });
+  }
+
+  /** The invoice's units for a matched product (Match step), checked before anything is written. */
+  private static _productUnits(units: NonNullable<CreatePurchaseItemInput['product_units']>, label: string) {
+    const parent = Validate.requiredString(units.parent_unit, `Base unit for "${label}"`, 30);
+    const child = Validate.optionalString(units.child_unit, `Small unit for "${label}"`, 30);
+    const cf = child ? Validate.positiveInteger(units.conversion_factor, `Conversion factor for "${label}"`) : 1;
+    const rescale = units.rescale_stock === undefined || units.rescale_stock === null
+      ? 'keep_units' as const
+      : Validate.enum(units.rescale_stock, ['keep_units', 'keep_packs'] as const, 'Existing stock');
+    return { parent_unit: parent, child_unit: child ?? '', conversion_factor: cf, rescale_stock: rescale };
+  }
+
   async mergePurchases(targetId: number, sourceIds: number[], userId: number): Promise<Purchase> {
     if (!sourceIds.length) throw new ValidationError('At least one source purchase is required', 'sourceIds');
     if (sourceIds.includes(targetId)) throw new ValidationError('Target cannot be in source list', 'sourceIds');
@@ -1659,6 +1739,13 @@ export class PurchaseService {
       }
     }
 
+    // Invoices received against different orders stay apart
+    const orderIds = new Set([target, ...sources].map(p => p.purchase_order_id).filter((id): id is number => !!id));
+    if (orderIds.size > 1) {
+      throw new BusinessRuleError('Invoices received against different purchase orders cannot be merged');
+    }
+    const orderId = orderIds.size === 1 ? [...orderIds][0] : null;
+
     // None of the sources may have paid payments
     for (const src of sources) {
       const hasPaid = await this.purchaseRepo.hasPaidPayments(src.id);
@@ -1679,6 +1766,7 @@ export class PurchaseService {
       }
 
       await this.purchaseRepo.updateTotalAmount(targetId, newTotal);
+      if (orderId && this.orders) await this.orders.relink(targetId, orderId);
 
       // Recalculate paid totals and status
       const newPaidTotal = await this.purchaseRepo.getPaidTotal(targetId);

@@ -1,4 +1,15 @@
 /**
+ * Escape text for interpolation into printable HTML. Anything that came from
+ * the database or a person (product, customer, supplier and user names,
+ * notes, descriptions, batch numbers) must pass through this.
+ */
+export function escapeHtml(value: unknown): string {
+  return String(value ?? '').replace(/[&<>"']/g, (ch) => (
+    ch === '&' ? '&amp;' : ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : ch === '"' ? '&quot;' : '&#39;'
+  ));
+}
+
+/**
  * Print HTML content via a hidden iframe.
  * Handles RTL direction automatically.
  */

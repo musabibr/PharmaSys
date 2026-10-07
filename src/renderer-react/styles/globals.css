@@ -182,7 +182,8 @@
     --density-dialog-pad: 16px;
 
     --density-filter-h: 30px;
-    --density-filter-w: 120px;
+    /* Wide enough for "All Categories" plus the chevron at 12px. */
+    --density-filter-w: 148px;
     --density-filter-font: 12px;
 
     --density-cart-w: 260px;
@@ -920,10 +921,12 @@ table.sticky-col td:first-child::after {
   inset-inline-start: -4px;
 }
 
-/* ── Summary grids: 2 cols in compact on <1400px viewport ─────────────── */
+/* ── Summary grids: reflow only when columns get too narrow ──────────── */
+/* Three per row while each column can be at least 10rem; below that the   */
+/* grid wraps. Forcing two columns left a lone third card on its own row.  */
 @media (max-width: 1399px) {
   [data-density="compact"] .grid.grid-cols-3:not(.db-bento) {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(max(10rem, calc(33.333% - 0.75rem)), 1fr));
   }
 }
 

@@ -193,12 +193,25 @@ describe('ProductService', () => {
 
       const result = await svc.update(1, { conversion_factor: 10 } as any, 1);
       expect(batchRepo.recalculateChildPricesForProduct).toHaveBeenCalledWith(1, 10);
+      // Unit count kept (the default): each unit keeps its cost and price.
+      expect(batchRepo.rescalePackValuesForProduct).toHaveBeenCalledWith(1, 20, 10);
+      expect(batchRepo.rescaleQuantitiesForProduct).not.toHaveBeenCalled();
       expect(bus.emit).toHaveBeenCalledWith('entity:mutated', expect.objectContaining({
         action: 'CASCADE_CF_CHANGE',
         oldValues: { conversion_factor: 20 },
         newValues: expect.objectContaining({ conversion_factor: 10 }),
       }));
       expect(result.conversion_factor).toBe(10);
+    });
+
+    it('keeps pack values when the pack count is kept', async () => {
+      const { svc, productRepo, batchRepo } = createService();
+      productRepo.getById
+        .mockResolvedValueOnce({ ...sampleProduct, conversion_factor: 3 })
+        .mockResolvedValue({ ...sampleProduct, conversion_factor: 10 });
+      await svc.update(1, { conversion_factor: 10, rescaleStock: 'keep_packs' } as any, 1);
+      expect(batchRepo.rescaleQuantitiesForProduct).toHaveBeenCalledWith(1, 3, 10);
+      expect(batchRepo.rescalePackValuesForProduct).not.toHaveBeenCalled();
     });
 
     it('does not cascade when conversion_factor is unchanged', async () => {

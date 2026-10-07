@@ -114,6 +114,9 @@ export class ProductService {
           await this.repo.update(id, data);
           if (rescale) {
             await this.batchRepo.rescaleQuantitiesForProduct(id, existing.conversion_factor!, data.conversion_factor!);
+          } else {
+            // The unit count stays, so each unit keeps its cost and price: pack values follow the pack size.
+            await this.batchRepo.rescalePackValuesForProduct(id, existing.conversion_factor!, data.conversion_factor!);
           }
           await this.batchRepo.recalculateChildPricesForProduct(id, data.conversion_factor!);
         });
