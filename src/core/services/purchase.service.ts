@@ -976,6 +976,7 @@ export class PurchaseService {
         }
         const product = await this.productRepo.getById(item.product_id);
         if (!product) throw new NotFoundError('Product', item.product_id);
+        await this._fillProductDetails(product, item, userId);
 
         // Update barcode on existing product if it has none and the invoice provides one.
         // Skip if the barcode already belongs to another product — assigning a duplicate
@@ -1041,6 +1042,7 @@ export class PurchaseService {
         if (existingProduct) {
           // Use existing product — just add a new batch
           productId = existingProduct.id;
+          await this._fillProductDetails(existingProduct, np, userId);
           // Update barcode if the existing product has none — but only if no other product
           // already owns it, to avoid creating duplicate barcodes.
           if (np.barcode && !existingProduct.barcode) {
@@ -1054,16 +1056,8 @@ export class PurchaseService {
           }
         } else {
           // Resolve or create category
-          let categoryId: number | null = null;
-          if (np.category_name) {
-            const existing = await this.categoryRepo.findByName(np.category_name);
-            if (existing) {
-              categoryId = existing.id;
-            } else {
-              const catResult = await this.categoryRepo.create(np.category_name);
-              categoryId = catResult.lastInsertRowid as number;
-            }
-          }
+          const categoryName = typeof np.category_name === 'string' ? np.category_name.trim() : '';
+          const categoryId = categoryName ? await this._categoryIdFor(categoryName) : null;
 
           // Create product
           const prodResult = await this.base.run(
@@ -1195,6 +1189,54 @@ export class PurchaseService {
         },
       });
     }
+  }
+
+  /** The category of that name, created when the pharmacy has none by that name yet. */
+  private async _categoryIdFor(name: string): Promise<number> {
+    const cleaned = Validate.requiredString(name, 'Category name', 100);
+    const existing = await this.categoryRepo.findByName(cleaned);
+    if (existing) return existing.id;
+    const created = await this.categoryRepo.create(cleaned);
+    return created.lastInsertRowid as number;
+  }
+
+  /**
+   * What an invoice line tells about a product that the product lacks: its
+   * generic (scientific) name and its category. What is already set is never
+   * overwritten — the product record stays the authority.
+   */
+  private async _fillProductDetails(
+    product: { id: number; generic_name?: string | null; category_id?: number | null },
+    details: { generic_name?: unknown; category_name?: unknown },
+    userId: number,
+  ): Promise<void> {
+    const generic = typeof details.generic_name === 'string' ? details.generic_name.trim().slice(0, 200) : '';
+    const category = typeof details.category_name === 'string' ? details.category_name.trim() : '';
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    const oldValues: Record<string, unknown> = {};
+    const newValues: Record<string, unknown> = {};
+    if (generic && !String(product.generic_name ?? '').trim()) {
+      sets.push('generic_name = ?');
+      params.push(generic);
+      oldValues.generic_name = product.generic_name ?? null;
+      newValues.generic_name = generic;
+    }
+    if (category && !product.category_id) {
+      sets.push('category_id = ?');
+      params.push(await this._categoryIdFor(category));
+      oldValues.category_id = product.category_id ?? null;
+      newValues.category_name = category;
+    }
+    if (sets.length === 0) return;
+    await this.base.run(
+      `UPDATE products SET ${sets.join(', ')}, updated_at = datetime('now', 'localtime') WHERE id = ?`,
+      [...params, product.id]
+    );
+    this.bus.emit('entity:mutated', {
+      action: 'UPDATE_PRODUCT', table: 'products',
+      recordId: product.id, userId, oldValues, newValues,
+    });
   }
 
   /**

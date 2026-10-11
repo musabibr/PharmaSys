@@ -1120,6 +1120,9 @@ export interface UpdatePurchaseInput {
 export interface CreatePurchaseItemInput {
   product_id?: number;
   barcode?: string;
+  /** Generic (scientific) name and category from the invoice: an existing product takes them only when it has none. */
+  generic_name?: string;
+  category_name?: string;
   new_product?: {
     name: string;
     generic_name?: string;

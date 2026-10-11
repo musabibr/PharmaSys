@@ -1,5 +1,5 @@
 ('D:\\Noon\\wroking '
- 'code\\PharmaSys-release\\build\\pyinstaller-work\\pdf_invoice_parser\\PYZ-00.pyz',
+ 'code\\PharmaSys\\build\\pyinstaller-work\\pdf_invoice_parser\\PYZ-00.pyz',
  [('PIL',
    'C:\\Users\\musab\\AppData\\Roaming\\Python\\Python314\\site-packages\\PIL\\__init__.py',
    'PYMODULE'),

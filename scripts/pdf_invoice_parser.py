@@ -430,6 +430,10 @@ COLUMN_PATTERNS_ORDERED = [
     ('code',     [r'رقم الصنف', r'فنصلا مقر', r'Code', r'SKU', r'Barcode',
                   r'باركود', r'دوكراب', r'رمز', r'زمر', r'Item\s*No',
                   r'HSN', r'SAC']),
+    # Before 'name': "الاسم العلمي" (scientific name) would otherwise read as a name heading.
+    ('generic',  [r'Generic', r'Scientific', r'Active\s*Ingredient', r'الاسم العلمي', r'يملعلا مسالا',
+                  r'المادة الفعالة', r'ةلاعفلا ةداملا', r'^INN$']),
+    ('category', [r'Categor', r'Therapeutic\s*Class', r'الفئة', r'ةئفلا', r'التصنيف', r'فينصتلا']),
     ('name',     [r'الصنف', r'فنصلا', r'صنف', r'فنص', r'اسم', r'مسا',
                   r'المنتج', r'جتنملا', r'Product', r'Item', r'Description',
                   r'البيان', r'نايبلا', r'الوصف', r'فصولا',
@@ -1326,6 +1330,9 @@ def extract_rows(pdf_path: str) -> list:
                     price_val = get_cell('price')
                     total_val = get_cell('total')
                     code_val = get_cell('code')
+                    # Wrapped cells come back with line breaks; these are single-line values.
+                    generic_val = ' '.join(get_cell('generic').split())
+                    category_val = ' '.join(get_cell('category').split())
 
                     # Skip rows where name is purely numeric (likely misidentified)
                     if name_val and re.match(r'^[\d,.\s]+$', name_val):
@@ -1345,7 +1352,8 @@ def extract_rows(pdf_path: str) -> list:
                         cost = clean_price(price_val)
                         total = clean_price(total_val)
                         unit_info = parse_unit_string(unit_val)
-                        generic = extract_generic_name(fixed_name)
+                        # A generic-name column is authoritative (blank stays blank); otherwise guess from the name.
+                        generic = fix_reversed_arabic(generic_val) if 'generic' in col_map else extract_generic_name(fixed_name)
 
                         # Infer cost from total/qty if cost is missing but total exists
                         if cost == 0 and total > 0 and qty > 0:
@@ -1367,6 +1375,7 @@ def extract_rows(pdf_path: str) -> list:
                             'row_number': row_number,
                             'name': fixed_name,
                             'generic_name': generic,
+                            'category': fix_reversed_arabic(category_val) if category_val else '',
                             'code': code_val,
                             'expiry_date': convert_date(expiry_val),
                             'parent_unit': unit_info['parent_unit'],
@@ -1381,10 +1390,16 @@ def extract_rows(pdf_path: str) -> list:
                     elif not has_index and name_val and current_record:
                         # Continuation line — append to current record's name
                         current_record['name'] += ' ' + fix_reversed_arabic(name_val)
-                        # Re-extract generic name from combined text
-                        generic = extract_generic_name(current_record['name'])
-                        if generic:
-                            current_record['generic_name'] = generic
+                        # Re-extract generic name from combined text (unless a column gave it)
+                        if 'generic' in col_map:
+                            if generic_val:
+                                current_record['generic_name'] = (current_record['generic_name'] + ' ' + fix_reversed_arabic(generic_val)).strip()
+                        else:
+                            generic = extract_generic_name(current_record['name'])
+                            if generic:
+                                current_record['generic_name'] = generic
+                        if category_val:
+                            current_record['category'] = (current_record.get('category', '') + ' ' + fix_reversed_arabic(category_val)).strip()
 
                     elif has_index and not name_val:
                         # Row has index but no name — try to salvage if price exists

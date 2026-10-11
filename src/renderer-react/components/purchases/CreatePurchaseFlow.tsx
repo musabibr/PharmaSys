@@ -120,6 +120,8 @@ interface MatchedItem extends ImportItem {
   categoryName: string;
   /** Units, reading of the invoice and prices decided in the Match step. */
   pick?: MatchPick;
+  /** The category the invoice gave; an existing product without one takes it. */
+  invoiceCategory?: string;
 }
 
 interface CreatePurchaseFlowProps {
@@ -619,7 +621,7 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
           : 0,
         batchNumber: generateBatchNumber(),
         barcode: row.code || '',
-        categoryName: '',
+        categoryName: row.category || '',
         usageInstructions: '',
       }));
 
@@ -941,6 +943,7 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
             matchedProductId: before.matchedProductId,
             matchedProductName: before.matchedProductName,
             categoryName: before.matchType === 'new' ? (item.categoryName || before.categoryName) : before.categoryName,
+            invoiceCategory: item.categoryName || before.invoiceCategory,
             pick: before.pick,
           };
         }
@@ -951,11 +954,13 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
             matchType: 'existing' as const,
             matchedProductId: found.id,
             matchedProductName: found.name,
-            categoryName: found.category_name || '',
+            categoryName: found.category_name || item.categoryName || '',
+            invoiceCategory: item.categoryName,
           };
         }
         return {
           ...item,
+          invoiceCategory: item.categoryName,
           matchType: 'new' as const,
           matchedProductId: null,
           matchedProductName: '',
@@ -987,7 +992,7 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
             matchType: 'existing' as const,
             matchedProductId: found.id,
             matchedProductName: found.name,
-            categoryName: found.category_name || '',
+            categoryName: found.category_name || item.invoiceCategory || '',
             pick: undefined,
           };
         }
@@ -1005,7 +1010,7 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
         matchType: type,
         matchedProductId: type === 'existing' ? (productId ?? null) : null,
         matchedProductName: type === 'existing' ? (productName ?? '') : '',
-        categoryName: type === 'existing' ? (catName ?? '') : item.categoryName,
+        categoryName: type === 'existing' ? (catName || item.invoiceCategory || '') : (item.invoiceCategory ?? item.categoryName),
         pick: undefined,
       } : item
     ));
@@ -1307,6 +1312,8 @@ export function CreatePurchaseFlow({ onComplete, startManual, initialSupplierId,
             return {
               product_id: item.matchedProductId,
               barcode: item.barcode || undefined,
+              generic_name: item.genericName || undefined,
+              category_name: item.invoiceCategory || undefined,
               ...received,
               expiry_date: normalizeExpiry(item.expiryDate),
               batch_number: item.batchNumber || undefined,

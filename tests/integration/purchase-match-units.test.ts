@@ -112,6 +112,27 @@ describe('receiving in the invoice\'s units', () => {
     await expect(ctx.services.purchase.getMatchContext('x')).rejects.toThrow(ValidationError);
   });
 
+  it('gives an existing product the invoice\'s generic name and category only when it has none', async () => {
+    const bare = makeProduct('Details Bare', 'Strip', 3);
+    const known = makeProduct('Details Known', 'Strip', 3);
+    db().prepare(`UPDATE products SET generic_name = 'Bisoprolol 5 mg', category_id = (SELECT id FROM categories ORDER BY id LIMIT 1) WHERE id = ?`).run(known);
+    const knownBefore = row('SELECT generic_name, category_id FROM products WHERE id = ?', known);
+
+    await buy([
+      { product_id: bare, quantity: 2, cost_per_parent: 3000, selling_price_parent: 3600, expiry_date: expiry(), generic_name: '  Glimepiride 4 mg ', category_name: 'Diabetes Care Test' },
+      { product_id: known, quantity: 2, cost_per_parent: 3000, selling_price_parent: 3600, expiry_date: expiry(), generic_name: 'Something else', category_name: 'Other Test' },
+    ]);
+    expect(row(`SELECT p.generic_name, c.name AS category FROM products p JOIN categories c ON c.id = p.category_id WHERE p.id = ?`, bare))
+      .toEqual({ generic_name: 'Glimepiride 4 mg', category: 'Diabetes Care Test' });
+    expect(row('SELECT generic_name, category_id FROM products WHERE id = ?', known)).toEqual(knownBefore);
+
+    // A new product takes both on creation; an existing category is reused, not duplicated.
+    await buy([{ new_product: { name: 'Details New', generic_name: 'Metformin 1000 mg', category_name: 'Diabetes Care Test' }, quantity: 1, cost_per_parent: 900, selling_price_parent: 1100, expiry_date: expiry() }]);
+    expect(row(`SELECT p.generic_name, c.name AS category FROM products p JOIN categories c ON c.id = p.category_id WHERE p.name = 'Details New'`))
+      .toEqual({ generic_name: 'Metformin 1000 mg', category: 'Diabetes Care Test' });
+    expect(row(`SELECT COUNT(*) AS c FROM categories WHERE name = 'Diabetes Care Test'`).c).toBe(1);
+  });
+
   it('lets only users who may edit products change units through a purchase', () => {
     const items = [{ product_id: 1, product_units: { parent_unit: 'Box' } }];
     const base = { perm_finance: 0, perm_inventory: 0, perm_reports: 0 };

@@ -701,6 +701,9 @@ export interface CreatePurchaseItemInput {
   product_id?: number;
   /** Given to an existing product that has no barcode yet. */
   barcode?: string;
+  /** Generic (scientific) name and category: an existing product takes them only when it has none. */
+  generic_name?: string;
+  category_name?: string;
   new_product?: {
     name: string;
     generic_name?: string;
@@ -1036,6 +1039,8 @@ export interface PythonPdfParsedRow {
   row_number: number;
   name: string;
   generic_name: string;
+  /** From a Category column, when the file has one. */
+  category?: string;
   code: string;
   expiry_date: string;
   parent_unit: string;
